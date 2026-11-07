@@ -40,6 +40,8 @@ pub struct Plan {
 pub struct Lane {
     pub column: u32,
     pub color: LaneColor,
+    /// The line from uncommitted work to HEAD, which isn't history yet.
+    pub dashed: bool,
 }
 
 /// Everything needed to draw one commit's row, independent of its neighbours.
@@ -78,6 +80,7 @@ struct Slot {
     /// Holds the first lane for HEAD until it arrives. Nothing is drawn for it, because
     /// commits listed above HEAD have no line to it.
     reserved: bool,
+    dashed: bool,
 }
 
 #[derive(Default)]
@@ -99,6 +102,7 @@ impl GraphBuilder {
                 expects: head.clone(),
                 color: LaneColor::Head,
                 reserved: true,
+                dashed: false,
             })
         });
         Self {
@@ -106,6 +110,27 @@ impl GraphBuilder {
             next_color: plan.first_free_color,
             plan,
             last_through: None,
+        }
+    }
+
+    /// Lays out the row for uncommitted changes, which sits above every commit. Its dashed
+    /// line runs down HEAD's lane. Call this before any commit.
+    pub fn working_row(&mut self) -> Row {
+        let outgoing = self.slots.first_mut().and_then(Option::as_mut).map(|slot| {
+            slot.reserved = false;
+            slot.dashed = true;
+            Lane {
+                column: 0,
+                color: LaneColor::Head,
+                dashed: true,
+            }
+        });
+        Row {
+            column: 0,
+            color: LaneColor::Head,
+            through: self.snapshot_through_without(0),
+            incoming: Box::default(),
+            outgoing: outgoing.into_iter().collect(),
         }
     }
 
@@ -122,6 +147,7 @@ impl GraphBuilder {
                     incoming.push(Lane {
                         column: column as u32,
                         color: slot.color,
+                        dashed: slot.dashed,
                     });
                 }
             }
@@ -197,21 +223,46 @@ impl GraphBuilder {
             expects: parent.clone(),
             color,
             reserved: false,
+            dashed: false,
         });
         Lane {
             column: column as u32,
             color,
+            dashed: false,
         }
     }
 
     fn lane_expecting(&self, oid: &str) -> Option<Lane> {
         self.slots.iter().enumerate().find_map(|(column, slot)| {
-            let slot = slot.as_ref().filter(|slot| !slot.reserved)?;
+            let slot = slot
+                .as_ref()
+                .filter(|slot| !slot.reserved && !slot.dashed)?;
             (&*slot.expects == oid).then_some(Lane {
                 column: column as u32,
                 color: slot.color,
+                dashed: false,
             })
         })
+    }
+
+    /// The working row is above everything, so the only lane could be its own.
+    fn snapshot_through_without(&self, column: u32) -> Arc<[Lane]> {
+        let lanes: Vec<Lane> = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index as u32 != column)
+            .filter_map(|(index, slot)| {
+                slot.as_ref()
+                    .filter(|slot| !slot.reserved)
+                    .map(|slot| Lane {
+                        column: index as u32,
+                        color: slot.color,
+                        dashed: slot.dashed,
+                    })
+            })
+            .collect();
+        lanes.into()
     }
 
     fn snapshot_through(&mut self) -> Arc<[Lane]> {
@@ -221,6 +272,7 @@ impl GraphBuilder {
                 .map(|slot| Lane {
                     column: column as u32,
                     color: slot.color,
+                    dashed: slot.dashed,
                 })
         });
         if let Some(last) = &self.last_through
@@ -443,6 +495,28 @@ mod tests {
         assert_eq!(columns(&rows[0].outgoing), [1, 2]);
         assert_eq!(columns(&rows[2].incoming), [2]);
         assert_continuous(&rows);
+    }
+
+    #[test]
+    fn working_changes_sit_above_head_on_a_dashed_line() {
+        let mut builder = GraphBuilder::with_plan(head_plan("h"));
+        let top = builder.working_row();
+        let newer = builder.push("x", &["base".into()]);
+        let head = builder.push("h", &["base".into()]);
+        let base = builder.push("base", &[]);
+
+        assert_eq!(top.column, 0);
+        assert!(top.outgoing[0].dashed);
+        assert!(newer.through[0].dashed, "the line passes newer commits");
+        assert!(head.incoming[0].dashed, "and reaches HEAD");
+        assert!(!head.outgoing[0].dashed, "below HEAD it's ordinary history");
+        assert_continuous(&[top, newer, head, base]);
+    }
+
+    #[test]
+    fn working_changes_with_no_commits_have_no_line() {
+        let mut builder = GraphBuilder::new();
+        assert!(builder.working_row().outgoing.is_empty());
     }
 
     #[test]

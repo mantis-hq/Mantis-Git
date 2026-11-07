@@ -118,6 +118,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Quiet button:** text only, Subtext 1, with a faint hover fill.
 - **Ref chips:** tinted with 14% of the branch colour, text in full colour. Only the
   current branch gets a solid fill. Chips follow the subject, so subjects stay aligned.
+- **Commit form:** the bump card only shows when the repository has `v1.2.3` style tags to
+  count from. Hunks start ticked, except that files with nothing staged start unticked
+  when something else is staged, so work staged from a terminal carries over.
 - **Files:** a status letter, then the path with its folder muted, then `+n −n`.
 - **Diffs:** added and removed lines use a 10% green or red wash. Text stays Text.
 - **Focus:** every control shows a 2 px blue focus ring, and each action has a key.

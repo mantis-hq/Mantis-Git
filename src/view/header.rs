@@ -39,13 +39,13 @@ impl GraphView {
             })
             .child(div().flex_1())
             .when(loading, |bar| bar.child(Spinner::new().small()))
-            .when(!self.entries.is_empty(), |bar| {
+            .when(self.commit_count() > 0, |bar| {
                 bar.child(
                     div()
                         .flex_none()
                         .text_sm()
                         .text_color(muted)
-                        .child(format!("{} commits", self.entries.len())),
+                        .child(format!("{} commits", self.commit_count())),
                 )
             })
             .when(self.repo.is_some(), |bar| {

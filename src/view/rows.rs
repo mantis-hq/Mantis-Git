@@ -54,6 +54,7 @@ impl GraphView {
             let lane_row = entry.row.clone();
             let is_head = self.refs.head.as_ref() == Some(&commit.oid);
             let is_merge = commit.parents.len() > 1;
+            let is_working = entry.working;
             let commit_refs = self.refs.by_commit.get(&commit.oid);
 
             rows.push(
@@ -68,7 +69,11 @@ impl GraphView {
                     .bg(row_background)
                     .when(!selected, |row| row.hover(|style| style.bg(hover)))
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.select(index, cx);
+                        if this.entries.get(index).is_some_and(|entry| entry.working) {
+                            this.open_commit_screen(cx);
+                        } else {
+                            this.select(index, cx);
+                        }
                         window.focus(&this.focus, cx);
                     }))
                     .child(
@@ -87,6 +92,7 @@ impl GraphView {
                                             NodeStyle {
                                                 is_head,
                                                 is_merge,
+                                                is_working,
                                                 head,
                                                 hollow: row_background,
                                             },
@@ -143,7 +149,7 @@ impl GraphView {
                             .flex_none()
                             .truncate()
                             .text_color(muted)
-                            .child(format_date(commit.time)),
+                            .when(!is_working, |date| date.child(format_date(commit.time))),
                     )
                     .child(
                         div()
@@ -223,6 +229,7 @@ fn ref_label(r: &Ref, lane: Hsla, head: Hsla, on_head: Hsla, tag: Hsla) -> impl 
 struct NodeStyle {
     is_head: bool,
     is_merge: bool,
+    is_working: bool,
     head: Hsla,
     /// Fills the middle of merge nodes and the HEAD ring, so it has to match the row
     /// behind them.
@@ -263,6 +270,10 @@ fn paint_row(
         );
     }
 
+    if node.is_working {
+        paint_dashed_ring(node_x, middle, NODE_RADIUS + 1., node.head, window);
+        return;
+    }
     if node.is_head {
         paint_circle(node_x, middle, NODE_RADIUS + 3., node.head, window);
         paint_circle(node_x, middle, NODE_RADIUS + 1.5, node.hollow, window);
@@ -281,6 +292,23 @@ fn paint_row(
     }
 }
 
+/// A ring of short arcs, for work that isn't a commit yet.
+fn paint_dashed_ring(x: Pixels, y: Pixels, radius: f32, color: Hsla, window: &mut Window) {
+    const DASHES: u32 = 6;
+    for dash in 0..DASHES {
+        let start = dash as f32 / DASHES as f32 * std::f32::consts::TAU;
+        let end = start + std::f32::consts::TAU / DASHES as f32 * 0.55;
+        let at = |angle: f32| point(x + px(angle.cos() * radius), y + px(angle.sin() * radius));
+        let mut path = PathBuilder::stroke(px(1.5));
+        path.move_to(at(start));
+        path.line_to(at((start + end) / 2.));
+        path.line_to(at(end));
+        if let Ok(path) = path.build() {
+            window.paint_path(path, color);
+        }
+    }
+}
+
 fn paint_vertical(
     x: Pixels,
     top: Pixels,
@@ -289,6 +317,15 @@ fn paint_vertical(
     is_dark: bool,
     window: &mut Window,
 ) {
+    if lane.dashed {
+        let mut path = PathBuilder::stroke(px(LINE_WIDTH)).dash_array(&[px(4.), px(4.)]);
+        path.move_to(point(x, top));
+        path.line_to(point(x, bottom));
+        if let Ok(path) = path.build() {
+            window.paint_path(path, lane_color(lane.color, is_dark));
+        }
+        return;
+    }
     let half = px(LINE_WIDTH / 2.);
     let bounds = Bounds::from_corners(point(x - half, top), point(x + half, bottom));
     window.paint_quad(fill(bounds, lane_color(lane.color, is_dark)));

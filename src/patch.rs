@@ -37,6 +37,26 @@ pub struct FilePatch {
 }
 
 impl FilePatch {
+    /// A file with no text to show.
+    pub fn without_text(path: &str) -> Self {
+        Self {
+            path: path.to_owned(),
+            binary: true,
+            ..Self::default()
+        }
+    }
+
+    /// What happened to the file: `A`, `D` or `M`.
+    pub fn status(&self) -> char {
+        if self.header.contains("\nnew file mode ") {
+            'A'
+        } else if self.header.contains("\ndeleted file mode ") {
+            'D'
+        } else {
+            'M'
+        }
+    }
+
     /// A patch containing only the chosen hunks, by index. Hunks keep their original
     /// line numbers, which still hold because they apply against the unchanged side.
     pub fn with_hunks(&self, chosen: impl IntoIterator<Item = usize>) -> String {
@@ -287,6 +307,14 @@ rename to after name
         let files = parse(diff);
         assert_eq!(files[0].path, "gone");
         assert_eq!(files[1].path, "after name");
+        assert_eq!(files[0].status(), 'D');
+        assert_eq!(files[1].status(), 'M');
+    }
+
+    #[test]
+    fn new_files_say_so() {
+        assert_eq!(parse(TWO_HUNKS)[1].status(), 'A');
+        assert_eq!(parse(TWO_HUNKS)[0].status(), 'M');
     }
 
     #[test]

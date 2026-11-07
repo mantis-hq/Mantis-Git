@@ -206,7 +206,48 @@ mod render {
         assert!(hues >= 3, "expected several lane colours, found {hues}");
     }
 
+    fn assert_working_changes_lead_to_the_commit_screen() {
+        let repo = tempfile::tempdir().unwrap();
+        fixture(repo.path());
+        let lines: String = (0..30).map(|line| format!("line {line}\n")).collect();
+        std::fs::write(repo.path().join("notes.txt"), &lines).unwrap();
+        git(repo.path(), &["add", "notes.txt"]);
+        git(repo.path(), &["commit", "-q", "-m", "docs: add notes"]);
+        git(repo.path(), &["tag", "v0.1.1"]);
+        let edited = lines
+            .replace("line 3\n", "changed 3\n")
+            .replace("line 26\n", "changed 26\n");
+        std::fs::write(repo.path().join("notes.txt"), edited).unwrap();
+        std::fs::write(repo.path().join("draft.txt"), "a new file\n").unwrap();
+
+        let mut cx = HeadlessAppContext::with_platform(
+            gpui_kit::platform::current_platform(true).text_system(),
+            Arc::new(Assets),
+            gpui_kit::platform::current_headless_renderer,
+        );
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            theme::init(cx);
+            view::bind_keys(cx);
+            Theme::change(ThemeMode::Dark, None, cx);
+        });
+        let (handle, view) = open(&mut cx, repo.path());
+        assert_eq!(cx.update(|cx| view.read(cx).commit_count()), 12);
+        capture(&mut cx, handle, "working-row");
+
+        cx.update_window(handle, |_, _, cx| {
+            view.update(cx, |view, cx| view.open_commit_screen(cx));
+        })
+        .unwrap();
+        for _ in 0..50 {
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        capture(&mut cx, handle, "commit");
+    }
+
     pub fn run() {
+        assert_working_changes_lead_to_the_commit_screen();
         assert_draws_lanes(ThemeMode::Dark, "graph-dark");
         assert_draws_lanes(ThemeMode::Light, "graph-light");
         println!("render: passed (real offscreen renderer)");
