@@ -7,6 +7,7 @@
 //! missing or broken file is the same as a fresh install.
 
 use crate::cache::{DEFAULT_DISK_MB, DiskSettings};
+use crate::tree::FileView;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -26,6 +27,8 @@ pub struct AppState {
     pub disk_cache: bool,
     /// How much that may take, in megabytes.
     pub cache_mb: u32,
+    /// How the commit screen lists changed files, for every repository.
+    pub files_view: FileView,
 }
 
 impl Default for AppState {
@@ -36,6 +39,7 @@ impl Default for AppState {
             active: 0,
             disk_cache: true,
             cache_mb: DEFAULT_DISK_MB,
+            files_view: FileView::List,
         }
     }
 }
@@ -81,6 +85,7 @@ impl AppState {
                 "cache_mb" => {
                     state.cache_mb = value.trim().parse().unwrap_or(DEFAULT_DISK_MB);
                 }
+                "files_view" => state.files_view = FileView::from_key(value),
                 "active" => state.active = value.trim().parse().unwrap_or(0),
                 "tab" if !value.is_empty() => state.tabs.push(PathBuf::from(value)),
                 _ => {}
@@ -95,6 +100,7 @@ impl AppState {
         text.push_str(&format!("reopen_tabs={}\n", self.reopen_tabs));
         text.push_str(&format!("disk_cache={}\n", self.disk_cache));
         text.push_str(&format!("cache_mb={}\n", self.cache_mb));
+        text.push_str(&format!("files_view={}\n", self.files_view.key()));
         text.push_str(&format!("active={}\n", self.active));
         for tab in &self.tabs {
             // A path that isn't text can't be written to a text file, so it isn't kept.
@@ -310,6 +316,7 @@ mod tests {
             active: 1,
             disk_cache: false,
             cache_mb: 1024,
+            files_view: FileView::Tree,
         };
         state.save(&file).unwrap();
         assert_eq!(AppState::load(&file), state);

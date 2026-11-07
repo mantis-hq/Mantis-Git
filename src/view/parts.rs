@@ -96,6 +96,30 @@ pub(super) fn tab(id: impl Into<ElementId>, active: bool, cx: &App) -> Stateful<
         })
 }
 
+/// One option of a choice, with a tick when picked so that colour isn't the only cue.
+pub(super) fn chip(id: impl Into<ElementId>, label: &str, on: bool, cx: &App) -> Stateful<Div> {
+    let theme = cx.theme();
+    let (selected, hover) = (selected_row(theme), theme.list_hover);
+    let (text, quiet) = (theme.foreground, theme.secondary_foreground);
+    div()
+        .id(id)
+        .h_flex()
+        .h(px(26.))
+        .px_2()
+        .gap_1()
+        .rounded(px(6.))
+        .cursor_pointer()
+        .text_size(TEXT_SMALL)
+        .when(on, |chip| {
+            chip.bg(selected).text_color(text).font_semibold()
+        })
+        .when(!on, |chip| {
+            chip.text_color(quiet).hover(|chip| chip.bg(hover))
+        })
+        .when(on, |chip| chip.child("✓"))
+        .child(label.to_owned())
+}
+
 /// A path that truncates, with its folder quieter than the file's name.
 /// What stands where a list will be while it is read: a spinner and a sentence saying
 /// what is coming, over `rows` grey placeholders that breathe slowly. The placeholders are

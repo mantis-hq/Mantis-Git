@@ -70,6 +70,10 @@ impl Workspace {
     /// the last run are back, so that opening them one by one doesn't overwrite the rest.
     pub fn remember_in(&mut self, file: Option<PathBuf>, cx: &mut Context<Self>) {
         self.state_file = file;
+        for tab in &self.tabs {
+            let file = self.state_file.clone();
+            tab.update(cx, |tab, _| tab.set_state_file(file));
+        }
         self.persist(cx);
     }
 
@@ -138,6 +142,7 @@ impl Workspace {
     /// moves to the other working tree in place, keeping its position in the strip.
     fn make_tab(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<GraphView> {
         let view = cx.new(|cx| GraphView::new(window, cx));
+        view.update(cx, |view, _| view.set_state_file(self.state_file.clone()));
         cx.subscribe_in(
             &view,
             window,
