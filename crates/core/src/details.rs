@@ -2,7 +2,7 @@
 
 use crate::ops;
 use crate::patch::{self, FilePatch};
-use crate::text::short_oid;
+use crate::text::{count, short_oid};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -160,6 +160,40 @@ pub fn revert(repo: &Path, oid: &str, is_merge: bool) -> Result<Option<String>, 
     Ok(Some(format!(
         "Added a commit that reverts {}. Revert that one to undo.",
         short_oid(oid)
+    )))
+}
+
+/// Copies several commits onto this branch, oldest first.
+pub fn cherry_pick_many(repo: &Path, oids: &[String]) -> Result<Option<String>, String> {
+    let mut args = vec!["cherry-pick"];
+    args.extend(oids.iter().map(String::as_str));
+    ops::run(repo, &args)?;
+    Ok(Some(format!(
+        "Copied {} onto this branch. Revert them to undo.",
+        count(oids.len(), "commit")
+    )))
+}
+
+/// Reverts several commits, newest first, so that each undoes what is still there.
+pub fn revert_many(repo: &Path, oids: &[String]) -> Result<Option<String>, String> {
+    let mut args = vec!["revert", "--no-edit"];
+    args.extend(oids.iter().map(String::as_str));
+    ops::run(repo, &args)?;
+    Ok(Some(format!(
+        "Added {} that revert them. Revert those to undo.",
+        count(oids.len(), "commit")
+    )))
+}
+
+/// Moves the current branch to `oid`. A hard reset also discards working changes.
+pub fn reset(repo: &Path, oid: &str, hard: bool) -> Result<Option<String>, String> {
+    let old = ops::run(repo, &["rev-parse", "HEAD"])?;
+    let mode = if hard { "--hard" } else { "--mixed" };
+    ops::run(repo, &["reset", mode, oid])?;
+    Ok(Some(format!(
+        "Moved this branch to {}. To undo it, run `git reset --hard {}`.",
+        short_oid(oid),
+        short_oid(old.trim())
     )))
 }
 
@@ -370,5 +404,45 @@ mod tests {
                 .git(&["diff", "--name-only", "--diff-filter=U"])
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn several_commits_are_copied_in_order_and_reverted_together() {
+        let repo = Repo::new();
+        repo.write("a", "1\n");
+        repo.commit("base");
+        repo.git(&["checkout", "-q", "-b", "side"]);
+        repo.write("b", "2\n");
+        let first = repo.commit("add b");
+        repo.write("c", "3\n");
+        let second = repo.commit("add c");
+        repo.git(&["checkout", "-q", "main"]);
+
+        let message = cherry_pick_many(repo.path(), &[first, second])
+            .unwrap()
+            .unwrap();
+        assert!(message.contains("2 commits"));
+        assert!(repo.path().join("b").exists() && repo.path().join("c").exists());
+
+        let head = repo.git(&["rev-parse", "HEAD"]);
+        let before = repo.git(&["rev-parse", "HEAD~1"]);
+        revert_many(repo.path(), &[head, before]).unwrap();
+        assert!(!repo.path().join("b").exists() && !repo.path().join("c").exists());
+    }
+
+    #[test]
+    fn a_reset_keeps_or_discards_changes_and_says_how_to_go_back() {
+        let repo = Repo::new();
+        repo.write("a", "1\n");
+        let first = repo.commit("one");
+        repo.write("a", "2\n");
+        repo.commit("two");
+
+        let message = reset(repo.path(), &first, false).unwrap().unwrap();
+        assert!(message.contains("git reset --hard"));
+        assert_eq!(repo.read("a"), "2\n");
+
+        reset(repo.path(), &first, true).unwrap();
+        assert_eq!(repo.read("a"), "1\n");
     }
 }
