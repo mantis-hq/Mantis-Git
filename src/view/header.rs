@@ -37,7 +37,13 @@ impl GraphView {
             .when(loading, |bar| {
                 bar.child(Spinner::new().small())
                     .when_some(self.busy.clone(), |bar, label| {
-                        bar.child(div().flex_none().text_sm().text_color(muted).child(label))
+                        bar.child(
+                            div()
+                                .flex_none()
+                                .text_size(px(13.))
+                                .text_color(muted)
+                                .child(label),
+                        )
                     })
             })
             .children(self.render_rebase_button(cx))
@@ -90,7 +96,7 @@ impl GraphView {
             .flex_1()
             .min_w_0()
             .overflow_hidden()
-            .text_size(px(15.))
+            .text_size(px(14.))
             .text_color(crate::theme::tokens(theme.is_dark()).subtext0)
             .when(self.status == Status::Loaded, |line| line.children(spans))
     }

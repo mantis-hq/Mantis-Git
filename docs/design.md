@@ -76,12 +76,15 @@ are off, so that code reads as it was written.
 
 | Role            | Size / line height | Weight |
 | --------------- | ------------------ | ------ |
-| Commit title    | 18 / 24            | 600    |
-| Status sentence | 15 / 20            | 400    |
-| Lists and body  | 14 / 20            | 400    |
-| Section label   | 13 / 18            | 500    |
-| Code and diffs  | 13 / 22            | 400    |
-| Chips           | 12                 | 600    |
+| Commit title    | 16 / 22            | 600    |
+| Status sentence | 14 / 20            | 400    |
+| Lists and body  | 13 / 18            | 400    |
+| Section label   | 12 / 16            | 500    |
+| Code and diffs  | 12 / 20            | 400    |
+| Chips           | 11                 | 600    |
+
+These follow common desktop and editor practice, where interface text is 12 to 13 px
+and code is 12 to 13 px. Larger text would crowd the three-panel layout at 1200×800.
 
 In commit subjects, draw the Conventional Commit prefix (`feat: `) in Overlay 2 so the
 description stands out. Draw merge commit subjects in Subtext 0.
@@ -178,13 +181,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Selecting commits:** a click selects one, `Ctrl`-click adds or removes one, and
   `Shift`-click adds the range. Selected rows take the selected-row fill, and the menu
   then acts on all of them.
-- **Inspector actions:** "Check out" names the branch when one is at the commit. Commands
-  that add a commit say how to undo it in the band under the header.
-- **Commit form:** the bump card only shows when the repository has `v1.2.3` style tags to
 - **Working changes:** the inspector opens with the status sentence and the one blue
   button, "Review and commit", and lists the changed files under them exactly as it does
   for a commit, so a file's diff is one click away. Diffs open on a click, never on
   their own. The list and an open diff refresh when the window is used again.
+- **Inspector actions:** "Check out" names the branch when one is at the commit. Commands
+  that add a commit say how to undo it in the band under the header.
+- **Commit form:** the bump card only shows when the repository has `v1.2.3` style tags to
   count from. Hunks start ticked, except that files with nothing staged start unticked
   when something else is staged, so work staged from a terminal carries over.
 - **Conflicts:** buttons name the branch ("Use feat/x"), never "mine", in line with

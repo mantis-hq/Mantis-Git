@@ -239,7 +239,7 @@ impl Dock {
                     div()
                         .min_w_0()
                         .truncate()
-                        .text_sm()
+                        .text_size(px(13.))
                         .text_color(muted)
                         .child(format!("{command} · {summary}")),
                 )
@@ -306,7 +306,7 @@ impl Dock {
             return div()
                 .flex_1()
                 .p_4()
-                .text_sm()
+                .text_size(px(13.))
                 .text_color(muted)
                 .child(
                     "Every git command the app runs is listed here, with its output as it arrives.",
@@ -420,7 +420,7 @@ impl Dock {
                 parts::panel_row(("log-command", id as usize), id == shown, cx)
                     .h(px(28.))
                     .w_full()
-                    .text_size(px(13.))
+                    .text_size(px(12.))
                     .whitespace_nowrap()
                     .on_click(cx.listener(move |this, _, _, cx| this.select(id, cx)))
                     .child(div().flex_1().min_w_0().truncate().child(title))
@@ -465,7 +465,7 @@ fn output_header(id: u64, cx: &App) -> Div {
         .px_3()
         .gap_3()
         .items_center()
-        .text_size(px(13.))
+        .text_size(px(12.))
         .whitespace_nowrap()
         .border_b_1()
         .border_color(border)
@@ -491,7 +491,7 @@ fn output_lines(id: u64, range: Range<usize>, cx: &mut App) -> Vec<Div> {
             .h_flex()
             .h(px(ROW_HEIGHT))
             .px_3()
-            .text_size(px(13.))
+            .text_size(px(12.))
             .whitespace_nowrap()
     };
 

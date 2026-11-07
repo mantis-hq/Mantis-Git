@@ -32,13 +32,13 @@ pub(super) fn header_divider(cx: &App) -> Div {
 /// Commit title type, for the largest text on a panel.
 pub(super) fn title() -> Div {
     div()
-        .text_size(px(18.))
-        .line_height(px(24.))
+        .text_size(px(16.))
+        .line_height(px(22.))
         .font_semibold()
 }
 
 pub(super) fn section_label(muted: Hsla) -> Div {
-    div().text_size(px(13.)).font_medium().text_color(muted)
+    div().text_size(px(12.)).font_medium().text_color(muted)
 }
 
 /// A row in a side panel that can be picked.
@@ -72,7 +72,7 @@ pub(super) fn tab(id: impl Into<ElementId>, active: bool, cx: &App) -> Stateful<
         .items_center()
         .rounded(px(6.))
         .cursor_pointer()
-        .text_sm()
+        .text_size(px(13.))
         .when(active, |tab| tab.bg(selected).text_color(theme.foreground))
         .when(!active, |tab| {
             tab.text_color(theme.muted_foreground)

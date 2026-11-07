@@ -253,7 +253,7 @@ impl GraphView {
             .child(
                 div()
                     .flex_none()
-                    .text_xs()
+                    .text_size(px(11.))
                     .text_color(muted)
                     .child(count.to_string()),
             )
@@ -398,7 +398,7 @@ impl GraphView {
                                                 div()
                                                     .id("show-all")
                                                     .cursor_pointer()
-                                                    .text_size(px(13.))
+                                                    .text_size(px(12.))
                                                     .font_medium()
                                                     .text_color(link)
                                                     .child("Show all")
@@ -417,7 +417,7 @@ impl GraphView {
                                     div()
                                         .mt_1()
                                         .px_2()
-                                        .text_size(px(13.))
+                                        .text_size(px(12.))
                                         .text_color(muted)
                                         .child("Click a branch to trace its history."),
                                 ),
@@ -469,7 +469,13 @@ impl GraphView {
                     .when(strong, |name| name.font_semibold())
                     .child(name.to_owned()),
             )
-            .child(div().flex_none().text_xs().text_color(muted).child(detail))
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(px(11.))
+                    .text_color(muted)
+                    .child(detail),
+            )
     }
 
     fn render_section(
@@ -540,7 +546,7 @@ impl GraphView {
             .child(title)
             .child(
                 div()
-                    .text_xs()
+                    .text_size(px(11.))
                     .text_color(theme.muted_foreground)
                     .child(count.to_string()),
             )

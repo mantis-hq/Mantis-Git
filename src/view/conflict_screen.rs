@@ -295,7 +295,7 @@ impl GraphView {
                     .h(px(22.))
                     .px_2()
                     .rounded(px(4.))
-                    .text_size(px(13.))
+                    .text_size(px(12.))
                     .font_semibold()
                     .bg(pill_color)
                     .text_color(on_pill)
@@ -306,7 +306,7 @@ impl GraphView {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_size(px(15.))
+                    .text_size(px(14.))
                     .text_color(colors.subtext0)
                     .child(sentence),
             )
@@ -376,7 +376,7 @@ impl GraphView {
             .when(!finished, |column| {
                 column.child(
                     div()
-                        .text_size(px(13.))
+                        .text_size(px(12.))
                         .text_color(muted)
                         .child(shown.cancel_note()),
                 )
@@ -441,7 +441,7 @@ impl GraphView {
                     .child(
                         div()
                             .flex_1()
-                            .text_size(px(13.))
+                            .text_size(px(12.))
                             .text_color(subtext)
                             .child(location),
                     )
@@ -449,7 +449,7 @@ impl GraphView {
                         row.child(
                             div()
                                 .flex_none()
-                                .text_size(px(13.))
+                                .text_size(px(12.))
                                 .text_color(subtext)
                                 .child(format!("{} of {count}", index + 1)),
                         )
@@ -538,7 +538,7 @@ impl GraphView {
                     .px_3()
                     .py_2()
                     .overflow_hidden()
-                    .text_size(px(13.))
+                    .text_size(px(12.))
                     .text_color(foreground)
                     .border_t_1()
                     .border_color(border)
@@ -586,7 +586,7 @@ impl GraphView {
                     .justify_between()
                     .gap_3()
                     .child(div().font_semibold().child("Result"))
-                    .child(div().text_size(px(13.)).text_color(hint_color).child(hint)),
+                    .child(div().text_size(px(12.)).text_color(hint_color).child(hint)),
             )
             .children(
                 self.conflict
@@ -669,6 +669,6 @@ fn render_step(step: &Step, finished: bool, last: bool, cx: &App) -> impl IntoEl
                         .when(state == StepState::Paused, |title| title.font_semibold())
                         .child(step.subject.clone()),
                 )
-                .child(div().text_size(px(13.)).text_color(muted).child(note)),
+                .child(div().text_size(px(12.)).text_color(muted).child(note)),
         )
 }

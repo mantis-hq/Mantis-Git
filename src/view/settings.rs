@@ -981,7 +981,7 @@ impl Settings {
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_size(px(15.))
+                .text_size(px(14.))
                 .text_color(color)
                 .child(text),
         )
@@ -993,7 +993,7 @@ impl Settings {
         let pages = Page::ALL.into_iter().enumerate().map(|(index, page)| {
             panel_row(("page", index), self.page == page, cx)
                 .h(px(32.))
-                .text_size(px(14.))
+                .text_size(px(13.))
                 .child(page.name())
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.page = page;
@@ -1028,7 +1028,7 @@ impl Settings {
             .child(title().child(name.to_owned()))
             .child(
                 div()
-                    .text_size(px(15.))
+                    .text_size(px(14.))
                     .line_height(px(20.))
                     .text_color(subtext)
                     .child(sentence.to_owned()),
@@ -1043,7 +1043,7 @@ impl Settings {
             .gap_3()
             .child(
                 div()
-                    .text_size(px(14.))
+                    .text_size(px(13.))
                     .line_height(px(20.))
                     .text_color(danger)
                     .child(message.to_owned()),
@@ -1089,7 +1089,7 @@ impl Settings {
                 None => ("Reading your git config…".to_owned(), muted),
             };
             return page
-                .child(div().text_size(px(14.)).text_color(color).child(text))
+                .child(div().text_size(px(13.)).text_color(color).child(text))
                 .into_any_element();
         };
 
@@ -1113,7 +1113,7 @@ impl Settings {
         let muted = cx.theme().muted_foreground;
         let Some(repo) = self.repo.as_deref() else {
             return div()
-                .text_size(px(13.))
+                .text_size(px(12.))
                 .text_color(muted)
                 .child("Open a repository to change its settings on their own.")
                 .into_any_element();
@@ -1195,14 +1195,14 @@ impl Settings {
             .when(too_old.is_some(), |words| words.opacity(0.6))
             .child(
                 div()
-                    .text_size(px(14.))
+                    .text_size(px(13.))
                     .line_height(px(20.))
                     .child(setting.label),
             )
             .child(
                 div()
-                    .text_size(px(13.))
-                    .line_height(px(18.))
+                    .text_size(px(12.))
+                    .line_height(px(17.))
                     .text_color(muted)
                     .child(hint),
             )
@@ -1217,8 +1217,8 @@ impl Settings {
                             format!("{} {value}", note.trim_end_matches('.').to_owned() + ":")
                         };
                         div()
-                            .text_size(px(13.))
-                            .line_height(px(18.))
+                            .text_size(px(12.))
+                            .line_height(px(17.))
                             .text_color(muted)
                             .child(shown)
                     }),
@@ -1330,8 +1330,8 @@ impl Settings {
                 div()
                     .px_4()
                     .py_3()
-                    .text_size(px(13.))
-                    .line_height(px(18.))
+                    .text_size(px(12.))
+                    .line_height(px(17.))
                     .text_color(muted)
                     .child(
                         "No aliases yet. An alias named co that runs checkout lets you type git co.",
@@ -1352,7 +1352,7 @@ impl Settings {
                             .w(NAME_WIDTH)
                             .flex_none()
                             .truncate()
-                            .text_size(px(14.))
+                            .text_size(px(13.))
                             .child(format!("git {}", row.name)),
                     )
                     .child(div().flex_1().min_w_0().child(Input::new(&row.input)))
@@ -1433,8 +1433,8 @@ impl Settings {
         let muted = cx.theme().muted_foreground;
         let quiet = |text: String| {
             div()
-                .text_size(px(13.))
-                .line_height(px(18.))
+                .text_size(px(12.))
+                .line_height(px(17.))
                 .text_color(muted)
                 .child(text)
         };
@@ -1498,7 +1498,7 @@ impl Settings {
                     .gap_3()
                     .child(
                         div()
-                            .text_size(px(14.))
+                            .text_size(px(13.))
                             .line_height(px(20.))
                             .child(state.committing.sentence()),
                     )
@@ -1543,11 +1543,11 @@ impl Settings {
                 .v_flex()
                 .flex_1()
                 .min_w_0()
-                .child(div().text_size(px(14.)).font_semibold().child("Default"))
+                .child(div().text_size(px(13.)).font_semibold().child("Default"))
                 .child(
                     div()
-                        .text_size(px(13.))
-                        .line_height(px(18.))
+                        .text_size(px(12.))
+                        .line_height(px(17.))
                         .text_color(muted)
                         .child("Your global name and email, used when no rule or choice picks another. Change them on the Git config page."),
                 ),
@@ -1584,7 +1584,7 @@ impl Settings {
                     div()
                         .min_h(px(32.))
                         .truncate()
-                        .text_size(px(14.))
+                        .text_size(px(13.))
                         .line_height(px(32.))
                         .when(value.is_empty(), |value| value.text_color(muted))
                         .child(if value.is_empty() { "Not set" } else { value }.to_owned()),
@@ -1668,8 +1668,8 @@ impl Settings {
             })
             .child(
                 div()
-                    .text_size(px(13.))
-                    .line_height(px(18.))
+                    .text_size(px(12.))
+                    .line_height(px(17.))
                     .text_color(muted)
                     .child(
                         "Fetch, pull and push use this key, and only this one, wherever the identity applies.",
@@ -1709,7 +1709,7 @@ impl Settings {
                     .gap_1()
                     .rounded(px(6.))
                     .bg(selected)
-                    .text_size(px(13.))
+                    .text_size(px(12.))
                     .text_color(quiet)
                     .child(sentence_case(&matcher.describe()))
                     .child(
@@ -1733,8 +1733,8 @@ impl Settings {
         area = if shown.is_empty() {
             area.child(
                 div()
-                    .text_size(px(13.))
-                    .line_height(px(18.))
+                    .text_size(px(12.))
+                    .line_height(px(17.))
                     .text_color(muted)
                     .child("Nothing yet. Pick it by hand for a repository, or add a rule."),
             )
@@ -1811,8 +1811,8 @@ impl Settings {
             .child(Input::new(&row.rule))
             .child(
                 div()
-                    .text_size(px(13.))
-                    .line_height(px(18.))
+                    .text_size(px(12.))
+                    .line_height(px(17.))
                     .text_color(muted)
                     .child(help),
             )
@@ -1988,7 +1988,7 @@ fn chip(id: impl Into<ElementId>, label: &str, on: bool, cx: &App) -> Stateful<D
         .gap_1()
         .rounded(px(6.))
         .cursor_pointer()
-        .text_size(px(13.))
+        .text_size(px(12.))
         .when(on, |chip| {
             chip.bg(selected).text_color(text).font_semibold()
         })

@@ -9,7 +9,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::time::Duration;
 
-pub(super) const FONT_SIZE: f32 = 13.;
+pub(super) const FONT_SIZE: f32 = 12.;
 /// The design's line height for code.
 pub(super) const ROW_HEIGHT: f32 = 22.;
 const PADDING_X: f32 = 12.;
@@ -148,7 +148,7 @@ impl Render for TerminalPane {
             Err(message) => {
                 return shell
                     .p_3()
-                    .text_sm()
+                    .text_size(px(13.))
                     .text_color(muted)
                     .child(message.clone())
                     .into_any_element();
@@ -192,7 +192,7 @@ impl Render for TerminalPane {
                         .absolute()
                         .right_3()
                         .bottom_2()
-                        .text_sm()
+                        .text_size(px(13.))
                         .text_color(muted)
                         .child(format!("{message} Close this tab, or open a new one.")),
                 )

@@ -129,7 +129,7 @@ impl GraphView {
                         col.child(
                             div()
                                 .flex_none()
-                                .text_xs()
+                                .text_size(px(11.))
                                 .text_color(muted)
                                 .child(format!("+{}", chips.len() - MAX_VISIBLE_REFS)),
                         )
@@ -190,7 +190,7 @@ impl GraphView {
                     .w_full()
                     .pr_3()
                     .gap_3()
-                    .text_sm()
+                    .text_size(px(13.))
                     .bg(row_background)
                     .when(!commit_lit, |row| row.opacity(FADED_ROW))
                     .when(!selected, |row| row.hover(|style| style.bg(hover)))
@@ -366,7 +366,7 @@ fn ref_label(
         .max_w(px(REFS_WIDTH - 36.))
         .px_1p5()
         .rounded(px(4.))
-        .text_xs()
+        .text_size(px(11.))
         .font_semibold()
         .text_color(text)
         .bg(fill)

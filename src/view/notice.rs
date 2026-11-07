@@ -76,7 +76,7 @@ impl GraphView {
                 .px_4()
                 .py_1()
                 .gap_3()
-                .text_sm()
+                .text_size(px(13.))
                 .bg(header)
                 .border_b_1()
                 .border_color(border)
