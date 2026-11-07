@@ -7,6 +7,7 @@
 use super::dock::{Dock, NewTerminal, ToggleDock};
 use super::parts::TEXT_BODY;
 use super::{GraphView, parts, repository_name};
+use gitclient_core::state::AppState;
 use gpui_kit::component::button::*;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
@@ -43,16 +44,66 @@ pub struct Workspace {
     tabs: Vec<Entity<GraphView>>,
     active: usize,
     dock: Entity<Dock>,
+    /// Where the open repositories are remembered. `None` remembers nothing, as in tests.
+    state_file: Option<PathBuf>,
+    /// The tabs and front tab last written, so that only a change writes.
+    saved: Option<(Vec<PathBuf>, usize)>,
 }
 
 impl Workspace {
     /// A workspace with one empty tab.
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let first = cx.new(|cx| GraphView::new(window, cx));
-        Self {
+        let this = Self {
             tabs: vec![first],
             active: 0,
             dock: cx.new(Dock::new),
+            state_file: None,
+            saved: None,
+        };
+        this.track(0, cx);
+        this
+    }
+
+    /// Starts remembering the open repositories in `file`. Call it once the tabs from
+    /// the last run are back, so that opening them one by one doesn't overwrite the rest.
+    pub fn remember_in(&mut self, file: Option<PathBuf>, cx: &mut Context<Self>) {
+        self.state_file = file;
+        self.persist(cx);
+    }
+
+    /// Saves when the tab at `index` changes, since a tab can open a repository itself.
+    fn track(&self, index: usize, cx: &mut Context<Self>) {
+        cx.observe(&self.tabs[index], |this, _, cx| this.persist(cx))
+            .detach();
+    }
+
+    /// Writes the open repositories and the front tab, unless that is what is saved.
+    /// Empty tabs aren't kept, and the file's other settings are left as they are.
+    fn persist(&mut self, cx: &App) {
+        let Some(file) = &self.state_file else {
+            return;
+        };
+        if self.active >= self.tabs.len() {
+            return;
+        }
+        let mut open = Vec::new();
+        let mut front = 0;
+        for (index, tab) in self.tabs.iter().enumerate() {
+            if index == self.active {
+                front = open.len();
+            }
+            open.extend(tab.read(cx).repository().map(Path::to_owned));
+        }
+        let now = (open, front);
+        if self.saved.as_ref() == Some(&now) {
+            return;
+        }
+        let mut state = AppState::load(file);
+        (state.tabs, state.active) = now.clone();
+        match state.save(file) {
+            Ok(()) => self.saved = Some(now),
+            Err(error) => eprintln!("{error}"),
         }
     }
 
@@ -128,6 +179,7 @@ impl Workspace {
     pub fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let view = cx.new(|cx| GraphView::new(window, cx));
         self.tabs.insert(self.active + 1, view);
+        self.track(self.active + 1, cx);
         self.activate(self.active + 1, window, cx);
     }
 
@@ -138,6 +190,7 @@ impl Workspace {
         if self.tabs.len() == 1 {
             // The last tab empties instead of closing, so the window never has nothing.
             self.tabs[0] = cx.new(|cx| GraphView::new(window, cx));
+            self.track(0, cx);
             self.activate(0, window, cx);
             return;
         }
@@ -166,6 +219,7 @@ impl Workspace {
         }
         let focus = self.tabs[index].read(cx).focus_handle().clone();
         window.focus(&focus, cx);
+        self.persist(cx);
         cx.notify();
     }
 
@@ -319,6 +373,7 @@ fn canonical(path: &Path) -> PathBuf {
 mod tests {
     use super::Workspace;
     use crate::view::bind_keys;
+    use gitclient_core::state::AppState;
     use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 
     fn open_workspace(cx: &mut TestAppContext) -> (Entity<Workspace>, VisualTestContext) {
@@ -443,5 +498,62 @@ mod tests {
             (2, 0),
             "switches to the tab already showing it"
         );
+    }
+
+    #[gpui_kit::test]
+    fn open_repositories_and_the_front_tab_are_remembered_and_empty_tabs_are_not(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, mut cx) = open_workspace(cx);
+        let state_dir = tempfile::tempdir().unwrap();
+        let file = state_dir.path().join("config").join("state");
+        let (one, two) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+
+        // Nothing is written until remembering starts, as while the last run's tabs return.
+        view.update_in(&mut cx, |view, window, cx| {
+            view.open(one.path().to_owned(), window, cx)
+        });
+        assert!(!file.exists());
+
+        view.update(&mut cx, |view, cx| view.remember_in(Some(file.clone()), cx));
+        assert_eq!(AppState::load(&file).tabs, vec![one.path().to_owned()]);
+
+        view.update_in(&mut cx, |view, window, cx| {
+            view.open(two.path().to_owned(), window, cx)
+        });
+        cx.simulate_keystrokes("ctrl-t");
+        let saved = AppState::load(&file);
+        assert_eq!(
+            saved.tabs,
+            vec![one.path().to_owned(), two.path().to_owned()]
+        );
+        assert_eq!(saved.active, 2, "an empty tab in front points past the end");
+
+        view.update_in(&mut cx, |view, window, cx| view.activate(0, window, cx));
+        assert_eq!(AppState::load(&file).active, 0);
+
+        view.update_in(&mut cx, |view, window, cx| view.close_tab(0, window, cx));
+        assert_eq!(AppState::load(&file).tabs, vec![two.path().to_owned()]);
+    }
+
+    #[gpui_kit::test]
+    fn remembering_keeps_the_settings_already_in_the_file(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_workspace(cx);
+        let state_dir = tempfile::tempdir().unwrap();
+        let file = state_dir.path().join("state");
+        AppState {
+            reopen_tabs: false,
+            ..Default::default()
+        }
+        .save(&file)
+        .unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        view.update_in(&mut cx, |view, window, cx| {
+            view.open(repo.path().to_owned(), window, cx)
+        });
+        view.update(&mut cx, |view, cx| view.remember_in(Some(file.clone()), cx));
+        let saved = AppState::load(&file);
+        assert!(!saved.reopen_tabs);
+        assert_eq!(saved.tabs, vec![repo.path().to_owned()]);
     }
 }

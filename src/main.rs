@@ -1,14 +1,19 @@
 use gitclient::theme;
 use gitclient::view::{self, Workspace};
+use gitclient_core::state::{self, AppState};
 use gpui_kit::*;
 use std::path::PathBuf;
 
 fn main() {
-    // Each path on the command line gets a tab; with none, the current folder does.
-    let mut repos: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
-    if repos.is_empty() {
-        repos.extend(std::env::current_dir().ok());
-    }
+    // Each path on the command line gets a tab. With none, the repositories left open
+    // last time come back, and failing that the current folder opens.
+    let given: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    let state_file = state::default_file();
+    let saved = state_file
+        .as_deref()
+        .map(AppState::load)
+        .unwrap_or_default();
+    let startup = saved.startup(&given, std::env::current_dir().ok());
 
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
@@ -35,9 +40,12 @@ fn main() {
             theme::follow_system(window, cx);
             cx.new(|cx| {
                 let mut workspace = Workspace::new(window, cx);
-                for repo in repos {
+                for repo in startup.tabs {
                     workspace.open(repo, window, cx);
                 }
+                workspace.activate(startup.active, window, cx);
+                // Only now, so that opening the tabs one by one doesn't overwrite the rest.
+                workspace.remember_in(state_file, cx);
                 workspace
             })
         })

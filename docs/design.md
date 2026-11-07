@@ -132,6 +132,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     key is a path, typed or picked from chips for the key pairs in `~/.ssh`, and makes git
     fetch, pull and push with that key alone wherever the identity applies. There is no
     page for SSH config: the app never reads or writes it beyond suggesting host names.
+  - **App** holds what gitclient itself remembers, apart from git. The first is "Reopen
+    repositories on launch", on by default: a tick box in a card under "Startup", with a
+    sentence that says what it does now. The open repositories and the front tab are saved
+    as they change, in a small text file in the system's config folder (`state` inside
+    `gitclient`), and empty tabs are left out. A path on the command line wins over the
+    remembered tabs, and a folder that is gone is skipped. If there is no config folder the
+    page says so and the tick box is not drawn.
 - Dock: a 36 px Mantle bar along the bottom of the window with a 1 px Surface 0 top
   border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
   under the bar, so history stays in view. `Ctrl \`` shows and hides it, and

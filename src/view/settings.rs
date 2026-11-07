@@ -14,6 +14,7 @@ use crate::theme::{selected_row, tokens};
 use gitclient_core::config::{self, Kind, Scope, Setting, Sources, Values, Version};
 use gitclient_core::identity::{self, Book, Choice, Identity, Match, Profile, RepoState};
 use gitclient_core::ssh;
+use gitclient_core::state::{self, AppState};
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::*;
@@ -93,15 +94,17 @@ pub fn should_quit(cx: &App) -> bool {
 enum Page {
     GitConfig,
     Identities,
+    App,
 }
 
 impl Page {
-    const ALL: [Page; 2] = [Page::GitConfig, Page::Identities];
+    const ALL: [Page; 3] = [Page::GitConfig, Page::Identities, Page::App];
 
     fn name(self) -> &'static str {
         match self {
             Page::GitConfig => "Git config",
             Page::Identities => "Identities",
+            Page::App => "App",
         }
     }
 }
@@ -258,6 +261,10 @@ pub struct Settings {
     new_identity_email: Entity<InputState>,
     new_identity_key: Entity<InputState>,
     new_identity_ssh: Entity<InputState>,
+    /// The app's own preferences, and the file that keeps them. There is no file when
+    /// the window edits a test config, or when the system has no home folder.
+    app: AppState,
+    state_file: Option<PathBuf>,
     feedback: Feedback,
     /// Inputs the user has typed in since they were last saved or filled in.
     dirty: std::collections::HashSet<String>,
@@ -346,6 +353,9 @@ impl Settings {
             ));
         }
 
+        let state_file = matches!(base, Scope::Global)
+            .then(state::default_file)
+            .flatten();
         let mut this = Self {
             base,
             repo,
@@ -369,6 +379,11 @@ impl Settings {
             new_identity_email,
             new_identity_key,
             new_identity_ssh,
+            app: state_file
+                .as_deref()
+                .map(AppState::load)
+                .unwrap_or_default(),
+            state_file,
             feedback: Feedback::None,
             dirty: Default::default(),
             _new_inputs: new_inputs,
@@ -976,6 +991,7 @@ impl Settings {
                         "Identities are kept next to your global git config and save as you make them."
                             .to_owned()
                     }
+                    Page::App => "App preferences save as you make them.".to_owned(),
                 },
                 tokens(theme.is_dark()).subtext0,
             ),
@@ -1915,6 +1931,79 @@ impl Settings {
             cx,
         )
     }
+
+    /// Turns "reopen repositories on launch" on or off and saves it at once.
+    fn set_reopen_tabs(&mut self, on: bool, cx: &mut Context<Self>) {
+        let Some(file) = &self.state_file else {
+            return;
+        };
+        // Read again, so that the tabs the main window saved meanwhile are kept.
+        let mut state = AppState::load(file);
+        state.reopen_tabs = on;
+        match state.save(file) {
+            Ok(()) => {
+                self.feedback = Feedback::Saved(state.reopen_saved_message().to_owned());
+                self.app = state;
+            }
+            Err(error) => self.feedback = Feedback::Failed(error),
+        }
+        cx.notify();
+    }
+
+    fn render_app(&self, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let on = self.app.reopen_tabs;
+        let words = div()
+            .v_flex()
+            .flex_1()
+            .min_w_0()
+            .gap_0p5()
+            .child(
+                div()
+                    .text_size(TEXT_BODY)
+                    .line_height(px(20.))
+                    .child("Reopen repositories on launch"),
+            )
+            .child(
+                div()
+                    .text_size(TEXT_SMALL)
+                    .line_height(px(17.))
+                    .text_color(muted)
+                    .child(match &self.state_file {
+                        Some(_) => self.app.reopen_sentence(),
+                        None => "gitclient can't find a folder to keep this in.",
+                    }),
+            );
+        let switch = self.state_file.is_some().then(|| {
+            checkbox("reopen-tabs", on, false, cx)
+                .on_click(cx.listener(move |this, _, _, cx| this.set_reopen_tabs(!on, cx)))
+        });
+        div()
+            .v_flex()
+            .gap_6()
+            .w_full()
+            .max_w(PAGE_WIDTH)
+            .child(self.page_head(
+                "App",
+                "What gitclient itself remembers. Git settings are on the other pages.",
+                cx,
+            ))
+            .child(self.render_group(
+                "Startup",
+                vec![
+                    div()
+                        .px_4()
+                        .py_3()
+                        .gap_3()
+                        .h_flex()
+                        .child(words)
+                        .children(switch)
+                        .into_any_element(),
+                ],
+                cx,
+            ))
+            .into_any_element()
+    }
 }
 
 impl Render for Settings {
@@ -1924,6 +2013,7 @@ impl Render for Settings {
         let page = match self.page {
             Page::GitConfig => self.render_git_config(cx),
             Page::Identities => self.render_identities(cx),
+            Page::App => self.render_app(cx),
         };
         let body = div()
             .h_flex()
@@ -2013,6 +2103,7 @@ fn chip(id: impl Into<ElementId>, label: &str, on: bool, cx: &App) -> Stateful<D
 #[cfg(test)]
 mod tests {
     use super::{Feedback, Match, Scope, Settings, Target, config, identity};
+    use gitclient_core::state::AppState;
     use gitclient_core::testing::Repo;
     use gpui_kit::component::input::InputEvent;
     use gpui_kit::{Entity, Focusable as _, TestAppContext, VisualTestContext};
@@ -2444,5 +2535,61 @@ mod tests {
             );
         });
         assert!(identity::book(&scope).unwrap().identities.is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn the_reopen_switch_saves_at_once_and_keeps_the_remembered_tabs(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("state");
+        let remembered = AppState {
+            tabs: vec!["/work/a".into()],
+            ..Default::default()
+        };
+        remembered.save(&file).unwrap();
+        let scope = Scope::File(dir.path().join("gitconfig"));
+        let (view, mut cx) = open(None, scope, cx);
+
+        // A window on a test config has nowhere to save, so the switch does nothing.
+        view.update(&mut cx, |settings, cx| settings.set_reopen_tabs(false, cx));
+        assert!(AppState::load(&file).reopen_tabs);
+
+        view.update(&mut cx, |settings, cx| {
+            settings.state_file = Some(file.clone());
+            settings.set_reopen_tabs(false, cx);
+        });
+        let saved = AppState::load(&file);
+        assert!(!saved.reopen_tabs);
+        assert_eq!(saved.tabs, remembered.tabs, "the tabs are left alone");
+        view.read_with(&cx, |settings, _| {
+            assert!(!settings.app.reopen_tabs);
+            assert!(matches!(
+                &settings.feedback,
+                Feedback::Saved(message) if message.contains("without")
+            ));
+        });
+
+        view.update(&mut cx, |settings, cx| settings.set_reopen_tabs(true, cx));
+        assert!(AppState::load(&file).reopen_tabs);
+    }
+
+    #[gpui_kit::test]
+    fn a_state_file_that_cannot_be_written_is_reported_and_changes_nothing(
+        cx: &mut TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        // A folder where the file should be makes the write fail.
+        let file = dir.path().join("state");
+        std::fs::create_dir(&file).unwrap();
+        let scope = Scope::File(dir.path().join("gitconfig"));
+        let (view, mut cx) = open(None, scope, cx);
+
+        view.update(&mut cx, |settings, cx| {
+            settings.state_file = Some(file);
+            settings.set_reopen_tabs(false, cx);
+        });
+        view.read_with(&cx, |settings, _| {
+            assert!(settings.app.reopen_tabs, "still on, as saved");
+            assert!(matches!(settings.feedback, Feedback::Failed(_)));
+        });
     }
 }
