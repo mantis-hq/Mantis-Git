@@ -51,6 +51,7 @@ mod render {
     }
 
     fn commit(repo: &Path, subject: &str) {
+        git(repo, &["add", "-A"]);
         git(repo, &["commit", "-q", "--allow-empty", "-m", subject]);
     }
 
@@ -205,7 +206,60 @@ mod render {
         assert!(hues >= 3, "expected several lane colours, found {hues}");
     }
 
+    fn wait_for(cx: &mut HeadlessAppContext, done: impl Fn(&mut HeadlessAppContext) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !done(cx) {
+            assert!(Instant::now() < deadline, "timed out");
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn assert_conflict_screen_opens() {
+        let repo = tempfile::tempdir().unwrap();
+        let path = repo.path();
+        git(path, &["init", "-q", "-b", "main"]);
+        git(path, &["config", "user.name", "Ada"]);
+        git(path, &["config", "user.email", "ada@example.com"]);
+        git(path, &["config", "commit.gpgsign", "false"]);
+        let write = |text: &str| std::fs::write(path.join("parser.rs"), text).unwrap();
+        write("fn parse(input: &str) {\n    input.trim();\n}\n");
+        commit(path, "Add the parser");
+        git(path, &["checkout", "-q", "-b", "feat/parser"]);
+        commit(path, "Name the parser");
+        write("fn parse(input: &str) {\n    let line = input.trim();\n    line.len();\n}\n");
+        commit(path, "Measure the input");
+        commit(path, "Document the parser");
+        git(path, &["checkout", "-q", "main"]);
+        write("fn parse(input: &str) {\n    input.trim_end();\n}\n");
+        commit(path, "Keep leading spaces");
+        git(path, &["checkout", "-q", "feat/parser"]);
+        assert!(gitclient::conflict::rebase_onto(path, "main").is_ok());
+        assert!(
+            gitclient::conflict::detect(path).is_some(),
+            "fixture must conflict"
+        );
+
+        let mut cx = HeadlessAppContext::with_platform(
+            gpui_kit::platform::current_platform(true).text_system(),
+            Arc::new(Assets),
+            gpui_kit::platform::current_headless_renderer,
+        );
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            theme::init(cx);
+            view::bind_keys(cx);
+            Theme::change(ThemeMode::Dark, None, cx);
+        });
+        let (handle, view) = open(&mut cx, path);
+        wait_for(&mut cx, |cx| {
+            cx.update(|cx| view.read(cx).screen()) == view::Screen::Conflict
+        });
+        capture(&mut cx, handle, "conflict");
+    }
+
     pub fn run() {
+        assert_conflict_screen_opens();
         assert_draws_lanes(ThemeMode::Dark, "graph-dark");
         assert_draws_lanes(ThemeMode::Light, "graph-light");
         println!("render: passed (real offscreen renderer)");
