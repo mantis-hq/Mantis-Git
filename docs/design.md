@@ -105,7 +105,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   for the graph at the default window. A quiet button and `Ctrl B` open it at any width.
 - Task screens (commit, conflict) replace the sidebar and link back to the graph.
 - Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide. Rows have no
-  column headings or hash: the subject, then chips, then author and a short time
+  column headings or hash: the refs column, the graph, the subject, then author and a short time
   ("12m", "3h", "Tue", "Oct 30"). The full hash belongs to the inspector.
 - Radii: 4 px for chips and checkboxes, 6 px for buttons and inputs, 8 px for cards.
 - Separate regions with Surface 0 borders and surface changes. No drop shadows, no
@@ -132,8 +132,20 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Primary button:** 32 px, Blue fill, Crust text, weight 600. One per screen.
 - **Quiet button:** text only, Subtext 1, with a faint hover fill.
 - **Ref chips:** tinted with 14% of the branch colour, text in full colour. Only the
-  current branch gets a solid fill. Chips follow the subject, so subjects stay aligned.
+  current branch gets a solid fill. Chips sit in their own 180 px column left of the graph (one chip, then `+n`), so subjects stay aligned.
   A branch and its remote at the same commit are one chip with a small cloud.
+- **Menus:** right-clicking a branch, tag or commit opens one menu, and so does dropping
+  a branch or tag on a branch. A card on Mantle with a Surface 0 border, 8 px radius and
+  28 px lines, no shadow. A quiet heading says what it applies to; lines name their result
+  ("Merge feat/x into main", "Rebase main onto feat/x"). A line that can't be used stays,
+  in Overlay 2, and says why. Only lines that remove something are red, and they ask
+  first, saying how to undo. `Up`/`Down` move, `Enter` chooses, `Esc` closes.
+- **Drag and drop:** branches and tags drag from the sidebar and from the refs column,
+  and drop on local branches, which tint with 14% Blue. Dropping never acts: it opens a
+  menu of what fits how the two histories relate (fast-forward, merge, rebase).
+- **Selecting commits:** a click selects one, `Ctrl`-click adds or removes one, and
+  `Shift`-click adds the range. Selected rows take the selected-row fill, and the menu
+  then acts on all of them.
 - **Inspector actions:** "Check out" names the branch when one is at the commit. Commands
   that add a commit say how to undo it in the band under the header.
 - **Commit form:** the bump card only shows when the repository has `v1.2.3` style tags to

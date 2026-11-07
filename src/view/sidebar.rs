@@ -1,9 +1,11 @@
 //! The branch sidebar. Clicking a branch spotlights its history in the graph.
 
 use super::GraphView;
+use super::menu::wire_ref;
 use super::parts::{panel_row, section_label};
 use crate::theme::{lane_color, tokens};
-use gitclient_core::git::NamedRef;
+use gitclient_core::branch::Dragged;
+use gitclient_core::git::{NamedRef, RefKind};
 use gitclient_core::spotlight::Spotlight;
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -25,6 +27,7 @@ enum Section {
 
 /// A ref to place in a tree of folders.
 struct Leaf<'a> {
+    kind: RefKind,
     name: &'a str,
     tip: Arc<str>,
     color: Hsla,
@@ -35,7 +38,9 @@ struct Leaf<'a> {
 /// One clickable row: a branch, remote branch or tag.
 struct RefRow<'a> {
     id: ElementId,
+    /// What to call it in the list, which leaves out the folders it is in.
     name: &'a str,
+    target: Dragged,
     tip: Arc<str>,
     color: Hsla,
     detail: String,
@@ -283,6 +288,10 @@ impl GraphView {
                         RefRow {
                             id: (list, index).into(),
                             name: &label,
+                            target: Dragged {
+                                kind: leaf.kind,
+                                name: leaf.name.to_owned(),
+                            },
                             tip: leaf.tip.clone(),
                             color: leaf.color,
                             detail: leaf.detail.clone(),
@@ -339,6 +348,7 @@ impl GraphView {
             .branches
             .iter()
             .map(|branch| Leaf {
+                kind: RefKind::Branch,
                 name: &branch.name,
                 tip: branch.tip.clone(),
                 color: lane_color(branch.color, is_dark),
@@ -429,6 +439,7 @@ impl GraphView {
         let RefRow {
             id,
             name,
+            target,
             tip,
             color,
             detail,
@@ -443,10 +454,11 @@ impl GraphView {
         } else {
             theme.secondary_foreground
         };
-        panel_row(id, on, cx)
+        let row = panel_row(id, on, cx)
             .h(px(30.))
             .pl(indent(depth))
-            .on_click(cx.listener(move |this, _, _, cx| this.spotlight(tip.clone(), cx)))
+            .on_click(cx.listener(move |this, _, _, cx| this.spotlight(tip.clone(), cx)));
+        wire_ref(row, target, color, cx)
             .child(div().size(px(8.)).flex_none().rounded_full().bg(color))
             .child(
                 div()
@@ -475,6 +487,10 @@ impl GraphView {
             let leaves: Vec<Leaf> = refs
                 .iter()
                 .map(|named| Leaf {
+                    kind: match section {
+                        Section::Tags => RefKind::Tag,
+                        _ => RefKind::Remote,
+                    },
                     name: &named.name,
                     tip: named.tip.clone(),
                     color: match section {

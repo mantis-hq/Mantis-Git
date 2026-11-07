@@ -1,12 +1,15 @@
 //! Everything gitclient knows about a repository, with no user interface. This crate must
 //! not depend on gpui-kit, so that all of it can be tested without a window.
 
+pub mod branch;
 pub mod conflict;
 pub mod details;
 pub mod git;
 pub mod graph;
+pub mod menu;
 pub mod ops;
 pub mod patch;
+pub mod selection;
 pub mod spotlight;
 pub mod status;
 #[cfg(any(test, feature = "testing"))]

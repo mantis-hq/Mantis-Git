@@ -6,6 +6,7 @@ mod conflict_screen;
 mod diff;
 mod header;
 mod inspector;
+mod menu;
 mod notice;
 mod parts;
 mod rows;
@@ -15,6 +16,7 @@ mod workspace;
 pub use workspace::Workspace;
 
 use gitclient_core::git::{self, Entry, LoadEvent, Refs};
+use gitclient_core::selection::Selection;
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
@@ -39,7 +41,9 @@ actions!(
         SelectFirst,
         SelectLast,
         Refresh,
-        ToggleSidebar
+        ToggleSidebar,
+        CloseMenu,
+        ActivateMenu
     ]
 );
 
@@ -64,6 +68,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("f5", Refresh, context),
         KeyBinding::new(refresh, Refresh, context),
         KeyBinding::new(sidebar, ToggleSidebar, context),
+        KeyBinding::new("escape", CloseMenu, context),
+        KeyBinding::new("enter", ActivateMenu, context),
     ]);
 }
 
@@ -96,6 +102,10 @@ pub struct GraphView {
     selected: Option<usize>,
     /// Keeps the selection on the same commit when a reload reorders history.
     selected_oid: Option<Arc<str>>,
+    /// The commits marked beside `selected`, for actions on several at once.
+    selection: Selection,
+    /// The context menu, while one is open.
+    menu: Option<menu::Menu>,
     scroll: UniformListScrollHandle,
     focus: FocusHandle,
     load_task: Option<Task<()>>,
@@ -134,6 +144,8 @@ impl GraphView {
             max_columns: 0,
             selected: None,
             selected_oid: None,
+            selection: Selection::default(),
+            menu: None,
             scroll: UniformListScrollHandle::new(),
             focus,
             load_task: None,
@@ -340,13 +352,46 @@ impl GraphView {
         };
         self.selected = Some(index);
         self.selected_oid = Some(entry.commit.oid.clone());
+        self.selection.clear();
         self.scroll.scroll_to_item(index, ScrollStrategy::Nearest);
         self.selection_changed(cx);
         cx.notify();
     }
 
+    /// A click on a row: plain selects it, ctrl or cmd marks it beside the others, and shift
+    /// marks everything from the selected row to it.
+    fn click_row(&mut self, index: usize, modifiers: Modifiers, cx: &mut Context<Self>) {
+        let (Some(entry), Some(main)) = (self.entries.get(index), self.selected) else {
+            return self.select(index, cx);
+        };
+        let secondary = modifiers.secondary(cx);
+        if modifiers.shift {
+            self.selection.extend(&self.entries, main, index);
+        } else if secondary && index != main {
+            let oid = entry.commit.oid.clone();
+            self.selection.toggle(&oid);
+        } else if secondary {
+            // Unticking the main row hands the inspector to another marked one.
+            let Some(next) = self.selection.promote(&self.entries) else {
+                return;
+            };
+            let Some(next) = self.row_of(&next) else {
+                return;
+            };
+            let marked = std::mem::take(&mut self.selection);
+            self.select(next, cx);
+            self.selection = marked;
+        } else {
+            return self.select(index, cx);
+        }
+        cx.notify();
+    }
+
     /// Moves the selection, clamped to the list. Starts at the top if nothing is selected.
     fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        if delta.abs() == 1 && self.step_menu(delta, cx) {
+            return;
+        }
         let Some(last) = self.entries.len().checked_sub(1) else {
             return;
         };
@@ -477,9 +522,11 @@ impl Render for GraphView {
             Screen::Conflict => (None, self.render_conflict_screen(window, cx)),
         };
         let notice = self.render_notice(cx);
+        let menu = self.render_menu(cx);
 
         div()
             .v_flex()
+            .relative()
             .size_full()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
@@ -501,9 +548,12 @@ impl Render for GraphView {
             }))
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.reload(cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| this.toggle_sidebar(cx)))
+            .on_action(cx.listener(|this, _: &CloseMenu, _, cx| this.close_menu(cx)))
+            .on_action(cx.listener(|this, _: &ActivateMenu, _, cx| this.activate_menu(cx)))
             .children(bar)
             .children(notice)
             .child(content)
+            .children(menu)
     }
 }
 
@@ -517,7 +567,8 @@ fn repository_name(path: &Path) -> String {
 mod tests {
     // Not `super::*`: that would bring in GPUI's `test` macro, which shadows Rust's.
     use super::{Entry, GraphView, LoadEvent, Status, bind_keys};
-    use gitclient_core::git::Commit;
+    use gitclient_core::branch::Dragged;
+    use gitclient_core::git::{Commit, RefKind};
     use gitclient_core::graph::GraphBuilder;
     use gpui_kit::{Entity, Modifiers, TestAppContext, VisualTestContext, point, px};
     use std::sync::Arc;
@@ -732,5 +783,108 @@ mod tests {
         // The second row, below the 52px header.
         cx.simulate_click(point(px(300.), px(52. + 32. + 16.)), Modifiers::none());
         assert_eq!(view.read_with(&cx, |view, _| view.selected()), Some(1));
+    }
+
+    #[gpui_kit::test]
+    fn ctrl_and_shift_clicks_select_several_commits(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_view(cx);
+        load(&view, &["a", "b", "c", "d", "e"], &mut cx);
+        let subjects = |view: &GraphView| -> Vec<String> {
+            view.selection
+                .commits(&view.entries, view.selected)
+                .iter()
+                .map(|c| c.subject.to_string())
+                .collect()
+        };
+        view.update(&mut cx, |view, cx| {
+            view.click_row(1, Modifiers::none(), cx);
+            view.click_row(3, Modifiers::secondary_key(cx), cx);
+            assert_eq!(subjects(view), ["b", "d"]);
+            assert_eq!(view.selected, Some(1), "the inspector stays on the first");
+
+            view.click_row(3, Modifiers::secondary_key(cx), cx);
+            assert_eq!(subjects(view), ["b"]);
+
+            view.click_row(4, Modifiers::shift(), cx);
+            assert_eq!(subjects(view), ["b", "c", "d", "e"]);
+
+            // Unticking the main row passes it to another marked one.
+            view.click_row(1, Modifiers::secondary_key(cx), cx);
+            assert_eq!(subjects(view), ["c", "d", "e"]);
+            assert_eq!(view.selected, Some(2));
+
+            view.click_row(0, Modifiers::none(), cx);
+            assert_eq!(subjects(view), ["a"], "a plain click starts over");
+        });
+    }
+
+    #[gpui_kit::test]
+    fn right_clicking_opens_a_menu_for_the_whole_selection_and_escape_closes_it(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, mut cx) = open_view(cx);
+        load(&view, &["a", "b", "c"], &mut cx);
+        let labels = |view: &GraphView| -> Vec<String> {
+            view.menu
+                .as_ref()
+                .map(|menu| {
+                    menu.lines()
+                        .iter()
+                        .filter_map(|line| match line {
+                            gitclient_core::menu::Line::Item { label, .. } => Some(label.clone()),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        view.update(&mut cx, |view, cx| {
+            view.click_row(0, Modifiers::none(), cx);
+            view.click_row(1, Modifiers::secondary_key(cx), cx);
+            // Inside the selection: the menu is for both commits.
+            view.open_commit_menu(1, point(px(10.), px(10.)), cx);
+            assert!(labels(view)[0].starts_with("Cherry-pick 2 commits"));
+
+            // Outside it: the click selects that commit alone.
+            view.open_commit_menu(2, point(px(10.), px(10.)), cx);
+            assert_eq!(view.selected, Some(2));
+            assert_eq!(labels(view)[0], "Check out");
+
+            view.close_menu(cx);
+            assert!(view.menu.is_none());
+        });
+    }
+
+    #[gpui_kit::test]
+    fn the_keyboard_walks_a_menu_wraps_and_skips_lines_that_do_nothing(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_view(cx);
+        load(&view, &["a", "b"], &mut cx);
+        view.update(&mut cx, |view, cx| {
+            assert!(
+                !view.step_menu(1, cx),
+                "with no menu the keys move the selection"
+            );
+            let at = |view: &GraphView| view.menu.as_ref().unwrap().highlighted_label();
+
+            view.open_commit_menu(0, point(px(10.), px(10.)), cx);
+            view.step_menu(1, cx);
+            assert_eq!(at(view).as_deref(), Some("Check out"));
+            view.step_menu(-1, cx);
+            assert_eq!(
+                at(view).as_deref(),
+                Some("Copy subject"),
+                "wraps to the end"
+            );
+
+            // On the branch that is checked out, the first line only explains.
+            std::sync::Arc::make_mut(&mut view.refs).head_branch = Some("main".into());
+            let main = Dragged {
+                kind: RefKind::Branch,
+                name: "main".into(),
+            };
+            view.open_ref_menu(main, point(px(10.), px(10.)), cx);
+            view.step_menu(1, cx);
+            assert_eq!(at(view).as_deref(), Some("Copy name"));
+        });
     }
 }

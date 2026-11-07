@@ -531,8 +531,17 @@ pub fn rebase_warning(target: &str) -> String {
 
 /// Starts a rebase. A conflict isn't a failure, because the conflict screen takes over.
 pub fn rebase_onto(repo: &Path, target: &str) -> Result<Option<String>, String> {
+    rebase(repo, &[target])
+}
+
+/// Rebases `branch` onto `target`, checking `branch` out first.
+pub fn rebase_branch(repo: &Path, branch: &str, target: &str) -> Result<Option<String>, String> {
+    rebase(repo, &[target, branch])
+}
+
+fn rebase(repo: &Path, args: &[&str]) -> Result<Option<String>, String> {
     let mut command = git(repo);
-    command.args(["rebase", target]).env("GIT_EDITOR", "true");
+    command.arg("rebase").args(args).env("GIT_EDITOR", "true");
     match ops::run_command(&mut command, None) {
         Err(_) if detect(repo).is_some() => Ok(None),
         Err(message) => Err(message),

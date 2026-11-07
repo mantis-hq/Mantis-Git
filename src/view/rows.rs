@@ -1,11 +1,14 @@
-//! The commit rows: lanes on a canvas, then the subject, refs, author and time.
+//! The commit rows: lanes on a canvas, then the subject, author and time.
 
 use super::GraphView;
+use super::menu::wire_ref;
 use crate::theme::{lane_color, selected_row, tokens};
 use chrono::{Datelike, Local, TimeZone, Utc};
+use gitclient_core::branch::Dragged;
 use gitclient_core::git::{Chip, Commit, RefKind, split_subject};
 use gitclient_core::graph::{Lane, Row};
 use gitclient_core::spotlight::Spotlight;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -20,7 +23,9 @@ const NODE_RADIUS: f32 = 4.;
 /// of the window. Rows with a commit past the edge show a marker there instead.
 const MAX_VISIBLE_LANES: u32 = 8;
 const CLIPPED_MARKER_RADIUS: f32 = 3.;
-const MAX_VISIBLE_REFS: usize = 3;
+const MAX_VISIBLE_REFS: usize = 1;
+/// Refs get their own column left of the graph, so subjects stay aligned.
+const REFS_WIDTH: f32 = 180.;
 /// How far things outside a spotlighted branch fade.
 const FADED_ROW: f32 = 0.28;
 const FADED_LINE: f32 = 0.16;
@@ -52,7 +57,7 @@ impl GraphView {
         for index in range {
             let entry = &self.entries[index];
             let commit = &entry.commit;
-            let selected = self.selected == Some(index);
+            let selected = self.selection.contains(&self.entries, self.selected, index);
             let row_background = if selected { active } else { background };
             let lane_row = entry.row.clone();
             let spotlight = self.sidebar.spotlight.clone();
@@ -76,10 +81,65 @@ impl GraphView {
                     .bg(row_background)
                     .when(!commit_lit, |row| row.opacity(FADED_ROW))
                     .when(!selected, |row| row.hover(|style| style.bg(hover)))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.select(index, cx);
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            this.open_commit_menu(index, event.position, cx);
+                            window.focus(&this.focus, cx);
+                        }),
+                    )
+                    .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                        this.click_row(index, event.modifiers(), cx);
                         window.focus(&this.focus, cx);
                     }))
+                    .child(
+                        div()
+                            .id(("refs", index))
+                            .w(px(REFS_WIDTH))
+                            .h_full()
+                            .flex_none()
+                            .h_flex()
+                            .gap_1p5()
+                            .overflow_hidden()
+                            .when(chips.len() > MAX_VISIBLE_REFS, |col| {
+                                let all = chips
+                                    .iter()
+                                    .map(|chip| chip.label.name.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                col.tooltip(move |window, cx| {
+                                    Tooltip::new(all.clone()).build(window, cx)
+                                })
+                            })
+                            .children(chips.iter().take(MAX_VISIBLE_REFS).map(|chip| {
+                                let label = chip.label;
+                                let lane = lane_color(label.color, is_dark);
+                                let element =
+                                    ref_label(("chip", index), chip, lane, head, on_head, warning);
+                                match label.kind {
+                                    // Not a name anything can be done to.
+                                    RefKind::DetachedHead => element,
+                                    kind => {
+                                        let color =
+                                            if kind == RefKind::Tag { warning } else { lane };
+                                        let target = Dragged {
+                                            kind,
+                                            name: label.name.clone(),
+                                        };
+                                        wire_ref(element, target, color, cx)
+                                    }
+                                }
+                            }))
+                            .when(chips.len() > MAX_VISIBLE_REFS, |col| {
+                                col.child(
+                                    div()
+                                        .flex_none()
+                                        .text_xs()
+                                        .text_color(muted)
+                                        .child(format!("+{}", chips.len() - MAX_VISIBLE_REFS)),
+                                )
+                            }),
+                    )
                     .child(
                         div()
                             .w(px(graph_width))
@@ -131,20 +191,7 @@ impl GraphView {
                                     .child(
                                         div().min_w_0().truncate().child(description.to_owned()),
                                     ),
-                            )
-                            .children(chips.iter().take(MAX_VISIBLE_REFS).map(|chip| {
-                                let lane = lane_color(chip.label.color, is_dark);
-                                ref_label(chip, lane, head, on_head, warning)
-                            }))
-                            .when(chips.len() > MAX_VISIBLE_REFS, |row| {
-                                row.child(
-                                    div()
-                                        .flex_none()
-                                        .text_xs()
-                                        .text_color(muted)
-                                        .child(format!("+{}", chips.len() - MAX_VISIBLE_REFS)),
-                                )
-                            }),
+                            ),
                     )
                     .child(
                         div()
@@ -190,7 +237,14 @@ fn format_when(commit: &Commit, now: i64) -> String {
     }
 }
 
-fn ref_label(chip: &Chip, lane: Hsla, head: Hsla, on_head: Hsla, tag: Hsla) -> impl IntoElement {
+fn ref_label(
+    id: impl Into<ElementId>,
+    chip: &Chip,
+    lane: Hsla,
+    head: Hsla,
+    on_head: Hsla,
+    tag: Hsla,
+) -> Stateful<Div> {
     let r = chip.label;
     let color = match r.kind {
         RefKind::Tag => tag,
@@ -202,11 +256,12 @@ fn ref_label(chip: &Chip, lane: Hsla, head: Hsla, on_head: Hsla, tag: Hsla) -> i
         (color.opacity(0.14), color)
     };
     div()
+        .id(id)
         .h_flex()
         .flex_none()
         .gap_1()
         .h(px(20.))
-        .max_w(px(200.))
+        .max_w(px(REFS_WIDTH - 36.))
         .px_1p5()
         .rounded(px(4.))
         .text_xs()
