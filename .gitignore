@@ -1,1 +1,22 @@
+# Rust build output
 /target
+**/*.rs.bk
+*.pdb
+
+# Local environment
+.env
+.env.*
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Claude Code local state
+.claude/worktrees/
+.claude/settings.local.json
