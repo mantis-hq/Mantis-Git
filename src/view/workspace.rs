@@ -5,6 +5,7 @@
 //! are two tabs, since one tab is a control that does nothing.
 
 use super::dock::{Dock, NewTerminal, ToggleDock};
+use super::parts::TEXT_BODY;
 use super::{GraphView, parts, repository_name};
 use gpui_kit::component::button::*;
 use gpui_kit::component::tooltip::Tooltip;
@@ -272,7 +273,7 @@ impl Render for Workspace {
             .v_flex()
             .size_full()
             .bg(background)
-            .text_size(px(13.))
+            .text_size(TEXT_BODY)
             .on_action(cx.listener(|this, _: &ToggleDock, window, cx| this.toggle_dock(window, cx)))
             .on_action(
                 cx.listener(|this, _: &NewTerminal, window, cx| this.new_terminal(window, cx)),

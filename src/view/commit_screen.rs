@@ -4,6 +4,7 @@ use super::parts::{
     Edge, LineStyle, checkbox, expand_tabs, file_path, fit, grip, header_bar, header_divider,
     line_style, on_resize, panel_row, section_label, status_color,
 };
+use super::parts::{TEXT_CHIP, TEXT_SMALL, TEXT_STATUS};
 use super::{GraphView, Notice, Screen};
 use crate::theme::tokens;
 use gitclient_core::patch::Hunk;
@@ -189,7 +190,7 @@ impl GraphView {
                     .flex_1()
                     .min_w_0()
                     .gap_2()
-                    .text_size(px(14.))
+                    .text_size(TEXT_STATUS)
                     .text_color(subtext)
                     .child(div().min_w_0().truncate().child(sentence))
                     .child("on")
@@ -289,7 +290,7 @@ impl GraphView {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(11.))
+                    .text_size(TEXT_CHIP)
                     .text_color(status_color(status, cx))
                     .child(status.to_string()),
             )
@@ -362,14 +363,14 @@ impl GraphView {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(12.))
+                            .text_size(TEXT_SMALL)
                             .text_color(subtext)
                             .child(title),
                     )
                     .child(
                         div()
                             .flex_none()
-                            .text_size(px(11.))
+                            .text_size(TEXT_CHIP)
                             .text_color(muted)
                             .child(if on { "in this commit" } else { "left out" }),
                     ),
@@ -378,7 +379,7 @@ impl GraphView {
                 Some(part) => render_hunk_lines(part, cx).into_any_element(),
                 None => div()
                     .p_3()
-                    .text_size(px(12.))
+                    .text_size(TEXT_SMALL)
                     .text_color(muted)
                     .child("This file goes in whole, because it has no text to choose from.")
                     .into_any_element(),
@@ -416,7 +417,7 @@ impl GraphView {
                 .px_2()
                 .rounded(px(6.))
                 .cursor_pointer()
-                .text_size(px(12.))
+                .text_size(TEXT_SMALL)
                 .bg(if on { primary } else { background })
                 .text_color(if on { on_primary } else { quiet })
                 .child(*name)
@@ -468,7 +469,7 @@ impl GraphView {
                             .child(field_label("Summary"))
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(TEXT_CHIP)
                                     .text_color(if length > SUBJECT_LIMIT {
                                         danger
                                     } else {
@@ -509,7 +510,7 @@ impl GraphView {
                 .gap_2()
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(TEXT_SMALL)
                         .text_color(subtext)
                         .child(line.clone()),
                 )
@@ -575,7 +576,7 @@ fn render_bump(version: Version, bump: Bump, cx: &App) -> Div {
                 .justify_between()
                 .gap_2()
                 .child(div().font_semibold().text_color(color).child(name))
-                .child(div().text_size(px(12.)).text_color(quiet).child(change)),
+                .child(div().text_size(TEXT_SMALL).text_color(quiet).child(change)),
         )
 }
 
@@ -623,7 +624,7 @@ fn render_hunk_lines(hunk: &Hunk, cx: &App) -> Div {
         .v_flex()
         .py(px(6.))
         .overflow_hidden()
-        .text_size(px(12.))
+        .text_size(TEXT_SMALL)
         .children(rows)
         .when(hidden > 0, |lines| {
             lines.child(

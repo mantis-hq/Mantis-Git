@@ -1,5 +1,6 @@
 //! The panel beside the graph that shows the selected commit.
 
+use super::parts::{TEXT_CHIP, TEXT_SMALL};
 use super::parts::{file_path, panel_row, section_label, status_color, title};
 use super::{GraphView, Status};
 use crate::theme::tokens;
@@ -280,7 +281,7 @@ impl GraphView {
             div()
                 .id(("parent", index))
                 .cursor_pointer()
-                .text_size(px(12.))
+                .text_size(TEXT_SMALL)
                 .text_color(link)
                 .child(short_oid(parent).to_owned())
                 .on_click(cx.listener(move |this, _, _, cx| this.select_oid(&oid, cx)))
@@ -301,7 +302,7 @@ impl GraphView {
             .child(fact(
                 "Commit",
                 div()
-                    .text_size(px(12.))
+                    .text_size(TEXT_SMALL)
                     .child(SharedString::from(commit.oid.clone()))
                     .into_any_element(),
             ))
@@ -312,7 +313,7 @@ impl GraphView {
                     .gap_2()
                     .children(parents)
                     .when(commit.parents.is_empty(), |list| {
-                        list.text_size(px(12.)).text_color(muted).child("none")
+                        list.text_size(TEXT_SMALL).text_color(muted).child("none")
                     })
                     .into_any_element(),
             ))
@@ -417,7 +418,7 @@ impl GraphView {
                         div()
                             .h_flex()
                             .gap_1()
-                            .text_size(px(11.))
+                            .text_size(TEXT_CHIP)
                             .child(div().text_color(added).child(format!("+{additions}")))
                             .child(div().text_color(removed).child(format!("−{deletions}"))),
                     ),
@@ -453,7 +454,7 @@ impl GraphView {
                 div()
                     .w(px(12.))
                     .flex_none()
-                    .text_size(px(11.))
+                    .text_size(TEXT_CHIP)
                     .font_medium()
                     .text_color(status_color(file.status, cx))
                     .child(file.status.to_string()),
@@ -462,7 +463,7 @@ impl GraphView {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(11.))
+                    .text_size(TEXT_CHIP)
                     .text_color(muted)
                     .child(count),
             )

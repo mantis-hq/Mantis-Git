@@ -583,7 +583,7 @@ impl Render for GraphView {
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
             .bg(background)
-            .text_size(px(13.))
+            .text_size(parts::TEXT_BODY)
             .text_color(foreground)
             // Maple Mono would otherwise draw `->` as an arrow, which isn't what code says.
             .font_features(FontFeatures::disable_ligatures())

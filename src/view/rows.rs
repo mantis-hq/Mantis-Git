@@ -2,6 +2,7 @@
 
 use super::GraphView;
 use super::menu::wire_ref;
+use super::parts::{TEXT_BODY, TEXT_CHIP};
 use crate::theme::{lane_color, selected_row, tokens};
 use chrono::{Datelike, Local, TimeZone, Utc};
 use gitclient_core::branch::Dragged;
@@ -129,7 +130,7 @@ impl GraphView {
                         col.child(
                             div()
                                 .flex_none()
-                                .text_size(px(11.))
+                                .text_size(TEXT_CHIP)
                                 .text_color(muted)
                                 .child(format!("+{}", chips.len() - MAX_VISIBLE_REFS)),
                         )
@@ -190,7 +191,7 @@ impl GraphView {
                     .w_full()
                     .pr_3()
                     .gap_3()
-                    .text_size(px(13.))
+                    .text_size(TEXT_BODY)
                     .bg(row_background)
                     .when(!commit_lit, |row| row.opacity(FADED_ROW))
                     .when(!selected, |row| row.hover(|style| style.bg(hover)))
@@ -366,7 +367,7 @@ fn ref_label(
         .max_w(px(REFS_WIDTH - 36.))
         .px_1p5()
         .rounded(px(4.))
-        .text_size(px(11.))
+        .text_size(TEXT_CHIP)
         .font_semibold()
         .text_color(text)
         .bg(fill)

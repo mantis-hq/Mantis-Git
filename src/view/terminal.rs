@@ -1,5 +1,6 @@
 //! One terminal in the dock: a shell in the repository's folder, drawn as text on a grid.
 
+use super::parts::TEXT_BODY;
 use crate::theme::{ansi_color, rgb_color};
 use gitclient_core::terminal::{Color, Cursor, Key, Run, Size, Snapshot, Terminal};
 use gpui_kit::component::*;
@@ -148,7 +149,7 @@ impl Render for TerminalPane {
             Err(message) => {
                 return shell
                     .p_3()
-                    .text_size(px(13.))
+                    .text_size(TEXT_BODY)
                     .text_color(muted)
                     .child(message.clone())
                     .into_any_element();
@@ -192,7 +193,7 @@ impl Render for TerminalPane {
                         .absolute()
                         .right_3()
                         .bottom_2()
-                        .text_size(px(13.))
+                        .text_size(TEXT_BODY)
                         .text_color(muted)
                         .child(format!("{message} Close this tab, or open a new one.")),
                 )

@@ -4,6 +4,7 @@
 
 use super::GraphView;
 use super::notice::{Confirm, Notice};
+use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
 use crate::theme::selected_row;
 use gitclient_core::branch::{self, Dragged, Relation};
 use gitclient_core::git::RefKind;
@@ -78,7 +79,7 @@ impl Render for DragGhost {
                 .h_flex()
                 .px_1p5()
                 .rounded(px(4.))
-                .text_size(px(11.))
+                .text_size(TEXT_CHIP)
                 .font_semibold()
                 .text_color(self.color)
                 .bg(self.color.opacity(0.14))
@@ -259,7 +260,7 @@ impl GraphView {
                     .h(px(24.))
                     .px_2()
                     .h_flex()
-                    .text_size(px(12.))
+                    .text_size(TEXT_SMALL)
                     .font_medium()
                     .text_color(muted)
                     .child(div().min_w_0().truncate().child(label.clone()))
@@ -281,7 +282,7 @@ impl GraphView {
                         .h(ITEM_HEIGHT)
                         .px_2()
                         .rounded(px(4.))
-                        .text_size(px(13.))
+                        .text_size(TEXT_BODY)
                         .text_color(color)
                         .when(highlighted, |row| row.bg(active))
                         .child(div().min_w_0().truncate().child(label.clone()));

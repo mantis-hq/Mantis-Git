@@ -1,6 +1,7 @@
 //! The diff panel under the graph, so history stays visible while reading it.
 
 use super::parts::{LineStyle, expand_tabs, file_path, line_style};
+use super::parts::{TEXT_BODY, TEXT_SMALL};
 use super::{GraphView, Notice};
 use crate::theme::tokens;
 use gitclient_core::details::{self, FileChange};
@@ -193,7 +194,7 @@ impl GraphView {
                         .pl_4()
                         .pr_2()
                         .gap_3()
-                        .text_size(px(12.))
+                        .text_size(TEXT_SMALL)
                         .border_b_1()
                         .border_color(border)
                         .child(file_path(&shown.path, muted))
@@ -206,7 +207,7 @@ impl GraphView {
                         ),
                 )
                 .when(empty, |panel_body| {
-                    panel_body.child(div().p_4().text_size(px(13.)).text_color(muted).child(
+                    panel_body.child(div().p_4().text_size(TEXT_BODY).text_color(muted).child(
                         if shown.binary {
                             "This is a binary file, so there is no text to show."
                         } else {
@@ -255,7 +256,7 @@ fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut App) -> Vec<Div> {
                 .h_flex()
                 .h(ROW_HEIGHT)
                 .min_w_full()
-                .text_size(px(12.))
+                .text_size(TEXT_SMALL)
                 .whitespace_nowrap();
             let line = match &shown.rows[index] {
                 Row::Line(line) => line,

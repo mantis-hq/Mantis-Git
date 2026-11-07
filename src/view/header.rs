@@ -1,6 +1,7 @@
 //! The header: where you are in a sentence, and the one thing to do next.
 
 use super::notice::Confirm;
+use super::parts::{TEXT_BODY, TEXT_STATUS};
 use super::parts::{header_bar, header_divider};
 use super::{GraphView, Status, repository_name};
 use gitclient_core::status::{self, NextAction, Span};
@@ -40,7 +41,7 @@ impl GraphView {
                         bar.child(
                             div()
                                 .flex_none()
-                                .text_size(px(13.))
+                                .text_size(TEXT_BODY)
                                 .text_color(muted)
                                 .child(label),
                         )
@@ -96,7 +97,7 @@ impl GraphView {
             .flex_1()
             .min_w_0()
             .overflow_hidden()
-            .text_size(px(14.))
+            .text_size(TEXT_STATUS)
             .text_color(crate::theme::tokens(theme.is_dark()).subtext0)
             .when(self.status == Status::Loaded, |line| line.children(spans))
     }

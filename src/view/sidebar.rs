@@ -2,6 +2,7 @@
 
 use super::GraphView;
 use super::menu::wire_ref;
+use super::parts::{TEXT_CHIP, TEXT_SMALL};
 use super::parts::{panel_row, section_label};
 use crate::theme::{lane_color, tokens};
 use gitclient_core::branch::Dragged;
@@ -236,11 +237,15 @@ impl GraphView {
         panel_row(SharedString::from(format!("folder-{key}")), false, cx)
             .h(px(30.))
             .pl(indent(depth))
+            .gap_1()
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_folder(key.clone(), cx)))
             .child(
                 div()
-                    .w(px(8.))
+                    .w(px(14.))
                     .flex_none()
+                    .text_size(px(15.))
+                    .line_height(px(16.))
+                    .text_center()
                     .text_color(muted)
                     .child(if open { "▾" } else { "▸" }),
             )
@@ -255,7 +260,7 @@ impl GraphView {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(11.))
+                    .text_size(TEXT_CHIP)
                     .text_color(muted)
                     .child(count.to_string()),
             )
@@ -400,7 +405,7 @@ impl GraphView {
                                                 div()
                                                     .id("show-all")
                                                     .cursor_pointer()
-                                                    .text_size(px(12.))
+                                                    .text_size(TEXT_SMALL)
                                                     .font_medium()
                                                     .text_color(link)
                                                     .child("Show all")
@@ -466,7 +471,7 @@ impl GraphView {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(11.))
+                    .text_size(TEXT_CHIP)
                     .text_color(muted)
                     .child(detail),
             )
@@ -540,7 +545,7 @@ impl GraphView {
             .child(title)
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(TEXT_CHIP)
                     .text_color(theme.muted_foreground)
                     .child(count.to_string()),
             )

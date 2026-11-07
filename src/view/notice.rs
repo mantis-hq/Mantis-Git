@@ -4,6 +4,7 @@
 //! happens is said here in words, and risky steps wait here for a second click.
 
 use super::GraphView;
+use super::parts::TEXT_BODY;
 use crate::theme::tokens;
 use gpui_kit::component::button::*;
 use gpui_kit::component::*;
@@ -76,7 +77,7 @@ impl GraphView {
                 .px_4()
                 .py_1()
                 .gap_3()
-                .text_size(px(13.))
+                .text_size(TEXT_BODY)
                 .bg(header)
                 .border_b_1()
                 .border_color(border)

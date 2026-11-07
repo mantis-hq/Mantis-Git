@@ -24,6 +24,18 @@ pub(super) fn header_bar(cx: &App) -> Div {
         .border_color(theme.border)
 }
 
+// The type scale of docs/design.md. Size text with these, not with literal pixels.
+/// Commit title.
+pub(super) const TEXT_TITLE: Pixels = px(16.);
+/// The status sentence.
+pub(super) const TEXT_STATUS: Pixels = px(14.);
+/// Lists and body text, and the base size of every window.
+pub(super) const TEXT_BODY: Pixels = px(13.);
+/// Section labels, code and diffs, and secondary text.
+pub(super) const TEXT_SMALL: Pixels = px(12.);
+/// Chips and counts.
+pub(super) const TEXT_CHIP: Pixels = px(11.);
+
 /// The short line between a header's way back and its sentence.
 pub(super) fn header_divider(cx: &App) -> Div {
     div().flex_none().w(px(1.)).h(px(20.)).bg(cx.theme().border)
@@ -32,19 +44,21 @@ pub(super) fn header_divider(cx: &App) -> Div {
 /// Commit title type, for the largest text on a panel.
 pub(super) fn title() -> Div {
     div()
-        .text_size(px(16.))
+        .text_size(TEXT_TITLE)
         .line_height(px(22.))
         .font_semibold()
 }
 
 pub(super) fn section_label(muted: Hsla) -> Div {
-    div().text_size(px(12.)).font_medium().text_color(muted)
+    div().text_size(TEXT_SMALL).font_medium().text_color(muted)
 }
 
 /// A row in a side panel that can be picked.
 pub(super) fn panel_row(id: impl Into<ElementId>, on: bool, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
-    let (active, hover) = (selected_row(theme), theme.list_hover);
+    // Not `list_hover`: in Mocha that is Mantle, which is the side panel's own colour.
+    let active = selected_row(theme);
+    let hover = active.opacity(0.5);
     div()
         .id(id)
         .h_flex()
@@ -72,7 +86,7 @@ pub(super) fn tab(id: impl Into<ElementId>, active: bool, cx: &App) -> Stateful<
         .items_center()
         .rounded(px(6.))
         .cursor_pointer()
-        .text_size(px(13.))
+        .text_size(TEXT_BODY)
         .when(active, |tab| tab.bg(selected).text_color(theme.foreground))
         .when(!active, |tab| {
             tab.text_color(theme.muted_foreground)
@@ -154,7 +168,7 @@ pub(super) fn checkbox(
         .flex_none()
         .rounded(px(4.))
         .cursor_pointer()
-        .text_size(px(11.))
+        .text_size(TEXT_CHIP)
         .font_semibold()
         .text_color(on_primary)
         .when(filled, |tick| tick.bg(primary))
