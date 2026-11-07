@@ -644,6 +644,11 @@ impl Render for GraphView {
         let notice = self.render_notice(cx);
         let menu = self.render_menu(cx);
         let popup = self.render_confirm_popup(cx);
+        // Enter and Escape are bound on this view, and a click elsewhere (a menu line, a
+        // terminal) leaves the focus somewhere they don't reach.
+        if popup.is_some() && !self.focus.is_focused(window) {
+            window.focus(&self.focus, cx);
+        }
 
         div()
             .v_flex()
@@ -948,6 +953,40 @@ mod tests {
             assert!(!view.is_confirming());
             assert_eq!(ran.get(), 2);
         });
+    }
+
+    #[gpui_kit::test]
+    fn the_keys_reach_a_popup_even_when_focus_was_elsewhere(cx: &mut TestAppContext) {
+        use super::notice::Confirm;
+        use gitclient_core::menu::Weight;
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let (view, mut cx) = open_view(cx);
+        let ran = Rc::new(Cell::new(0));
+        let ask = |cx: &mut VisualTestContext| {
+            let ran = ran.clone();
+            view.update(cx, |view, cx| {
+                view.confirm = Some(Confirm {
+                    message: "This deletes it.".into(),
+                    action: "Delete".into(),
+                    run: Rc::new(move |_, _| ran.set(ran.get() + 1)),
+                    weight: Weight::Popup,
+                    armed: None,
+                });
+                cx.notify();
+            });
+            cx.run_until_parked();
+        };
+        // Nothing has focused the view, as after a click on a menu line.
+        cx.update(|window, cx| window.blur(cx));
+        ask(&mut cx);
+        cx.simulate_keystrokes("escape");
+        assert!(!view.read_with(&cx, |view, _| view.is_confirming()));
+        assert_eq!(ran.get(), 0);
+        ask(&mut cx);
+        cx.simulate_keystrokes("enter");
+        assert!(!view.read_with(&cx, |view, _| view.is_confirming()));
+        assert_eq!(ran.get(), 1);
     }
 
     #[gpui_kit::test]
