@@ -1,0 +1,22 @@
+name: Setup
+description: Install the Rust toolchain, build cache, and Linux GUI libraries.
+
+inputs:
+  components:
+    description: Extra rustup components
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: ${{ inputs.components }}
+    - uses: Swatinem/rust-cache@v2
+    - if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y pkg-config libxcb1-dev libxkbcommon-dev \
+          libxkbcommon-x11-dev libfontconfig1-dev libfreetype-dev libwayland-dev

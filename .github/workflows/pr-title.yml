@@ -1,0 +1,18 @@
+# PRs are squash-merged, so the PR title becomes the commit release-please reads.
+# A title that isn't a conventional commit would silently vanish from the changelog.
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  conventional-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
