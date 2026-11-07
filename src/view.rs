@@ -14,7 +14,7 @@ mod settings;
 mod sidebar;
 mod workspace;
 
-pub use settings::{OpenSettings, should_quit};
+pub use settings::{OpenSettings, Settings, open as open_settings, should_quit};
 pub use workspace::Workspace;
 
 use gitclient_core::git::{self, Entry, LoadEvent, Refs};
@@ -551,6 +551,9 @@ impl Render for GraphView {
             }))
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.reload(cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| this.toggle_sidebar(cx)))
+            .on_action(cx.listener(|this, _: &settings::OpenSettings, _, cx| {
+                settings::open(this.repo.clone(), cx)
+            }))
             .on_action(cx.listener(|this, _: &CloseMenu, _, cx| this.close_menu(cx)))
             .on_action(cx.listener(|this, _: &ActivateMenu, _, cx| this.activate_menu(cx)))
             .children(bar)

@@ -7,11 +7,13 @@ pub mod conflict;
 pub mod details;
 pub mod git;
 pub mod graph;
+pub mod identity;
 pub mod menu;
 pub mod ops;
 pub mod patch;
 pub mod selection;
 pub mod spotlight;
+pub mod ssh;
 pub mod status;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

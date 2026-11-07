@@ -105,13 +105,22 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   for the graph at the default window. A quiet button and `Ctrl B` open it at any width.
 - Task screens (commit, conflict) replace the sidebar and link back to the graph.
 - Settings: a quiet "Settings" button at the end of the header, or `Ctrl ,`, opens a
-  second window (960×680) and brings it forward if it is already open. It has the 52 px
-  header, a 220 px Mantle side panel of pages, and the page in a column up to 680 px wide.
+  second window (1000×720) and brings it forward if it is already open. It has the 52 px
+  header, a 220 px Mantle side panel of pages, and the page in a column up to 720 px wide.
   The header sentence says what was saved or why not. There is no Save button: toggles and
   choices apply when clicked, text applies on Enter or when you leave the field. Settings
   sit in Mantle cards (8 px radius) grouped under section labels. A choice is a row of
   chips, the picked one with a tick and the Surface 0 fill, never blue. Closing settings
   leaves the app open; closing the main window quits it.
+  - **Git config** edits one config at a time, "Everywhere" or "Only <repository>", chosen
+    with chips above the cards. A setting the repository leaves unset says where it
+    inherits its value from, and its reset button says "Inherit". A setting the installed
+    git is too old for is dimmed and says which version it needs. If git can't be run, the
+    page says so and offers "Try again".
+  - **Identities** lists a name, email and signing key per SSH host or folder, saved as
+    conditional includes in the global config. The top card says who the open repository
+    commits as and where that comes from.
+  - **SSH hosts** is read only, as OpenSSH reports it, and ties each remote to its key.
 - Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide. Rows have no
   column headings or hash: the refs column, the graph, the subject, then author and a short time
   ("12m", "3h", "Tue", "Oct 30"). The full hash belongs to the inspector.

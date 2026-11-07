@@ -268,7 +268,77 @@ mod render {
         capture(&mut cx, handle, "conflict");
     }
 
+    /// Every page of the settings window, against a config file with something in it.
+    fn assert_settings_pages_draw(mode: ThemeMode, suffix: &str) {
+        use gitclient::view::Settings;
+        use gitclient_core::config::{self, Scope};
+        use gitclient_core::identity::{self, Identity, Match};
+
+        let repo = fixture();
+        let dir = tempfile::tempdir().unwrap();
+        let scope = Scope::File(dir.path().join("gitconfig"));
+        for (key, value) in [
+            ("user.name", "Pretext"),
+            ("user.email", "pretext@example.com"),
+            ("pull.rebase", "true"),
+            ("fetch.prune", "true"),
+            ("core.editor", "code --wait"),
+        ] {
+            config::set(&scope, key, value).unwrap();
+        }
+        config::set_alias(&scope, "co", "checkout").unwrap();
+        config::set_alias(&scope, "st", "status -sb").unwrap();
+        identity::save(
+            &scope,
+            &Identity {
+                matcher: Match::Host("github-work".into()),
+                name: "Ada Lovelace".into(),
+                email: "ada@work.example".into(),
+                signing_key: String::new(),
+            },
+        )
+        .unwrap();
+        let path = repo.path().to_owned();
+        git(
+            &path,
+            &["remote", "add", "origin", "git@github-work:team/app.git"],
+        );
+
+        let mut cx = app(mode);
+        let (handle, view) = cx
+            .update(|cx| {
+                let options = WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: Default::default(),
+                        size: size(px(1000.), px(900.)),
+                    })),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                };
+                gpui_kit::open_window(options, cx, |window, cx| {
+                    cx.new(|cx| Settings::new(Some(path), scope, window, cx))
+                })
+            })
+            .expect("window opens");
+        cx.allow_parking();
+        wait_for(&mut cx, |cx| cx.update(|cx| view.read(cx).is_loaded()));
+        for _ in 0..30 {
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        for (index, name) in ["git-config", "identities", "ssh"].into_iter().enumerate() {
+            cx.update_window(handle, |_, _, cx| {
+                view.update(cx, |view, cx| view.show_page(index, cx));
+            })
+            .unwrap();
+            capture(&mut cx, handle, &format!("settings-{name}-{suffix}"));
+        }
+    }
+
     pub fn run() {
+        assert_settings_pages_draw(ThemeMode::Dark, "dark");
+        assert_settings_pages_draw(ThemeMode::Light, "light");
         assert_conflict_screen_opens();
         assert_working_changes_lead_to_the_commit_screen();
         assert_draws_lanes(ThemeMode::Dark, "graph-dark");
