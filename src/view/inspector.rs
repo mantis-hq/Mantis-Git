@@ -1,7 +1,7 @@
 //! The panel beside the graph that shows the selected commit.
 
 use super::parts::{TEXT_CHIP, TEXT_SMALL};
-use super::parts::{file_path, panel_row, section_label, status_color, title};
+use super::parts::{file_path, loading, panel_row, section_label, status_color, title};
 use super::{GraphView, Status};
 use crate::theme::tokens;
 use chrono::{Local, TimeZone};
@@ -12,7 +12,6 @@ use gitclient_core::text::{count, short_oid};
 use gitclient_core::working::{self, WorkingFile};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
-use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -274,23 +273,18 @@ impl GraphView {
                         })
                         .when(
                             loaded.is_none() && self.inspector.loading.is_some(),
-                            |panel| panel.child(self.render_loading(cx)),
+                            |panel| {
+                                panel.child(loading(
+                                    "inspector-loading",
+                                    "Loading changed files…",
+                                    6,
+                                    cx,
+                                ))
+                            },
                         ),
                 )
                 .into_any_element(),
         )
-    }
-
-    /// Stands where the file list will be while git is still reading it.
-    fn render_loading(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let muted = cx.theme().muted_foreground;
-        div()
-            .h_flex()
-            .gap_2()
-            .h(px(24.))
-            .text_color(muted)
-            .child(Spinner::new().small())
-            .child("Loading changed files…")
     }
 
     fn render_summary(

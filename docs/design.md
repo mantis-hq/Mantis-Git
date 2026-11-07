@@ -228,8 +228,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   that add a commit say how to undo it in the band under the header.
 - **Long lists:** lists that can grow without limit, such as a commit's files, the commit
   screen's files and the sidebar, draw only the rows in view. Their rows share one height.
-- **Loading:** while git reads a commit's files, the inspector shows a small spinner and
-  "Loading changed files…" where the list will be. Picking another commit stops that read.
+- **Loading:** where a list is still being read, a small spinner and a sentence saying
+  what is coming ("Loading changed files…"), over grey placeholder rows in the Surface 0
+  fill that breathe between 35% and 100% opacity. The placeholders are as tall as a real
+  row, so the list takes their place without a jump. It is one component (`loading` in
+  `src/view/parts.rs`) for every list that loads. Picking another commit stops that read.
 - **Commit form:** the bump card only shows when the repository has `v1.2.3` style tags to
   count from. Hunks start ticked, except that files with nothing staged start unticked
   when something else is staged, so work staged from a terminal carries over.

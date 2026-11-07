@@ -3,9 +3,11 @@
 use crate::theme::{selected_row, tokens};
 use gitclient_core::patch::LineKind;
 use gitclient_core::text::split_path;
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::time::Duration;
 
 const TAB: &str = "    ";
 
@@ -95,6 +97,57 @@ pub(super) fn tab(id: impl Into<ElementId>, active: bool, cx: &App) -> Stateful<
 }
 
 /// A path that truncates, with its folder quieter than the file's name.
+/// What stands where a list will be while it is read: a spinner and a sentence saying
+/// what is coming, over `rows` grey placeholders that breathe slowly. The placeholders are
+/// the height of a list row, so the list takes their place without the page jumping.
+/// Give each use its own `id`, which keeps its animation apart from the others.
+pub(super) fn loading(id: impl Into<ElementId>, label: &str, rows: usize, cx: &App) -> Div {
+    // Different widths, so that the placeholders read as paths and not as a bar chart.
+    const WIDTHS: [f32; 5] = [0.62, 0.46, 0.7, 0.38, 0.54];
+    let theme = cx.theme();
+    let (muted, fill) = (theme.muted_foreground, selected_row(theme));
+    let bar = |width: DefiniteLength, height: f32| {
+        div()
+            .h(px(height))
+            .w(width)
+            .flex_none()
+            .rounded(px(4.))
+            .bg(fill)
+    };
+    let placeholders = (0..rows).map(|index| {
+        let share = WIDTHS[index % WIDTHS.len()];
+        div()
+            .h_flex()
+            .h(px(28.))
+            .gap_2()
+            .child(bar(px(12.).into(), 10.))
+            .child(div().flex_1().min_w_0().child(bar(relative(share), 10.)))
+            .child(bar(px(40.).into(), 10.))
+    });
+    div()
+        .v_flex()
+        .gap(px(2.))
+        .child(
+            div()
+                .h_flex()
+                .h(px(24.))
+                .gap_2()
+                .text_size(TEXT_SMALL)
+                .text_color(muted)
+                .child(Spinner::new().small())
+                .child(label.to_owned()),
+        )
+        .child(
+            div().v_flex().children(placeholders).with_animation(
+                id,
+                Animation::new(Duration::from_millis(1500))
+                    .repeat()
+                    .with_easing(pulsating_between(0.35, 1.0)),
+                |rows, amount| rows.opacity(amount),
+            ),
+        )
+}
+
 pub(super) fn file_path(path: &str, muted: Hsla) -> Div {
     let (folder, name) = split_path(path);
     div()
