@@ -5,3 +5,17 @@ edition = "2024"
 
 [dependencies]
 gpui-kit = "0.9.0"
+async-channel = "2"
+chrono = "0.4"
+
+[dev-dependencies]
+gpui-kit = { version = "0.9.0", features = ["test-support"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+tempfile = "3"
+
+# Renders through the real GPU pipeline, so it is opt-in and not part of `cargo test`:
+#   cargo test --test render
+[[test]]
+name = "render"
+harness = false
+test = false
