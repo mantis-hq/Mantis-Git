@@ -3,6 +3,7 @@
 use super::notice::Confirm;
 use super::{GraphView, Notice, Screen};
 use crate::conflict::{self, Decision, Progress, Side, Step, StepState};
+use crate::graph::LaneColor;
 use crate::theme::{lane_color, tokens};
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
@@ -426,7 +427,13 @@ impl GraphView {
         let theme = cx.theme();
         let is_dark = theme.is_dark();
         let (head, subtext) = (theme.primary, tokens(is_dark).subtext0);
-        let other = lane_color(0, is_dark);
+        let other = self
+            .refs
+            .branches
+            .iter()
+            .find(|branch| branch.name == shown.other)
+            .map_or(LaneColor::default(), |branch| branch.color);
+        let other = lane_color(other, is_dark);
         let index = self.conflict.decision;
         let count = shown.decisions.len();
         let picked = self.conflict.picked.get(index).copied().flatten();
