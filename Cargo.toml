@@ -25,3 +25,8 @@ tempfile = "3"
 name = "render"
 harness = false
 test = false
+
+# gpui builds and lays out the whole window on every pointer move while dragging, which
+# is far too slow unoptimised. Our own crates stay at opt-level 0 for fast rebuilds.
+[profile.dev.package."*"]
+opt-level = 3
