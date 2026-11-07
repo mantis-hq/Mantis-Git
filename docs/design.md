@@ -124,6 +124,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Ref chips:** tinted with 14% of the branch colour, text in full colour. Only the
   current branch gets a solid fill. Chips follow the subject, so subjects stay aligned.
   A branch and its remote at the same commit are one chip with a small cloud.
+- **Inspector actions:** "Check out" names the branch when one is at the commit. Commands
+  that add a commit say how to undo it in the band under the header.
 - **Files:** a status letter, then the path with its folder muted, then `+n −n`.
 - **Diffs:** added and removed lines use a 10% green or red wash. Text stays Text.
 - **Focus:** every control shows a 2 px blue focus ring, and each action has a key.

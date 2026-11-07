@@ -229,6 +229,7 @@ impl GraphView {
             self.status = Status::Loaded;
         }
         self.load_task = None;
+        self.select_head_if_unselected(cx);
         cx.notify();
     }
 
