@@ -1,10 +1,10 @@
-//! The commit rows: lanes on a canvas, then the subject, refs, author, date and hash.
+//! The commit rows: lanes on a canvas, then the subject, refs, author and time.
 
 use super::GraphView;
-use crate::git::{Ref, RefKind};
+use crate::git::{Commit, Ref, RefKind, split_subject};
 use crate::graph::{Lane, Row};
-use crate::theme::{lane_color, selected_row};
-use chrono::{DateTime, Local};
+use crate::theme::{lane_color, selected_row, tokens};
+use chrono::{Datelike, Local, TimeZone, Utc};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -13,8 +13,6 @@ use std::ops::Range;
 const ROW_HEIGHT: Pixels = px(32.);
 const LANE_WIDTH: f32 = 16.;
 const GRAPH_PADDING: f32 = 6.;
-/// Keeps the "Graph" heading on one line when a history has few lanes.
-pub(super) const MIN_GRAPH_WIDTH: f32 = 56.;
 const LINE_WIDTH: f32 = 1.75;
 const NODE_RADIUS: f32 = 4.;
 /// Wider graphs are clipped, so that a few hundred stale branches can't push the text out
@@ -23,14 +21,13 @@ const MAX_VISIBLE_LANES: u32 = 8;
 const CLIPPED_MARKER_RADIUS: f32 = 3.;
 const MAX_VISIBLE_REFS: usize = 3;
 
-const AUTHOR_WIDTH: Pixels = px(150.);
-const DATE_WIDTH: Pixels = px(136.);
-const OID_WIDTH: Pixels = px(72.);
+const AUTHOR_WIDTH: Pixels = px(120.);
+const DATE_WIDTH: Pixels = px(72.);
 
 impl GraphView {
     pub(super) fn graph_width(&self) -> f32 {
         let lanes = self.max_columns.clamp(1, MAX_VISIBLE_LANES);
-        (lanes as f32 * LANE_WIDTH + GRAPH_PADDING * 2.).max(MIN_GRAPH_WIDTH)
+        lanes as f32 * LANE_WIDTH + GRAPH_PADDING * 2.
     }
 
     pub(super) fn render_rows(
@@ -43,7 +40,8 @@ impl GraphView {
         let (foreground, muted) = (theme.foreground, theme.muted_foreground);
         let (background, hover, active) = (theme.background, theme.list_hover, selected_row(theme));
         let (head, on_head) = (theme.primary, theme.primary_foreground);
-        let (warning, mono) = (theme.warning, theme.mono_font_family.clone());
+        let warning = theme.warning;
+        let subtext0 = tokens(is_dark).subtext0;
         let graph_width = self.graph_width();
 
         let mut rows = Vec::with_capacity(range.len());
@@ -55,7 +53,9 @@ impl GraphView {
             let lane_row = entry.row.clone();
             let is_head = self.refs.head.as_ref() == Some(&commit.oid);
             let is_merge = commit.parents.len() > 1;
-            let commit_refs = self.refs.by_commit.get(&commit.oid);
+            let chips = commit_chips(self.refs.by_commit.get(&commit.oid));
+            let (prefix, description) = split_subject(&commit.subject);
+            let subject_color = if is_merge { subtext0 } else { foreground };
 
             rows.push(
                 div()
@@ -108,25 +108,31 @@ impl GraphView {
                             .overflow_hidden()
                             .child(
                                 div()
+                                    .h_flex()
                                     .min_w_0()
                                     .truncate()
-                                    .text_color(foreground)
-                                    .child(SharedString::from(commit.subject.clone())),
+                                    .text_color(subject_color)
+                                    .child(
+                                        div()
+                                            .flex_none()
+                                            .text_color(muted)
+                                            .child(prefix.to_owned()),
+                                    )
+                                    .child(
+                                        div().min_w_0().truncate().child(description.to_owned()),
+                                    ),
                             )
-                            .when_some(commit_refs, |row, refs| {
-                                row.children(refs.iter().take(MAX_VISIBLE_REFS).map(|r| {
-                                    let lane = lane_color(r.color, is_dark);
-                                    ref_label(r, lane, head, on_head, warning)
-                                }))
-                                .when(
-                                    refs.len() > MAX_VISIBLE_REFS,
-                                    |row| {
-                                        row.child(
-                                            div().flex_none().text_xs().text_color(muted).child(
-                                                format!("+{}", refs.len() - MAX_VISIBLE_REFS),
-                                            ),
-                                        )
-                                    },
+                            .children(chips.iter().take(MAX_VISIBLE_REFS).map(|chip| {
+                                let lane = lane_color(chip.label.color, is_dark);
+                                ref_label(chip, lane, head, on_head, warning)
+                            }))
+                            .when(chips.len() > MAX_VISIBLE_REFS, |row| {
+                                row.child(
+                                    div()
+                                        .flex_none()
+                                        .text_xs()
+                                        .text_color(muted)
+                                        .child(format!("+{}", chips.len() - MAX_VISIBLE_REFS)),
                                 )
                             }),
                     )
@@ -135,6 +141,7 @@ impl GraphView {
                             .w(AUTHOR_WIDTH)
                             .flex_none()
                             .truncate()
+                            .text_right()
                             .text_color(muted)
                             .child(SharedString::from(commit.author.clone())),
                     )
@@ -142,63 +149,65 @@ impl GraphView {
                         div()
                             .w(DATE_WIDTH)
                             .flex_none()
-                            .truncate()
+                            .text_right()
                             .text_color(muted)
-                            .child(format_date(commit.time)),
-                    )
-                    .child(
-                        div()
-                            .w(OID_WIDTH)
-                            .flex_none()
-                            .font_family(mono.clone())
-                            .text_size(px(13.))
-                            .text_color(muted)
-                            .child(commit.short_oid().to_owned()),
+                            .child(format_when(commit, Utc::now().timestamp())),
                     ),
             );
         }
         rows
     }
+}
 
-    pub(super) fn render_column_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        div()
-            .h_flex()
-            .h(px(26.))
-            .flex_none()
-            .pr_3()
-            .gap_3()
-            .text_size(px(13.))
-            .font_medium()
-            .text_color(theme.muted_foreground)
-            .bg(theme.list_head)
-            .border_b_1()
-            .border_color(theme.border)
-            .child(
-                div()
-                    .w(px(self.graph_width()))
-                    .flex_none()
-                    .pl_2()
-                    .child("Graph"),
-            )
-            .child(div().flex_1().min_w_0().child("Description"))
-            .child(div().w(AUTHOR_WIDTH).flex_none().child("Author"))
-            .child(div().w(DATE_WIDTH).flex_none().child("Date"))
-            .child(div().w(OID_WIDTH).flex_none().child("Commit"))
+/// When a commit happened, as short as it can be said.
+fn format_when(commit: &Commit, now: i64) -> String {
+    let Some(date) = Local.timestamp_opt(commit.time, 0).single() else {
+        return String::new();
+    };
+    let Some(today) = Local.timestamp_opt(now, 0).single() else {
+        return String::new();
+    };
+    let age = now - commit.time;
+    match age {
+        ..60 => "now".to_owned(),
+        60..3600 => format!("{}m", age / 60),
+        3600..86_400 => format!("{}h", age / 3600),
+        86_400..604_800 => date.format("%a").to_string(),
+        _ if date.year() == today.year() => date.format("%b %-d").to_string(),
+        _ => date.format("%Y").to_string(),
     }
 }
 
-fn format_date(time: i64) -> String {
-    DateTime::from_timestamp(time, 0)
-        .map(|date| {
-            date.with_timezone(&Local)
-                .format("%Y-%m-%d %H:%M")
-                .to_string()
-        })
-        .unwrap_or_default()
+/// A ref as drawn: a branch and its remote at the same commit are one chip.
+struct Chip<'a> {
+    label: &'a Ref,
+    synced: bool,
 }
 
-fn ref_label(r: &Ref, lane: Hsla, head: Hsla, on_head: Hsla, tag: Hsla) -> impl IntoElement {
+fn commit_chips(refs: Option<&Vec<Ref>>) -> Vec<Chip<'_>> {
+    let refs = refs.map_or(&[][..], Vec::as_slice);
+    let local = |remote: &str| {
+        let branch = remote.split_once('/').map_or(remote, |(_, branch)| branch);
+        refs.iter()
+            .any(|r| r.kind == RefKind::Branch && r.name == branch)
+    };
+    let tracked = |branch: &Ref| {
+        refs.iter().any(|r| {
+            r.kind == RefKind::Remote
+                && r.name.split_once('/').map(|(_, name)| name) == Some(branch.name.as_str())
+        })
+    };
+    refs.iter()
+        .filter(|r| r.kind != RefKind::Remote || !local(&r.name))
+        .map(|label| Chip {
+            label,
+            synced: label.kind == RefKind::Branch && tracked(label),
+        })
+        .collect()
+}
+
+fn ref_label(chip: &Chip, lane: Hsla, head: Hsla, on_head: Hsla, tag: Hsla) -> impl IntoElement {
+    let r = chip.label;
     let color = match r.kind {
         RefKind::Tag => tag,
         RefKind::Branch | RefKind::Remote | RefKind::DetachedHead => lane,
@@ -209,16 +218,43 @@ fn ref_label(r: &Ref, lane: Hsla, head: Hsla, on_head: Hsla, tag: Hsla) -> impl 
         (color.opacity(0.14), color)
     };
     div()
+        .h_flex()
         .flex_none()
-        .max_w(px(180.))
-        .truncate()
+        .gap_1()
+        .h(px(20.))
+        .max_w(px(200.))
         .px_1p5()
         .rounded(px(4.))
         .text_xs()
         .font_semibold()
         .text_color(text)
         .bg(fill)
-        .child(r.name.clone())
+        .child(div().min_w_0().truncate().child(r.name.clone()))
+        .when(chip.synced, |label| {
+            label.child(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds, _, window, _| paint_cloud(bounds, text, window),
+                )
+                .flex_none()
+                .w(px(12.))
+                .h(px(10.)),
+            )
+        })
+}
+
+/// Says "in sync with the remote" by shape, so it doesn't rest on colour alone.
+fn paint_cloud(bounds: Bounds<Pixels>, color: Hsla, window: &mut Window) {
+    let at = |x: f32, y: f32| point(bounds.left() + px(x), bounds.top() + px(y));
+    let mut path = PathBuilder::stroke(px(1.3));
+    path.move_to(at(3.2, 8.5));
+    path.cubic_bezier_to(at(3.2, 4.1), at(0.2, 8.5), at(0.2, 4.1));
+    path.cubic_bezier_to(at(8.9, 3.5), at(3.8, 0.6), at(7.8, 0.6));
+    path.cubic_bezier_to(at(8.9, 8.5), at(12.2, 3.5), at(12.2, 8.5));
+    path.line_to(at(3.2, 8.5));
+    if let Ok(path) = path.build() {
+        window.paint_path(path, color);
+    }
 }
 
 struct NodeStyle {
@@ -342,8 +378,10 @@ fn paint_circle(x: Pixels, y: Pixels, radius: f32, color: Hsla, window: &mut Win
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_VISIBLE_LANES, is_clipped};
+    use super::{MAX_VISIBLE_LANES, commit_chips, format_when, is_clipped};
+    use crate::git::{Commit, Ref, RefKind};
     use crate::graph::GraphBuilder;
+    use chrono::{Local, TimeZone};
     use std::sync::Arc;
 
     #[test]
@@ -355,5 +393,54 @@ mod tests {
             .collect();
         assert!(!is_clipped(&rows[MAX_VISIBLE_LANES as usize - 1]));
         assert!(is_clipped(&rows[MAX_VISIBLE_LANES as usize]));
+    }
+
+    fn commit_at(time: i64) -> Commit {
+        Commit {
+            oid: "a".into(),
+            parents: Box::new([]),
+            author: "a".into(),
+            time,
+            subject: "s".into(),
+        }
+    }
+
+    #[test]
+    fn recent_times_are_short_and_older_ones_name_the_date() {
+        let now = Local
+            .with_ymd_and_hms(2026, 11, 7, 12, 0, 0)
+            .unwrap()
+            .timestamp();
+        let when = |ago: i64| format_when(&commit_at(now - ago), now);
+        assert_eq!(when(20), "now");
+        assert_eq!(when(12 * 60), "12m");
+        assert_eq!(when(3 * 3600), "3h");
+        assert_eq!(when(2 * 86_400), "Thu");
+        assert_eq!(when(30 * 86_400), "Oct 8");
+        assert_eq!(when(400 * 86_400), "2025");
+    }
+
+    fn named(kind: RefKind, name: &str) -> Ref {
+        Ref {
+            kind,
+            name: name.to_owned(),
+            is_head: false,
+            color: Default::default(),
+        }
+    }
+
+    #[test]
+    fn a_branch_and_its_remote_at_one_commit_are_one_synced_chip() {
+        let refs = vec![
+            named(RefKind::Branch, "main"),
+            named(RefKind::Remote, "origin/main"),
+            named(RefKind::Remote, "origin/other"),
+            named(RefKind::Tag, "v1"),
+        ];
+        let chips = commit_chips(Some(&refs));
+        let names: Vec<_> = chips.iter().map(|c| c.label.name.as_str()).collect();
+        assert_eq!(names, ["main", "origin/other", "v1"]);
+        assert!(chips[0].synced);
+        assert!(!chips[1].synced && !chips[2].synced);
     }
 }
