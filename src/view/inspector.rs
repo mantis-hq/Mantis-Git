@@ -1,9 +1,11 @@
 //! The panel beside the graph that shows the selected commit.
 
+use super::parts::{file_path, panel_row, section_label, status_color, title};
 use super::{GraphView, Status};
 use crate::details::{self, CommitDetails, FileChange};
-use crate::git::{Commit, RefKind, split_subject};
-use crate::theme::{selected_row, tokens};
+use crate::git::{Commit, Entry, RefKind, split_subject};
+use crate::text::{count, short_oid};
+use crate::theme::tokens;
 use chrono::{Local, TimeZone};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -26,16 +28,18 @@ impl GraphView {
         self.inspector.details.as_ref().filter(|d| d.oid == *oid)
     }
 
+    fn selected_entry(&self) -> Option<&Entry> {
+        self.entries.get(self.selected?)
+    }
+
     fn selected_commit(&self) -> Option<&Commit> {
-        let entry = self.entries.get(self.selected?)?;
+        let entry = self.selected_entry()?;
         (!entry.working).then_some(&entry.commit)
     }
 
     /// Whether the row selected is the working changes rather than a commit.
     pub(super) fn working_row_is_selected(&self) -> bool {
-        self.selected
-            .and_then(|index| self.entries.get(index))
-            .is_some_and(|entry| entry.working)
+        self.selected_entry().is_some_and(|entry| entry.working)
     }
 
     /// Loads the new selection's details, keeping the old ones up until then so that
@@ -46,22 +50,19 @@ impl GraphView {
             return;
         };
         let oid = commit.oid.clone();
-        cx.spawn(async move |this, cx| {
-            let wanted = oid.clone();
-            let details = cx
-                .background_spawn(async move { details::read(&repo, &wanted) })
-                .await;
-            this.update(cx, |this, cx| {
+        let wanted = oid.clone();
+        Self::spawn_blocking(
+            move || details::read(&repo, &wanted),
+            move |this, details, cx| {
                 if this.selected_oid.as_ref() != Some(&oid) {
                     return;
                 }
                 this.inspector.details = details.ok().map(Arc::new);
                 this.details_loaded(cx);
                 cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+            },
+            cx,
+        );
     }
 
     /// Selects HEAD after a load if nothing else is, so the panel starts out useful.
@@ -69,18 +70,13 @@ impl GraphView {
         if self.selected.is_some() {
             return self.selection_changed(cx);
         }
-        let head = self.refs.head.clone();
-        let index = self
-            .entries
-            .iter()
-            .position(|e| Some(&e.commit.oid) == head.as_ref());
-        if let Some(index) = index {
-            self.select(index, cx);
+        if let Some(head) = self.refs.head.clone() {
+            self.select_oid(&head, cx);
         }
     }
 
     fn select_oid(&mut self, oid: &str, cx: &mut Context<Self>) {
-        if let Some(index) = self.entries.iter().position(|e| &*e.commit.oid == oid) {
+        if let Some(index) = self.row_of(oid) {
             self.select(index, cx);
         }
     }
@@ -106,13 +102,8 @@ impl GraphView {
             .border_l_1()
             .border_color(theme.border);
         if self.working_row_is_selected() {
-            let branch = self
-                .refs
-                .head_branch
-                .clone()
-                .unwrap_or_else(|| "HEAD".to_owned());
-            let files = self.refs.working_files;
-            let noun = if files == 1 { "file" } else { "files" };
+            let branch = self.refs.head_name();
+            let files = count(self.refs.status.changed, "file");
             let subtext = tokens(theme.is_dark()).subtext0;
             return Some(
                 panel
@@ -121,15 +112,9 @@ impl GraphView {
                             .v_flex()
                             .p_4()
                             .gap_3()
-                            .child(
-                                div()
-                                    .text_size(px(18.))
-                                    .line_height(px(24.))
-                                    .font_semibold()
-                                    .child("Working changes"),
-                            )
+                            .child(title().child("Working changes"))
                             .child(div().text_color(subtext).child(format!(
-                                "{files} {noun} changed, not committed yet. These sit on top of \
+                                "{files} changed, not committed yet. These sit on top of \
                                  {branch}."
                             )))
                             .child(
@@ -153,8 +138,7 @@ impl GraphView {
                     .into_any_element(),
             );
         };
-        let details = self.inspector.details.as_ref();
-        let loaded = details.filter(|details| details.oid == commit.oid);
+        let loaded = self.selected_details();
 
         Some(
             panel
@@ -191,22 +175,16 @@ impl GraphView {
         div()
             .v_flex()
             .gap_2()
-            .child(
-                div()
-                    .text_size(px(18.))
-                    .line_height(px(24.))
-                    .font_semibold()
-                    .child(
-                        StyledText::new(format!("{prefix}{description}")).with_highlights([(
-                            0..prefix.len(),
-                            HighlightStyle {
-                                color: Some(muted),
-                                font_weight: Some(FontWeight::MEDIUM),
-                                ..Default::default()
-                            },
-                        )]),
-                    ),
-            )
+            .child(title().child(
+                StyledText::new(format!("{prefix}{description}")).with_highlights([(
+                    0..prefix.len(),
+                    HighlightStyle {
+                        color: Some(muted),
+                        font_weight: Some(FontWeight::MEDIUM),
+                        ..Default::default()
+                    },
+                )]),
+            ))
             .when_some(body, |summary, body| {
                 summary.child(div().text_color(subtext).child(body))
             })
@@ -240,10 +218,10 @@ impl GraphView {
                 .cursor_pointer()
                 .text_size(px(13.))
                 .text_color(link)
-                .child(parent[..parent.len().min(7)].to_owned())
+                .child(short_oid(parent).to_owned())
                 .on_click(cx.listener(move |this, _, _, cx| this.select_oid(&oid, cx)))
         });
-        let label = if commit.parents.len() > 1 {
+        let label = if commit.is_merge() {
             "Parents"
         } else {
             "Parent"
@@ -279,8 +257,8 @@ impl GraphView {
     fn render_actions(&self, commit: &Commit, cx: &mut Context<Self>) -> impl IntoElement {
         let oid = commit.oid.clone();
         let branch = self.branch_at(commit);
-        let is_merge = commit.parents.len() > 1;
-        let is_head = self.refs.head.as_ref() == Some(&commit.oid);
+        let is_merge = commit.is_merge();
+        let is_head = self.refs.is_head(&commit.oid);
         let busy = self.busy.is_some();
 
         let check_out = {
@@ -349,15 +327,6 @@ impl GraphView {
     }
 }
 
-pub(super) fn status_color(file: &FileChange, cx: &App) -> Hsla {
-    let theme = cx.theme();
-    match file.status {
-        'A' => theme.success,
-        'D' => theme.danger,
-        _ => theme.warning,
-    }
-}
-
 impl GraphView {
     fn render_files(
         &self,
@@ -367,11 +336,10 @@ impl GraphView {
     ) -> impl IntoElement {
         let theme = cx.theme();
         let (muted, added, removed) = (theme.muted_foreground, theme.success, theme.danger);
-        let count = details.files.len();
+        let total = details.files.len();
         let (additions, deletions) = details.totals();
-        let is_merge = commit.parents.len() > 1;
         let merge_note = tokens(cx.theme().is_dark()).subtext0;
-        let mut files = Vec::with_capacity(count);
+        let mut files = Vec::with_capacity(total);
         for (index, file) in details.files.iter().enumerate() {
             files.push(self.render_file(index, file, cx));
         }
@@ -380,17 +348,11 @@ impl GraphView {
             .v_flex()
             .gap(px(2.))
             .child(
-                div()
+                section_label(muted)
                     .h_flex()
                     .h(px(24.))
                     .justify_between()
-                    .text_size(px(13.))
-                    .font_medium()
-                    .text_color(muted)
-                    .child(format!(
-                        "{count} {} changed",
-                        if count == 1 { "file" } else { "files" }
-                    ))
+                    .child(format!("{} changed", count(total, "file")))
                     .child(
                         div()
                             .h_flex()
@@ -401,7 +363,7 @@ impl GraphView {
                     ),
             )
             .children(files)
-            .when(is_merge && count == 0, |list| {
+            .when(commit.is_merge() && total == 0, |list| {
                 list.child(
                     div()
                         .text_color(merge_note)
@@ -416,30 +378,16 @@ impl GraphView {
         file: &FileChange,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let theme = cx.theme();
-        let (muted, active, hover) = (
-            theme.muted_foreground,
-            selected_row(theme),
-            theme.list_hover,
-        );
+        let muted = cx.theme().muted_foreground;
         let shown = self.shown_file() == Some(index);
-        let (folder, name) = file.split_path();
         let count = if file.binary {
             "binary".to_owned()
         } else {
             format!("+{} −{}", file.additions, file.deletions)
         };
-        div()
-            .id(("file", index))
-            .h_flex()
+        panel_row(("file", index), shown, cx)
             .h(px(28.))
             .mx(px(-8.))
-            .px_2()
-            .gap_2()
-            .rounded(px(6.))
-            .cursor_pointer()
-            .when(shown, |row| row.bg(active))
-            .when(!shown, |row| row.hover(|style| style.bg(hover)))
             .on_click(cx.listener(move |this, _, _, cx| this.show_file(index, cx)))
             .child(
                 div()
@@ -447,18 +395,10 @@ impl GraphView {
                     .flex_none()
                     .text_xs()
                     .font_medium()
-                    .text_color(status_color(file, cx))
+                    .text_color(status_color(file.status, cx))
                     .child(file.status.to_string()),
             )
-            .child(
-                div()
-                    .h_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .child(div().flex_none().text_color(muted).child(folder.to_owned()))
-                    .child(div().min_w_0().truncate().child(name.to_owned())),
-            )
+            .child(file_path(&file.path, muted))
             .child(div().flex_none().text_xs().text_color(muted).child(count))
     }
 }

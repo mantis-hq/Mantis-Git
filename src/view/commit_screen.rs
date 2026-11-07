@@ -1,7 +1,12 @@
 //! The task screen for writing a commit: choose hunks, say what they do.
 
+use super::parts::{
+    LineStyle, expand_tabs, file_path, header_bar, header_divider, line_style, panel_row,
+    section_label, status_color,
+};
 use super::{GraphView, Notice, Screen};
-use crate::patch::{Hunk, LineKind};
+use crate::patch::Hunk;
+use crate::text::count;
 use crate::theme::tokens;
 use crate::working::{self, Bump, COMMIT_TYPES, Included, Version, WorkingFile};
 use gpui_kit::component::button::*;
@@ -70,11 +75,9 @@ impl GraphView {
         };
         self.commit.committed = None;
         self.show_screen(Screen::Commit, cx);
-        cx.spawn(async move |this, cx| {
-            let files = cx
-                .background_spawn(async move { working::read(&repo) })
-                .await;
-            this.update(cx, |this, cx| match files {
+        Self::spawn_blocking(
+            move || working::read(&repo),
+            |this, files, cx| match files {
                 Ok(files) => {
                     this.commit.included = starting_ticks(&files);
                     this.commit.files = Arc::new(files);
@@ -85,10 +88,9 @@ impl GraphView {
                     this.notice = Some(Notice::Error(message.into()));
                     this.show_screen(Screen::Graph, cx);
                 }
-            })
-            .ok();
-        })
-        .detach();
+            },
+            cx,
+        );
     }
 
     fn ensure_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -185,12 +187,12 @@ impl GraphView {
             .iter()
             .map(|hunks| hunks.iter().filter(|on| !**on).count())
             .sum();
-        let changes = if left_out == 1 { "change" } else { "changes" };
-        let files = if total == 1 { "file" } else { "files" };
+        let files = count(total, "file");
         if going_in == 0 {
-            format!("{total} {files} changed, nothing ticked yet")
+            format!("{files} changed, nothing ticked yet")
         } else {
-            format!("{going_in} of {total} {files} going in, {left_out} {changes} left out")
+            let left_out = count(left_out, "change");
+            format!("{going_in} of {files} going in, {left_out} left out")
         }
     }
 
@@ -231,38 +233,26 @@ impl GraphView {
             .into_any_element()
     }
 
-    fn render_commit_header(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn render_commit_header(&self, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
-        let (border, header, head) = (theme.border, theme.title_bar, theme.primary);
+        let head = theme.primary;
         let subtext = tokens(theme.is_dark()).subtext0;
-        let branch = self
-            .refs
-            .head_branch
-            .clone()
-            .unwrap_or_else(|| "HEAD".into());
+        let branch = self.refs.head_name().to_owned();
         let sentence = match (&self.commit.committed, self.commit.files.is_empty()) {
             (Some(line), _) => format!("Committed “{line}”"),
             (None, true) => "Nothing has changed".to_owned(),
             (None, false) => self.commit_sentence(),
         };
 
-        div()
-            .id("commit-header")
-            .h_flex()
-            .h(px(52.))
-            .flex_none()
-            .px_4()
-            .gap_4()
-            .bg(header)
-            .border_b_1()
-            .border_color(border)
+        header_bar(cx)
+            .pr_4()
             .child(
                 Button::new("back-to-graph")
                     .ghost()
                     .label("Graph")
                     .on_click(cx.listener(|this, _, _, cx| this.show_screen(Screen::Graph, cx))),
             )
-            .child(div().flex_none().w(px(1.)).h(px(20.)).bg(border))
+            .child(header_divider(cx))
             .child(
                 div()
                     .h_flex()
@@ -303,43 +293,24 @@ impl GraphView {
             .border_color(border)
             .overflow_y_scroll()
             .child(
-                div()
+                section_label(muted)
                     .h_flex()
                     .h(px(24.))
                     .px_2()
-                    .text_size(px(13.))
-                    .font_medium()
-                    .text_color(muted)
                     .child("Tick what goes in this commit"),
             )
             .children(rows)
     }
 
     fn render_changed_file(&self, index: usize, cx: &mut Context<Self>) -> Stateful<Div> {
-        let theme = cx.theme();
-        let (muted, hover) = (theme.muted_foreground, theme.list_hover);
-        let active = crate::theme::selected_row(theme);
+        let muted = cx.theme().muted_foreground;
         let file = &self.commit.files[index];
-        let status_color = match file.patch.status() {
-            'A' => theme.success,
-            'D' => theme.danger,
-            _ => theme.warning,
-        };
-        let split = file.path.rfind('/').map_or(0, |slash| slash + 1);
-        let (folder, name) = file.path.split_at(split);
+        let status = file.patch.status();
         let (all, some) = self.file_ticks(index);
         let shown = self.commit.file == index;
 
-        div()
-            .id(("changed-file", index))
-            .h_flex()
+        panel_row(("changed-file", index), shown, cx)
             .h(px(30.))
-            .px_2()
-            .gap_2()
-            .rounded(px(6.))
-            .cursor_pointer()
-            .when(shown, |row| row.bg(active))
-            .when(!shown, |row| row.hover(|style| style.bg(hover)))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.commit.file = index;
                 cx.notify();
@@ -354,21 +325,13 @@ impl GraphView {
                     },
                 )),
             )
-            .child(
-                div()
-                    .h_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .child(div().flex_none().text_color(muted).child(folder.to_owned()))
-                    .child(div().min_w_0().truncate().child(name.to_owned())),
-            )
+            .child(file_path(&file.path, muted))
             .child(
                 div()
                     .flex_none()
                     .text_xs()
-                    .text_color(status_color)
-                    .child(file.patch.status().to_string()),
+                    .text_color(status_color(status, cx))
+                    .child(status.to_string()),
             )
     }
 
@@ -471,7 +434,7 @@ impl GraphView {
         let subtext = tokens(theme.is_dark()).subtext0;
 
         let kind = COMMIT_TYPES[self.commit.kind];
-        let breaking = self.commit.breaking && kind == "feat";
+        let breaking = self.commit.breaking;
         let subject = self.subject_text(cx);
         let line = working::subject_line(kind, breaking, &subject);
         let length = line.chars().count();
@@ -480,16 +443,9 @@ impl GraphView {
         let cannot = files == 0 || subject.trim().is_empty() || self.busy.is_some();
         let label = match files {
             0 => "Tick a file to commit".to_owned(),
-            1 => "Commit 1 file".to_owned(),
-            count => format!("Commit {count} files"),
+            files => format!("Commit {}", count(files, "file")),
         };
-        let field_label = |text: &'static str| {
-            div()
-                .text_size(px(13.))
-                .font_medium()
-                .text_color(muted)
-                .child(text)
-        };
+        let field_label = |text: &'static str| section_label(muted).child(text);
 
         let types = COMMIT_TYPES.iter().enumerate().map(|(index, name)| {
             let on = self.commit.kind == index;
@@ -632,28 +588,16 @@ fn render_bump(version: Version, bump: Bump, cx: &App) -> Div {
     let theme = cx.theme();
     let (background, border, muted) = (theme.background, theme.border, theme.muted_foreground);
     let (success, quiet) = (theme.success, theme.secondary_foreground);
-    let (name, change, color) = match bump {
-        Bump::None => ("No release".to_owned(), format!("stays {version}"), quiet),
-        Bump::Patch(next) => (
-            "Patch release".to_owned(),
-            format!("{version} → {next}"),
-            success,
-        ),
-        Bump::Minor(next) => (
-            "Minor release".to_owned(),
-            format!("{version} → {next}"),
-            success,
-        ),
-        Bump::Major(next) => (
-            "Major release".to_owned(),
-            format!("{version} → {next}"),
-            success,
-        ),
-        Bump::BreakingMinor(next) => (
-            "Minor release, breaking".to_owned(),
-            format!("{version} → {next}"),
-            success,
-        ),
+    let (name, next) = match bump {
+        Bump::None => ("No release", None),
+        Bump::Patch(next) => ("Patch release", Some(next)),
+        Bump::Minor(next) => ("Minor release", Some(next)),
+        Bump::Major(next) => ("Major release", Some(next)),
+        Bump::BreakingMinor(next) => ("Minor release, breaking", Some(next)),
+    };
+    let (change, color) = match next {
+        Some(next) => (format!("{version} → {next}"), success),
+        None => (format!("stays {version}"), quiet),
     };
     div()
         .v_flex()
@@ -663,13 +607,7 @@ fn render_bump(version: Version, bump: Bump, cx: &App) -> Div {
         .bg(background)
         .border_1()
         .border_color(border)
-        .child(
-            div()
-                .text_size(px(13.))
-                .font_medium()
-                .text_color(muted)
-                .child("When this reaches main"),
-        )
+        .child(section_label(muted).child("When this reaches main"))
         .child(
             div()
                 .h_flex()
@@ -682,21 +620,21 @@ fn render_bump(version: Version, bump: Bump, cx: &App) -> Div {
 
 fn render_hunk_lines(hunk: &Hunk, cx: &App) -> Div {
     let theme = cx.theme();
-    let (foreground, added, removed) = (theme.foreground, theme.success, theme.danger);
     let muted = theme.muted_foreground;
     let colors = tokens(theme.is_dark());
     let hidden = hunk.lines.len().saturating_sub(MAX_HUNK_LINES);
     let rows = hunk.lines.iter().take(MAX_HUNK_LINES).map(|line| {
-        let (wash, sign, sign_color, text) = match line.kind {
-            LineKind::Added => (Some(added), "+", added, foreground),
-            LineKind::Removed => (Some(removed), "-", removed, foreground),
-            LineKind::Context => (None, "", muted, colors.subtext0),
-        };
+        let LineStyle {
+            wash,
+            sign,
+            sign_color,
+            text,
+        } = line_style(line.kind, cx);
         div()
             .h_flex()
             .h(px(22.))
             .whitespace_nowrap()
-            .when_some(wash, |row, wash| row.bg(wash.opacity(0.10)))
+            .when_some(wash, |row, wash| row.bg(wash))
             .child(
                 div()
                     .w(px(36.))
@@ -718,11 +656,7 @@ fn render_hunk_lines(hunk: &Hunk, cx: &App) -> Div {
                     .text_color(sign_color)
                     .child(sign),
             )
-            .child(
-                div()
-                    .text_color(text)
-                    .child(line.text.replace('\t', "    ")),
-            )
+            .child(div().text_color(text).child(expand_tabs(&line.text)))
     });
     div()
         .v_flex()

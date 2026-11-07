@@ -1,6 +1,7 @@
 //! The task screen for a paused rebase, cherry-pick, revert or merge.
 
 use super::notice::Confirm;
+use super::parts::{expand_tabs, header_bar, section_label, title};
 use super::{GraphView, Notice, Screen};
 use crate::conflict::{self, Decision, Progress, Side, Step, StepState};
 use crate::graph::LaneColor;
@@ -30,7 +31,7 @@ pub(super) struct State {
     /// Set while resolving, so that the check afterwards can tell finished from cancelled.
     continuing: Option<Arc<Progress>>,
     finished: Option<Arc<Progress>>,
-    rebase_target: Option<(String, u32)>,
+    rebase_target: Option<String>,
     _editor_changes: Option<Subscription>,
 }
 
@@ -44,21 +45,16 @@ impl GraphView {
         let Some(repo) = self.workdir() else {
             return;
         };
-        cx.spawn(async move |this, cx| {
-            let found = cx
-                .background_spawn(async move {
-                    (conflict::detect(&repo), conflict::rebase_target(&repo))
-                })
-                .await;
-            this.update(cx, |this, cx| this.paused_operation_read(found, cx))
-                .ok();
-        })
-        .detach();
+        Self::spawn_blocking(
+            move || (conflict::detect(&repo), conflict::rebase_target(&repo)),
+            Self::paused_operation_read,
+            cx,
+        );
     }
 
     fn paused_operation_read(
         &mut self,
-        (progress, target): (Option<Progress>, Option<(String, u32)>),
+        (progress, target): (Option<Progress>, Option<String>),
         cx: &mut Context<Self>,
     ) {
         self.conflict.rebase_target = target;
@@ -96,7 +92,7 @@ impl GraphView {
     }
 
     pub(super) fn render_rebase_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let (target, _) = self.conflict.rebase_target.clone()?;
+        let target = self.conflict.rebase_target.clone()?;
         Some(
             Button::new("rebase")
                 .ghost()
@@ -141,7 +137,6 @@ impl GraphView {
             Side::Other => decision.other.clone(),
         };
         self.conflict.picked[index] = Some(side);
-        self.conflict.answers[index] = Some(text.clone());
         if let Some(editor) = &self.conflict.editor {
             let shown = text.strip_suffix('\n').unwrap_or(&text).to_owned();
             editor.update(cx, |editor, cx| editor.set_value(shown, window, cx));
@@ -285,7 +280,7 @@ impl GraphView {
     ) -> impl IntoElement {
         let theme = cx.theme();
         let colors = tokens(theme.is_dark());
-        let (border, header, success) = (theme.border, theme.title_bar, theme.success);
+        let success = theme.success;
         let on_pill = theme.primary_foreground;
         let (pill, pill_color, sentence) = if finished {
             (
@@ -303,16 +298,7 @@ impl GraphView {
         let ready = self.conflict.answers.iter().all(Option::is_some);
         let busy = self.busy.is_some();
 
-        div()
-            .h_flex()
-            .min_h(px(52.))
-            .flex_none()
-            .pl_4()
-            .pr_3()
-            .gap_4()
-            .bg(header)
-            .border_b_1()
-            .border_color(border)
+        header_bar(cx)
             .child(
                 div()
                     .h_flex()
@@ -400,13 +386,7 @@ impl GraphView {
             .bg(panel)
             .border_r_1()
             .border_color(border)
-            .child(
-                div()
-                    .text_size(px(13.))
-                    .font_medium()
-                    .text_color(muted)
-                    .child(heading),
-            )
+            .child(section_label(muted).child(heading))
             .child(div().v_flex().flex_1().min_h_0().children(steps))
             .when(!finished, |column| {
                 column.child(
@@ -442,7 +422,7 @@ impl GraphView {
         } else {
             format!("{}:{}", decision.path, decision.line)
         };
-        let title = if decision.whole_file {
+        let headline = if decision.whole_file {
             "Both branches changed this file"
         } else {
             "Both branches changed this code"
@@ -478,13 +458,7 @@ impl GraphView {
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(
-                        div()
-                            .text_size(px(18.))
-                            .line_height(px(24.))
-                            .font_semibold()
-                            .child(title),
-                    )
+                    .child(title().child(headline))
                     .child(
                         div()
                             .flex_1()
@@ -544,7 +518,7 @@ impl GraphView {
             div()
                 .h(px(22.))
                 .whitespace_nowrap()
-                .child(line.replace('\t', "    "))
+                .child(expand_tabs(line))
         });
         let id = match side {
             Side::Mine => "use-mine",

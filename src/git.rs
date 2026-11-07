@@ -4,15 +4,20 @@
 //! (reftables, SHA-256, partial clones, the commit-graph cache) without a libgit2 build.
 
 use crate::graph::{GraphBuilder, LaneColor, Plan, Row};
+use crate::ops::{self, git, stderr_message};
 use crate::status::{self, RepoStatus};
+use crate::text::count;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::Arc;
 use std::thread;
 
 const BATCH_SIZE: usize = 1024;
+
+/// What a default branch usually goes by, in the order they're tried.
+const USUAL_DEFAULT_BRANCHES: [&str; 3] = ["main", "master", "trunk"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Commit {
@@ -25,8 +30,8 @@ pub struct Commit {
 }
 
 impl Commit {
-    pub fn short_oid(&self) -> &str {
-        &self.oid[..self.oid.len().min(7)]
+    pub fn is_merge(&self) -> bool {
+        self.parents.len() > 1
     }
 }
 
@@ -63,6 +68,13 @@ pub struct Ref {
     pub is_head: bool,
     /// The branch's colour, the same in the lanes and the chips. Unused for tags.
     pub color: LaneColor,
+}
+
+impl Ref {
+    /// The branch this is, or follows: a remote's `origin/main` is `main`.
+    pub fn branch_name(&self) -> &str {
+        branch_key(self.kind, &self.name)
+    }
 }
 
 /// A local branch, for the sidebar.
@@ -112,8 +124,6 @@ pub struct Refs {
     pub tags: Vec<NamedRef>,
     /// Stash subjects, newest first.
     pub stashes: Vec<String>,
-    /// How many files have uncommitted changes.
-    pub working_files: u32,
     /// How to lay out the graph for this repository.
     pub plan: Plan,
     /// The top of the working tree, or the repository itself when it is bare.
@@ -128,6 +138,15 @@ pub struct Refs {
 impl Refs {
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
+    }
+
+    pub fn is_head(&self, oid: &Arc<str>) -> bool {
+        self.head.as_ref() == Some(oid)
+    }
+
+    /// What to call where HEAD is: its branch, when it's on one.
+    pub fn head_name(&self) -> &str {
+        self.head_branch.as_deref().unwrap_or("HEAD")
     }
 }
 
@@ -171,7 +190,8 @@ pub fn load(repo: &Path, mut emit: impl FnMut(LoadEvent) -> bool) {
     }
 
     let mut builder = GraphBuilder::with_plan(refs.plan.clone());
-    let working = (refs.working_files > 0).then(|| working_entry(refs.working_files, &mut builder));
+    let files = refs.status.changed;
+    let working = (files > 0).then(|| working_entry(files, &mut builder));
     if let Some(working) = &working
         && refs.tips.is_empty()
         && !emit(LoadEvent::Batch(vec![working.clone()]))
@@ -197,7 +217,6 @@ pub fn load(repo: &Path, mut emit: impl FnMut(LoadEvent) -> bool) {
 }
 
 fn working_entry(files: u32, builder: &mut GraphBuilder) -> Entry {
-    let noun = if files == 1 { "file" } else { "files" };
     Entry {
         row: builder.working_row(),
         commit: Commit {
@@ -205,37 +224,16 @@ fn working_entry(files: u32, builder: &mut GraphBuilder) -> Entry {
             parents: Box::default(),
             author: "".into(),
             time: 0,
-            subject: format!("Working changes in {files} {noun}").into(),
+            subject: format!("Working changes in {}", count(files, "file")).into(),
         },
         working: true,
     }
 }
 
-pub(crate) fn git(repo: &Path) -> Command {
-    let mut command = Command::new("git");
-    command
-        .arg("-C")
-        .arg(repo)
-        // Launched from inside a git hook these would point at some other repository.
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        // Only reading, so never contend with a git the user is running.
-        .env("GIT_OPTIONAL_LOCKS", "0");
-    command
-}
-
-fn run_git(repo: &Path, args: &[&str]) -> Result<std::process::Output, String> {
-    git(repo)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| format!("could not run git: {error}"))
-}
-
 pub fn read_refs(repo: &Path) -> Result<Refs, String> {
     const FORMAT: &str =
         "%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)%00%(refname)%00%(symref)";
-    let output = run_git(
+    let listing = ops::run(
         repo,
         &[
             "for-each-ref",
@@ -246,38 +244,21 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
             "refs/tags",
         ],
     )?;
-    if !output.status.success() {
-        return Err(stderr_message(&output.stderr));
-    }
-    let listing = String::from_utf8_lossy(&output.stdout);
 
     // Both of these fail, as expected, in some states: HEAD can be detached or unborn.
-    let head_ref = run_git(repo, &["symbolic-ref", "-q", "HEAD"])?;
-    let head_ref = head_ref
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&head_ref.stdout).trim().to_owned());
-    let head = run_git(repo, &["rev-parse", "-q", "--verify", "HEAD^{commit}"])?;
-    let head: Option<Arc<str>> = head
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&head.stdout).trim().into());
+    let head_ref = ops::run(repo, &["symbolic-ref", "-q", "HEAD"]).ok();
+    let head_ref = head_ref.map(|name| name.trim().to_owned());
+    let head = ops::run(repo, &["rev-parse", "-q", "--verify", "HEAD^{commit}"]).ok();
+    let head: Option<Arc<str>> = head.map(|oid| oid.trim().into());
 
-    let toplevel = run_git(repo, &["rev-parse", "--show-toplevel"])?;
-    let workdir = toplevel
-        .status
-        .success()
-        .then(|| PathBuf::from(String::from_utf8_lossy(&toplevel.stdout).trim_end()));
+    let toplevel = ops::run(repo, &["rev-parse", "--show-toplevel"]).ok();
+    let workdir = toplevel.map(|path| PathBuf::from(path.trim_end()));
 
     let status = status::read(repo);
-    // A bare repository has no status to report, which just means nothing has changed.
-    let changes = run_git(repo, &["status", "--porcelain", "-z"])?;
-    let changes = String::from_utf8_lossy(&changes.stdout);
 
     let mut refs = Refs {
-        working_files: count_status_entries(&changes),
         workdir: workdir.or_else(|| Some(repo.to_owned())),
-        fingerprint: format!("{listing}\0{head_ref:?}\0{head:?}\0{status:?}\0{changes}"),
+        fingerprint: format!("{listing}\0{head_ref:?}\0{head:?}\0{status:?}"),
         status,
         ..Refs::default()
     };
@@ -380,26 +361,13 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
         (!branch.is_head, !is_default, branch.name.clone())
     });
     refs.tags.reverse();
-    let stashes = run_git(repo, &["stash", "list", "--format=%s"])?;
-    refs.stashes = String::from_utf8_lossy(&stashes.stdout)
-        .lines()
-        .map(str::to_owned)
-        .collect();
+    let stashes = ops::run(repo, &["stash", "list", "--format=%s"]).unwrap_or_default();
+    refs.stashes = stashes.lines().map(str::to_owned).collect();
 
     refs.plan.fork = default_branch
         .as_deref()
         .filter(|&default| head.is_some() && head_branch != Some(default))
-        .and_then(|default| {
-            let base = found
-                .iter()
-                .find(|r| r.0 == RefKind::Branch && r.1 == default);
-            let base = base.or_else(|| {
-                found
-                    .iter()
-                    .find(|r| r.0 == RefKind::Remote && branch_key(r.0, r.1) == default)
-            })?;
-            fork_point(repo, base.3)
-        });
+        .and_then(|default| fork_point(repo, shared_ref(&found, default)?.3));
     refs.plan.head = head.clone();
     refs.plan.shared_color = default_branch
         .as_deref()
@@ -428,16 +396,34 @@ fn branch_key(kind: RefKind, name: &str) -> &str {
 type FoundRef<'a> = (RefKind, &'a str, &'a str, &'a str);
 
 /// The branch history is shared on: what origin calls its default, or a usual name.
+pub(crate) fn pick_default_branch(
+    origin_head: Option<&str>,
+    exists: impl Fn(&str) -> bool,
+) -> Option<&str> {
+    origin_head
+        .filter(|name| exists(name))
+        .or_else(|| USUAL_DEFAULT_BRANCHES.into_iter().find(|n| exists(n)))
+}
+
 fn default_branch(found: &[FoundRef], origin_head: Option<&str>) -> Option<String> {
     let exists = |wanted: &str| {
         found
             .iter()
             .any(|r| r.0 != RefKind::Tag && branch_key(r.0, r.1) == wanted)
     };
-    origin_head
-        .filter(|name| exists(name))
-        .or_else(|| ["main", "master", "trunk"].into_iter().find(|n| exists(n)))
-        .map(str::to_owned)
+    pick_default_branch(origin_head, exists).map(str::to_owned)
+}
+
+/// The ref to compare with the default branch: the local one, or failing that a remote's.
+fn shared_ref<'a, 'b>(found: &'a [FoundRef<'b>], default: &str) -> Option<&'a FoundRef<'b>> {
+    found
+        .iter()
+        .find(|r| r.0 == RefKind::Branch && r.1 == default)
+        .or_else(|| {
+            found
+                .iter()
+                .find(|r| r.0 == RefKind::Remote && branch_key(r.0, r.1) == default)
+        })
 }
 
 /// Gives every branch its colour. HEAD's is Blue, the default branch takes the first of
@@ -477,22 +463,11 @@ fn read_ahead_behind(
     found: &[FoundRef],
     default: &str,
 ) -> HashMap<String, (u32, u32)> {
-    let base = found
-        .iter()
-        .find(|r| r.0 == RefKind::Branch && r.1 == default)
-        .or_else(|| {
-            found
-                .iter()
-                .find(|r| r.0 == RefKind::Remote && branch_key(r.0, r.1) == default)
-        });
-    let Some(base) = base else {
+    let Some(base) = shared_ref(found, default) else {
         return HashMap::new();
     };
     let format = format!("--format=%(refname:short)%00%(ahead-behind:{})", base.3);
-    let Ok(output) = run_git(repo, &["for-each-ref", &format, "refs/heads"]) else {
-        return HashMap::new();
-    };
-    let listing = String::from_utf8_lossy(&output.stdout);
+    let listing = ops::run(repo, &["for-each-ref", &format, "refs/heads"]).unwrap_or_default();
     listing
         .lines()
         .filter_map(|line| {
@@ -508,31 +483,14 @@ fn read_ahead_behind(
 fn fork_point(repo: &Path, base: &str) -> Option<Arc<str>> {
     let exclude = format!("^{base}");
     let args = ["rev-list", "--first-parent", "--parents", "HEAD", &exclude];
-    let output = run_git(repo, &args).ok()?;
-    let listing = String::from_utf8_lossy(&output.stdout);
-    if !output.status.success() {
-        return None;
-    }
+    let listing = ops::run(repo, &args).ok()?;
     let Some(oldest) = listing.lines().last() else {
         // Nothing of HEAD's is outside base, so all of its line is shared.
-        return run_git(repo, &["rev-parse", "HEAD"])
+        return ops::run(repo, &["rev-parse", "HEAD"])
             .ok()
-            .map(|head| String::from_utf8_lossy(&head.stdout).trim().into());
+            .map(|head| head.trim().into());
     };
     oldest.split_whitespace().nth(1).map(Arc::from)
-}
-
-/// Counts files in `status --porcelain -z`, where a rename's old path is its own field.
-fn count_status_entries(status: &str) -> u32 {
-    let mut count = 0;
-    let mut fields = status.split('\0').filter(|field| !field.is_empty());
-    while let Some(field) = fields.next() {
-        count += 1;
-        if field.starts_with('R') || field.starts_with('C') {
-            fields.next();
-        }
-    }
-    count
 }
 
 fn intern(tips: &mut Vec<Arc<str>>, oid: &str) -> Arc<str> {
@@ -661,64 +619,12 @@ fn parse_commit(line: &[u8]) -> Result<Commit, String> {
     })
 }
 
-pub(crate) fn stderr_message(stderr: &[u8]) -> String {
-    let message = String::from_utf8_lossy(stderr);
-    let message = message.trim();
-    if message.is_empty() {
-        "git failed without an error message".into()
-    } else {
-        message.to_owned()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{AUTHOR, Repo};
+    use std::process::Command;
     use tempfile::TempDir;
-
-    struct Repo(TempDir);
-
-    impl Repo {
-        fn new() -> Self {
-            let repo = Repo(TempDir::new().unwrap());
-            repo.git(&["init", "-q", "-b", "main"]);
-            repo
-        }
-
-        fn path(&self) -> &Path {
-            self.0.path()
-        }
-
-        fn git_output(&self, args: &[&str]) -> String {
-            let output = Command::new("git")
-                .arg("-C")
-                .arg(self.path())
-                .args(["-c", "user.name=Tester", "-c", "user.email=t@example.com"])
-                .args(["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
-                .args(args)
-                .env("GIT_CONFIG_GLOBAL", self.path().join(".no-global-config"))
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .env("GIT_AUTHOR_DATE", "2024-01-02T03:04:05Z")
-                .env("GIT_COMMITTER_DATE", "2024-01-02T03:04:05Z")
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "git {args:?}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            String::from_utf8_lossy(&output.stdout).trim().to_owned()
-        }
-
-        fn git(&self, args: &[&str]) {
-            self.git_output(args);
-        }
-
-        fn commit(&self, subject: &str) -> String {
-            self.git(&["commit", "-q", "--allow-empty", "-m", subject]);
-            self.git_output(&["rev-parse", "HEAD"])
-        }
-    }
 
     fn load_all(repo: &Path) -> (Option<Arc<Refs>>, Vec<Entry>, Option<String>) {
         let (mut refs, mut entries, mut error) = (None, Vec::new(), None);
@@ -784,8 +690,8 @@ mod tests {
         assert_eq!(entries[0].row.outgoing.len(), 2);
         assert_eq!(entries[3].commit.subject.as_ref(), "base");
         assert!(entries[3].commit.parents.is_empty());
-        assert_eq!(entries[0].commit.author.as_ref(), "Tester");
-        assert_eq!(entries[0].commit.time, 1704164645);
+        assert_eq!(entries[0].commit.author.as_ref(), AUTHOR);
+        assert_eq!(entries[0].commit.time, 1772600767);
 
         assert_eq!(refs.head.as_ref(), Some(&entries[0].commit.oid));
         let main = &refs.by_commit[&entries[0].commit.oid][0];
@@ -854,7 +760,7 @@ mod tests {
         let repo = Repo::new();
         repo.commit("base");
         std::fs::write(repo.path().join("file"), "content").unwrap();
-        let blob = repo.git_output(&["hash-object", "-w", "file"]);
+        let blob = repo.git(&["hash-object", "-w", "file"]);
         repo.git(&["tag", "blob-tag", &blob]);
         std::fs::remove_file(repo.path().join("file")).unwrap();
 
@@ -1109,7 +1015,7 @@ mod tests {
         std::fs::write(repo.path().join("new"), "x").unwrap();
 
         let (refs, entries, _) = load_all(repo.path());
-        assert_eq!(refs.unwrap().working_files, 2);
+        assert_eq!(refs.unwrap().status.changed, 2);
         assert!(entries[0].working);
         assert_eq!(&*entries[0].commit.subject, "Working changes in 2 files");
         assert!(!entries[1].working);

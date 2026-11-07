@@ -47,14 +47,7 @@ impl GraphView {
         self.notice = None;
         self.confirm = None;
         cx.notify();
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_spawn(async move { operation(&workdir) })
-                .await;
-            this.update(cx, |this, cx| this.finish_operation(result, cx))
-                .ok();
-        })
-        .detach();
+        Self::spawn_blocking(move || operation(&workdir), Self::finish_operation, cx);
     }
 
     pub(super) fn finish_operation(

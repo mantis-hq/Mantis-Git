@@ -57,8 +57,8 @@ impl GraphView {
             let lane_row = entry.row.clone();
             let spotlight = self.sidebar.spotlight.clone();
             let commit_lit = spotlight.as_ref().is_none_or(|s| s.commit_is_lit(index));
-            let is_head = self.refs.head.as_ref() == Some(&commit.oid);
-            let is_merge = commit.parents.len() > 1;
+            let is_head = self.refs.is_head(&commit.oid);
+            let is_merge = commit.is_merge();
             let is_working = entry.working;
             let chips = commit_chips(self.refs.by_commit.get(&commit.oid));
             let (prefix, description) = split_subject(&commit.subject);
@@ -198,19 +198,16 @@ struct Chip<'a> {
 
 fn commit_chips(refs: Option<&Vec<Ref>>) -> Vec<Chip<'_>> {
     let refs = refs.map_or(&[][..], Vec::as_slice);
-    let local = |remote: &str| {
-        let branch = remote.split_once('/').map_or(remote, |(_, branch)| branch);
+    let local = |remote: &Ref| {
         refs.iter()
-            .any(|r| r.kind == RefKind::Branch && r.name == branch)
+            .any(|r| r.kind == RefKind::Branch && r.name == remote.branch_name())
     };
     let tracked = |branch: &Ref| {
-        refs.iter().any(|r| {
-            r.kind == RefKind::Remote
-                && r.name.split_once('/').map(|(_, name)| name) == Some(branch.name.as_str())
-        })
+        refs.iter()
+            .any(|r| r.kind == RefKind::Remote && r.branch_name() == branch.name)
     };
     refs.iter()
-        .filter(|r| r.kind != RefKind::Remote || !local(&r.name))
+        .filter(|r| r.kind != RefKind::Remote || !local(r))
         .map(|label| Chip {
             label,
             synced: label.kind == RefKind::Branch && tracked(label),

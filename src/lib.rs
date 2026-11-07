@@ -6,6 +6,9 @@ pub mod ops;
 pub mod patch;
 pub mod spotlight;
 pub mod status;
+#[cfg(test)]
+mod testing;
+pub mod text;
 pub mod theme;
 pub mod view;
 pub mod working;

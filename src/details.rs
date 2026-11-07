@@ -2,6 +2,7 @@
 
 use crate::ops;
 use crate::patch::{self, FilePatch};
+use crate::text::short_oid;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -28,12 +29,6 @@ impl FileChange {
             'T' => "Type changed",
             _ => "Modified",
         }
-    }
-
-    /// The folder and file name, to draw the folder quieter.
-    pub fn split_path(&self) -> (&str, &str) {
-        let split = self.path.rfind('/').map_or(0, |slash| slash + 1);
-        self.path.split_at(split)
     }
 }
 
@@ -123,23 +118,9 @@ fn parse_changes(output: &str) -> Vec<FileChange> {
 
 /// Reads one file's diff within a commit.
 pub fn file_diff(repo: &Path, oid: &str, file: &FileChange) -> Result<FilePatch, String> {
-    let mut args = vec![
-        "-c",
-        "core.quotepath=off",
-        "diff-tree",
-        "--root",
-        "-r",
-        "-p",
-        "-M",
-        "--no-commit-id",
-        "--no-color",
-        "--no-ext-diff",
-        "--src-prefix=a/",
-        "--dst-prefix=b/",
-        oid,
-        "--",
-        &*file.path,
-    ];
+    let command = ["diff-tree", "--root", "-r", "-p", "-M", "--no-commit-id"];
+    let mut args = patch::diff_args(&command);
+    args.extend([oid, "--", &*file.path]);
     // A rename only shows as one if git can see both of its ends.
     if let Some(old_path) = &file.old_path {
         args.push(old_path);
@@ -150,12 +131,12 @@ pub fn file_diff(repo: &Path, oid: &str, file: &FileChange) -> Result<FilePatch,
 
 /// Switches to a branch, or to the bare commit when no branch names it.
 pub fn check_out(repo: &Path, branch: Option<&str>, oid: &str) -> Result<Option<String>, String> {
-    let short = &oid[..oid.len().min(7)];
     match branch {
         Some(branch) => ops::run(repo, &["switch", branch]).map(|_| None),
         None => ops::run(repo, &["switch", "--detach", oid]).map(|_| {
             Some(format!(
-                "Checked out {short} without a branch. Switch to a branch to get back."
+                "Checked out {} without a branch. Switch to a branch to get back.",
+                short_oid(oid)
             ))
         }),
     }
@@ -163,9 +144,9 @@ pub fn check_out(repo: &Path, branch: Option<&str>, oid: &str) -> Result<Option<
 
 pub fn cherry_pick(repo: &Path, oid: &str) -> Result<Option<String>, String> {
     ops::run(repo, &["cherry-pick", oid])?;
-    let short = &oid[..oid.len().min(7)];
     Ok(Some(format!(
-        "Copied {short} onto this branch as a new commit. Revert it to undo."
+        "Copied {} onto this branch as a new commit. Revert it to undo.",
+        short_oid(oid)
     )))
 }
 
@@ -176,63 +157,17 @@ pub fn revert(repo: &Path, oid: &str, is_merge: bool) -> Result<Option<String>, 
     }
     args.push(oid);
     ops::run(repo, &args)?;
-    let short = &oid[..oid.len().min(7)];
     Ok(Some(format!(
-        "Added a commit that reverts {short}. Revert that one to undo."
+        "Added a commit that reverts {}. Revert that one to undo.",
+        short_oid(oid)
     )))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::Repo;
     use std::fs;
-    use std::process::Command;
-    use tempfile::TempDir;
-
-    struct Repo(TempDir);
-
-    impl Repo {
-        fn new() -> Self {
-            let repo = Repo(TempDir::new().unwrap());
-            repo.git(&["init", "-q", "-b", "main"]);
-            repo
-        }
-
-        fn path(&self) -> &Path {
-            self.0.path()
-        }
-
-        fn git(&self, args: &[&str]) -> String {
-            let output = Command::new("git")
-                .arg("-C")
-                .arg(self.path())
-                .args(["-c", "user.name=T", "-c", "user.email=t@e.com"])
-                .args(["-c", "commit.gpgsign=false"])
-                .args(args)
-                .env("GIT_CONFIG_GLOBAL", self.path().join(".no-global-config"))
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "git {args:?}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            String::from_utf8_lossy(&output.stdout).trim().to_owned()
-        }
-
-        fn write(&self, path: &str, content: &str) {
-            let path = self.path().join(path);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, content).unwrap();
-        }
-
-        fn commit(&self, message: &str) -> String {
-            self.git(&["add", "-A"]);
-            self.git(&["commit", "-q", "--allow-empty", "-m", message]);
-            self.git(&["rev-parse", "HEAD"])
-        }
-    }
 
     fn lines(count: usize, word: &str) -> String {
         (0..count)
@@ -251,7 +186,6 @@ mod tests {
         assert_eq!(details.files.len(), 1);
         let file = &details.files[0];
         assert_eq!((file.status, file.additions, file.deletions), ('A', 2, 0));
-        assert_eq!(file.split_path(), ("src/", "app.rs"));
         assert_eq!(file.status_name(), "Added");
     }
 

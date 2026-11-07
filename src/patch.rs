@@ -68,8 +68,21 @@ impl FilePatch {
     }
 }
 
-/// Parses the output of `git diff` and its relatives. Asking for `--src-prefix=a/` and
-/// `--dst-prefix=b/` keeps paths parseable whatever the user's diff settings are.
+/// The arguments for a diff that [`parse`] can read whatever the user's settings are.
+/// `command` is the git subcommand and any options of its own.
+pub fn diff_args<'a>(command: &[&'a str]) -> Vec<&'a str> {
+    let mut args = vec!["-c", "core.quotepath=off"];
+    args.extend(command);
+    args.extend([
+        "--no-color",
+        "--no-ext-diff",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+    ]);
+    args
+}
+
+/// Parses the output of `git diff` and its relatives, run with [`diff_args`].
 pub fn parse(diff: &str) -> Vec<FilePatch> {
     let mut files: Vec<FilePatch> = Vec::new();
     let mut numbers = (0, 0);

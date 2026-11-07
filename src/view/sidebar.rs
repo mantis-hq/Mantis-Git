@@ -1,9 +1,10 @@
 //! The branch sidebar. Clicking a branch spotlights its history in the graph.
 
 use super::GraphView;
+use super::parts::{panel_row, section_label};
 use crate::git::NamedRef;
 use crate::spotlight::Spotlight;
-use crate::theme::{lane_color, selected_row, tokens};
+use crate::theme::{lane_color, tokens};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
@@ -155,6 +156,21 @@ fn tree_rows<'a>(
     out
 }
 
+/// How far in a row of the tree starts.
+fn indent(depth: usize) -> Pixels {
+    px(8. + 14. * depth as f32)
+}
+
+/// Adds `item` to the list, or takes it out if it was there.
+fn toggle<T: PartialEq>(list: &mut Vec<T>, item: T) {
+    match list.iter().position(|existing| *existing == item) {
+        Some(index) => {
+            list.remove(index);
+        }
+        None => list.push(item),
+    }
+}
+
 impl GraphView {
     pub(super) fn sidebar_is_open(&self) -> bool {
         self.sidebar.open.unwrap_or(self.sidebar.window_is_wide)
@@ -174,7 +190,7 @@ impl GraphView {
             .is_some_and(|s| s.tip == tip);
         self.sidebar.spotlight =
             (!same).then(|| Arc::new(Spotlight::new(tip.clone(), &self.entries)));
-        if !same && let Some(row) = self.entries.iter().position(|e| e.commit.oid == tip) {
+        if !same && let Some(row) = self.row_of(&tip) {
             self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
         }
         cx.notify();
@@ -189,12 +205,7 @@ impl GraphView {
     }
 
     fn toggle_folder(&mut self, key: String, cx: &mut Context<Self>) {
-        match self.sidebar.closed_folders.iter().position(|k| *k == key) {
-            Some(index) => {
-                self.sidebar.closed_folders.remove(index);
-            }
-            None => self.sidebar.closed_folders.push(key),
-        }
+        toggle(&mut self.sidebar.closed_folders, key);
         cx.notify();
     }
 
@@ -212,19 +223,12 @@ impl GraphView {
             open,
         } = folder;
         let theme = cx.theme();
-        let (hover, muted) = (theme.list_hover, theme.muted_foreground);
+        let muted = theme.muted_foreground;
         let text = theme.secondary_foreground;
         let key = format!("{list}/{path}");
-        div()
-            .id(SharedString::from(format!("folder-{key}")))
-            .h_flex()
+        panel_row(SharedString::from(format!("folder-{key}")), false, cx)
             .h(px(30.))
-            .pl(px(8. + 14. * depth as f32))
-            .pr_2()
-            .gap_2()
-            .rounded(px(6.))
-            .cursor_pointer()
-            .hover(|style| style.bg(hover))
+            .pl(indent(depth))
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_folder(key.clone(), cx)))
             .child(
                 div()
@@ -295,12 +299,7 @@ impl GraphView {
     }
 
     fn toggle_section(&mut self, section: Section, cx: &mut Context<Self>) {
-        match self.sidebar.expanded.iter().position(|s| *s == section) {
-            Some(index) => {
-                self.sidebar.expanded.remove(index);
-            }
-            None => self.sidebar.expanded.push(section),
-        }
+        toggle(&mut self.sidebar.expanded, section);
         cx.notify();
     }
 
@@ -332,15 +331,6 @@ impl GraphView {
             theme.primary,
         );
         let spotlit = self.sidebar.spotlight.clone();
-        let label = |text: &'static str| {
-            div()
-                .h_flex()
-                .flex_1()
-                .text_size(px(13.))
-                .font_medium()
-                .text_color(muted)
-                .child(text)
-        };
 
         let is_dark = cx.theme().is_dark();
         let default_branch = self.refs.default_branch.as_deref();
@@ -386,7 +376,12 @@ impl GraphView {
                                         .h_flex()
                                         .h(px(24.))
                                         .px_2()
-                                        .child(label("Branches"))
+                                        .child(
+                                            section_label(muted)
+                                                .h_flex()
+                                                .flex_1()
+                                                .child("Branches"),
+                                        )
                                         .when(spotlit.is_some(), |heading| {
                                             let tip = spotlit.as_ref().map(|s| s.tip.clone());
                                             heading.child(
@@ -442,24 +437,15 @@ impl GraphView {
             depth,
         } = row;
         let theme = cx.theme();
-        let (hover, muted) = (theme.list_hover, theme.muted_foreground);
-        let active = selected_row(theme);
+        let muted = theme.muted_foreground;
         let text = if strong || on {
             theme.foreground
         } else {
             theme.secondary_foreground
         };
-        div()
-            .id(id)
-            .h_flex()
+        panel_row(id, on, cx)
             .h(px(30.))
-            .pl(px(8. + 14. * depth as f32))
-            .pr_2()
-            .gap_2()
-            .rounded(px(6.))
-            .cursor_pointer()
-            .when(on, |row| row.bg(active))
-            .when(!on, |row| row.hover(|style| style.bg(hover)))
+            .pl(indent(depth))
             .on_click(cx.listener(move |this, _, _, cx| this.spotlight(tip.clone(), cx)))
             .child(div().size(px(8.)).flex_none().rounded_full().bg(color))
             .child(
@@ -530,16 +516,10 @@ impl GraphView {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = cx.theme();
-        div()
-            .id(title)
-            .h_flex()
+        panel_row(title, false, cx)
             .h(px(30.))
-            .px_2()
             .justify_between()
-            .rounded(px(6.))
-            .cursor_pointer()
             .text_color(tokens(theme.is_dark()).subtext0)
-            .hover(|style| style.bg(theme.list_hover))
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_section(section, cx)))
             .child(title)
             .child(

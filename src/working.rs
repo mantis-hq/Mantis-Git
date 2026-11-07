@@ -34,28 +34,15 @@ impl Included {
 
 /// Reads every changed file against HEAD, whether staged, unstaged or untracked.
 pub fn read(repo: &Path) -> Result<Vec<WorkingFile>, String> {
-    let head = ops::run(repo, &["rev-parse", "-q", "--verify", "HEAD"]).map(|_| "HEAD".to_owned());
     // Before the first commit there's no HEAD to compare with, only an empty tree.
-    let base = match head {
-        Ok(head) => head,
-        Err(_) => ops::run_with_input(repo, &["mktree"], b"")?
+    let base = if ops::resolves(repo, "HEAD") {
+        "HEAD".to_owned()
+    } else {
+        ops::run_with_input(repo, &["mktree"], b"")?
             .trim()
-            .to_owned(),
+            .to_owned()
     };
-    let diff = ops::run(
-        repo,
-        &[
-            "-c",
-            "core.quotepath=off",
-            "diff",
-            &base,
-            "--no-color",
-            "--no-ext-diff",
-            "--no-renames",
-            "--src-prefix=a/",
-            "--dst-prefix=b/",
-        ],
-    )?;
+    let diff = ops::run(repo, &patch::diff_args(&["diff", &base, "--no-renames"]))?;
     let names = ops::run(repo, &["diff", "--cached", "--name-only", "-z", &base])?;
     let staged: HashSet<&str> = names.split('\0').collect();
 
@@ -88,15 +75,8 @@ fn read_new_file(repo: &Path, path: &str) -> FilePatch {
     if size > MAX_SHOWN_FILE {
         return hidden;
     }
-    let output = crate::git::git(repo)
-        .args([
-            "-c",
-            "core.quotepath=off",
-            "diff",
-            "--no-index",
-            "--no-color",
-        ])
-        .args(["--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"])
+    let output = ops::git(repo)
+        .args(patch::diff_args(&["diff", "--no-index"]))
         .args(["--", "/dev/null", path])
         .output();
     let Ok(output) = output else {
@@ -126,8 +106,7 @@ pub fn commit(repo: &Path, included: &[Included], message: &str) -> Result<Strin
 
 /// Makes the index exactly HEAD plus the chosen changes.
 fn stage(repo: &Path, included: &[Included]) -> Result<(), String> {
-    let has_head = ops::run(repo, &["rev-parse", "-q", "--verify", "HEAD"]).is_ok();
-    if has_head {
+    if ops::resolves(repo, "HEAD") {
         ops::run(repo, &["reset", "-q"])?;
     } else {
         ops::run(repo, &["read-tree", "--empty"])?;
@@ -211,57 +190,8 @@ pub fn bump(kind: &str, breaking: bool, current: Version) -> Bump {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::Repo;
     use std::fs;
-    use std::process::Command;
-    use tempfile::TempDir;
-
-    struct Repo(TempDir);
-
-    impl Repo {
-        fn new() -> Self {
-            let repo = Repo(TempDir::new().unwrap());
-            repo.git(&["init", "-q", "-b", "main"]);
-            repo.git(&["config", "user.name", "T"]);
-            repo.git(&["config", "user.email", "t@e.com"]);
-            repo.git(&["config", "commit.gpgsign", "false"]);
-            repo.git(&["config", "core.autocrlf", "false"]);
-            repo
-        }
-
-        fn path(&self) -> &Path {
-            self.0.path()
-        }
-
-        fn git(&self, args: &[&str]) -> String {
-            let output = Command::new("git")
-                .arg("-C")
-                .arg(self.path())
-                .args(args)
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "git {args:?}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            String::from_utf8_lossy(&output.stdout).trim().to_owned()
-        }
-
-        fn write(&self, path: &str, content: &str) {
-            let path = self.path().join(path);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, content).unwrap();
-        }
-
-        fn read(&self, path: &str) -> String {
-            fs::read_to_string(self.path().join(path)).unwrap()
-        }
-
-        fn commit_all(&self, subject: &str) {
-            self.git(&["add", "-A"]);
-            self.git(&["commit", "-q", "-m", subject]);
-        }
-    }
 
     /// Twenty lines, so a change at each end is two separate hunks.
     fn long(top: &str, bottom: &str) -> String {
@@ -285,7 +215,7 @@ mod tests {
         let repo = Repo::new();
         repo.write("staged", "a\n");
         repo.write("unstaged", "a\n");
-        repo.commit_all("base");
+        repo.commit("base");
         repo.write("staged", "b\n");
         repo.git(&["add", "staged"]);
         repo.write("unstaged", "b\n");
@@ -303,7 +233,7 @@ mod tests {
     fn ignored_files_stay_out() {
         let repo = Repo::new();
         repo.write(".gitignore", "secret\n");
-        repo.commit_all("base");
+        repo.commit("base");
         repo.write("secret", "x\n");
         assert_eq!(read(repo.path()).unwrap(), []);
     }
@@ -312,7 +242,7 @@ mod tests {
     fn one_hunk_of_two_commits_and_the_other_stays_in_the_working_tree() {
         let repo = Repo::new();
         repo.write("file", &long("top", "bottom"));
-        repo.commit_all("base");
+        repo.commit("base");
         repo.write("file", &long("new top", "new bottom"));
 
         let files = read(repo.path()).unwrap();
@@ -341,7 +271,7 @@ mod tests {
         let repo = Repo::new();
         repo.write("gone", "bye\n");
         fs::write(repo.path().join("blob"), [0u8, 1]).unwrap();
-        repo.commit_all("base");
+        repo.commit("base");
 
         fs::remove_file(repo.path().join("gone")).unwrap();
         fs::write(repo.path().join("blob"), [0u8, 2]).unwrap();
@@ -362,7 +292,7 @@ mod tests {
         let repo = Repo::new();
         repo.write("in", "a\n");
         repo.write("out", "a\n");
-        repo.commit_all("base");
+        repo.commit("base");
         repo.write("in", "b\n");
         repo.write("out", "b\n");
         repo.git(&["add", "out"]);
@@ -401,7 +331,7 @@ mod tests {
         let repo = Repo::new();
         repo.write("a", "1\n");
         repo.write("b", "1\n");
-        repo.commit_all("base");
+        repo.commit("base");
         repo.write("a", "2\n");
         repo.write("b", "2\n");
         repo.git(&["add", "b"]);

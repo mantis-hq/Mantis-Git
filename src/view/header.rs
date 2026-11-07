@@ -1,8 +1,10 @@
 //! The header: where you are in a sentence, and the one thing to do next.
 
 use super::notice::Confirm;
+use super::parts::{header_bar, header_divider};
 use super::{GraphView, Status, repository_name};
 use crate::status::{self, NextAction, Span};
+use crate::text::count;
 use gpui_kit::component::button::*;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::*;
@@ -12,23 +14,13 @@ use std::rc::Rc;
 
 impl GraphView {
     pub(super) fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (border, header, muted) = (theme.border, theme.title_bar, theme.muted_foreground);
+        let muted = cx.theme().muted_foreground;
         let name = self.repo.as_deref().map(repository_name);
         let loading = self.status == Status::Loading || self.busy.is_some();
         let has_repo = self.status == Status::Loaded;
         let action = self.refs.status.next_action();
 
-        div()
-            .h_flex()
-            .h(px(52.))
-            .flex_none()
-            .pl_4()
-            .pr_3()
-            .gap_4()
-            .bg(header)
-            .border_b_1()
-            .border_color(border)
+        header_bar(cx)
             .child(
                 Button::new("switch-repository")
                     .ghost()
@@ -41,7 +33,7 @@ impl GraphView {
                         )
                     }),
             )
-            .child(div().flex_none().w(px(1.)).h(px(20.)).bg(border))
+            .child(header_divider(cx))
             .child(self.render_sentence(cx))
             .when(loading, |bar| {
                 bar.child(Spinner::new().small())
@@ -110,11 +102,7 @@ impl GraphView {
         if let NextAction::ForcePush { replaced, .. } = action {
             let upstream = self.refs.status.upstream.clone().unwrap_or_default();
             let branch = self.refs.status.branch.clone().unwrap_or_default();
-            let commits = if replaced == 1 {
-                "1 commit".to_owned()
-            } else {
-                format!("{replaced} commits")
-            };
+            let commits = count(replaced, "commit");
             self.confirm = Some(Confirm {
                 message: format!(
                     "This replaces {commits} on {upstream}. To undo it, find them with \

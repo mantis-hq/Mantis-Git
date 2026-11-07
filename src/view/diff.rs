@@ -1,8 +1,9 @@
 //! The diff panel under the graph, so history stays visible while reading it.
 
-use super::GraphView;
+use super::parts::{LineStyle, expand_tabs, file_path, line_style};
+use super::{GraphView, Notice};
 use crate::details::{self, FileChange};
-use crate::patch::{FilePatch, Line, LineKind};
+use crate::patch::{FilePatch, Line};
 use crate::theme::tokens;
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
@@ -15,7 +16,6 @@ use std::sync::Arc;
 const ROW_HEIGHT: Pixels = px(22.);
 const NUMBER_WIDTH: Pixels = px(40.);
 const SIGN_WIDTH: Pixels = px(28.);
-const TAB: &str = "    ";
 
 #[derive(Default)]
 pub(super) struct State {
@@ -97,14 +97,12 @@ impl GraphView {
         cx.notify();
 
         let oid = details.oid.clone();
-        cx.spawn(async move |this, cx| {
-            let shown = cx
-                .background_spawn(async move {
-                    let patch = details::file_diff(&repo, &oid, &file)?;
-                    Ok::<_, String>(Shown::new(oid, &file, &patch))
-                })
-                .await;
-            this.update(cx, |this, cx| {
+        Self::spawn_blocking(
+            move || {
+                let patch = details::file_diff(&repo, &oid, &file)?;
+                Ok::<_, String>(Shown::new(oid, &file, &patch))
+            },
+            move |this, shown, cx| {
                 let current = this
                     .selected_details()
                     .is_some_and(|d| d.oid == details.oid);
@@ -113,14 +111,13 @@ impl GraphView {
                 }
                 match shown {
                     Ok(shown) => this.diff.patch = Some(Arc::new(shown)),
-                    Err(message) => this.notice = Some(super::Notice::Error(message.into())),
+                    Err(message) => this.notice = Some(Notice::Error(message.into())),
                 }
                 this.diff.scroll.scroll_to_item(0, ScrollStrategy::Top);
                 cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+            },
+            cx,
+        );
     }
 
     fn close_diff(&mut self, cx: &mut Context<Self>) {
@@ -133,8 +130,6 @@ impl GraphView {
         let shown = self.diff.patch.clone()?;
         let theme = cx.theme();
         let (border, panel, muted) = (theme.border, theme.title_bar, theme.muted_foreground);
-        let split = shown.path.rfind('/').map_or(0, |slash| slash + 1);
-        let (folder, name) = shown.path.split_at(split);
         let empty = shown.rows.is_empty();
 
         Some(
@@ -157,15 +152,7 @@ impl GraphView {
                         .text_size(px(13.))
                         .border_b_1()
                         .border_color(border)
-                        .child(
-                            div()
-                                .h_flex()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .child(div().flex_none().text_color(muted).child(folder.to_owned()))
-                                .child(div().min_w_0().truncate().child(name.to_owned())),
-                        )
+                        .child(file_path(&shown.path, muted))
                         .child(
                             Button::new("close-diff")
                                 .ghost()
@@ -215,8 +202,7 @@ impl GraphView {
 
 fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut App) -> Vec<Div> {
     let theme = cx.theme();
-    let (foreground, muted) = (theme.foreground, theme.muted_foreground);
-    let (added, removed) = (theme.success, theme.danger);
+    let muted = theme.muted_foreground;
     let colors = tokens(theme.is_dark());
 
     range
@@ -234,14 +220,15 @@ fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut App) -> Vec<Div> {
                         .pl(NUMBER_WIDTH * 2. + SIGN_WIDTH)
                         .pr_4()
                         .text_color(muted)
-                        .child(title.replace('\t', TAB));
+                        .child(expand_tabs(title));
                 }
             };
-            let (wash, sign, sign_color, text) = match line.kind {
-                LineKind::Added => (Some(added), "+", added, foreground),
-                LineKind::Removed => (Some(removed), "-", removed, foreground),
-                LineKind::Context => (None, "", muted, colors.subtext0),
-            };
+            let LineStyle {
+                wash,
+                sign,
+                sign_color,
+                text,
+            } = line_style(line.kind, cx);
             let number = |value: Option<u32>| {
                 div()
                     .w(NUMBER_WIDTH)
@@ -250,7 +237,7 @@ fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut App) -> Vec<Div> {
                     .text_color(colors.overlay1)
                     .child(value.map(|n| n.to_string()).unwrap_or_default())
             };
-            row.when_some(wash, |row, wash| row.bg(wash.opacity(0.10)))
+            row.when_some(wash, |row, wash| row.bg(wash))
                 .child(number(line.old))
                 .child(number(line.new))
                 .child(
@@ -261,12 +248,7 @@ fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut App) -> Vec<Div> {
                         .text_color(sign_color)
                         .child(sign),
                 )
-                .child(
-                    div()
-                        .pr_4()
-                        .text_color(text)
-                        .child(line.text.replace('\t', TAB)),
-                )
+                .child(div().pr_4().text_color(text).child(expand_tabs(&line.text)))
         })
         .collect()
 }

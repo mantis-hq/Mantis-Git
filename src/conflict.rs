@@ -3,8 +3,9 @@
 //! Git's "ours" and "theirs" swap meaning during a rebase, so nothing here uses them.
 //! Each conflict has a `mine` and an `other`, and every label names a branch.
 
-use crate::git::git;
-use crate::ops;
+use crate::ops::{self, git};
+use crate::status;
+use crate::text::short_oid;
 use std::fs;
 use std::path::Path;
 
@@ -81,6 +82,15 @@ pub struct Progress {
 }
 
 impl Progress {
+    /// Puts git's two sides of a conflict in the order mine, other.
+    fn by_side<T>(&self, first: T, second: T) -> (T, T) {
+        if self.mine_is_second {
+            (second, first)
+        } else {
+            (first, second)
+        }
+    }
+
     /// Says what happened in plain words.
     pub fn sentence(&self) -> String {
         let decisions = match self.decisions.len() {
@@ -130,16 +140,19 @@ impl Progress {
 pub fn detect(repo: &Path) -> Option<Progress> {
     let git_dir = ops::run(repo, &["rev-parse", "--absolute-git-dir"]).ok()?;
     let git_dir = Path::new(git_dir.trim());
-    let (kind, target) =
-        if git_dir.join("rebase-merge").is_dir() || git_dir.join("rebase-apply").is_dir() {
-            (Kind::Rebase, String::new())
-        } else if let Some(oid) = read_oid(&git_dir.join("CHERRY_PICK_HEAD")) {
-            (Kind::CherryPick, oid)
-        } else if let Some(oid) = read_oid(&git_dir.join("REVERT_HEAD")) {
-            (Kind::Revert, oid)
-        } else {
-            (Kind::Merge, read_oid(&git_dir.join("MERGE_HEAD"))?)
-        };
+    let rebase_state = ["rebase-merge", "rebase-apply"]
+        .map(|name| git_dir.join(name))
+        .into_iter()
+        .find(|dir| dir.is_dir());
+    let (kind, target) = if rebase_state.is_some() {
+        (Kind::Rebase, String::new())
+    } else if let Some(oid) = read_oid(&git_dir.join("CHERRY_PICK_HEAD")) {
+        (Kind::CherryPick, oid)
+    } else if let Some(oid) = read_oid(&git_dir.join("REVERT_HEAD")) {
+        (Kind::Revert, oid)
+    } else {
+        (Kind::Merge, read_oid(&git_dir.join("MERGE_HEAD"))?)
+    };
 
     let branch = ops::run(repo, &["branch", "--show-current"]).unwrap_or_default();
     let branch = branch.trim().to_owned();
@@ -156,10 +169,7 @@ pub fn detect(repo: &Path) -> Option<Progress> {
     let mut mine_why = format!("On {}", progress.mine);
     match kind {
         Kind::Rebase => {
-            let state = ["rebase-merge", "rebase-apply"]
-                .map(|name| git_dir.join(name))
-                .into_iter()
-                .find(|dir| dir.is_dir())?;
+            let state = rebase_state?;
             let head_name = fs::read_to_string(state.join("head-name")).unwrap_or_default();
             progress.mine = head_name
                 .trim()
@@ -180,7 +190,7 @@ pub fn detect(repo: &Path) -> Option<Progress> {
         }
         Kind::Merge => progress.other = name_commit(repo, &target),
         Kind::CherryPick | Kind::Revert => {
-            progress.other = target[..target.len().min(7)].to_owned();
+            progress.other = short_oid(&target).to_owned();
         }
     }
 
@@ -210,7 +220,7 @@ fn name_commit(repo: &Path, oid: &str) -> String {
     names
         .lines()
         .next()
-        .map_or_else(|| oid[..oid.len().min(7)].to_owned(), str::to_owned)
+        .map_or_else(|| short_oid(oid).to_owned(), str::to_owned)
 }
 
 fn rebase_steps(repo: &Path, state: &Path) -> Vec<Step> {
@@ -287,11 +297,7 @@ fn read_decisions(
             match segment {
                 Segment::Text(text) => line += text.matches('\n').count() as u32,
                 Segment::Conflict { first, second } => {
-                    let (mine, other) = if progress.mine_is_second {
-                        (second, first)
-                    } else {
-                        (first, second)
-                    };
+                    let (mine, other) = progress.by_side(first, second);
                     decisions.push(Decision {
                         path: path.to_owned(),
                         line,
@@ -342,11 +348,7 @@ fn whole_file_sides(repo: &Path, path: &str, progress: &Progress) -> (String, St
         }
     };
     let (first, second) = file_stages(repo, path);
-    let (mine, other) = if progress.mine_is_second {
-        (second, first)
-    } else {
-        (first, second)
-    };
+    let (mine, other) = progress.by_side(first, second);
     (
         describe(mine, &progress.mine),
         describe(other, &progress.other),
@@ -504,85 +506,27 @@ pub fn rebase_onto(repo: &Path, target: &str) -> Result<Option<String>, String> 
     }
 }
 
-/// The default branch and how many commits it has that this branch doesn't. Only
-/// reported when rebasing makes sense: there's a branch to move, and it isn't that one.
-pub fn rebase_target(repo: &Path) -> Option<(String, u32)> {
+/// The default branch, when rebasing onto it would do something: there's a local copy
+/// with commits this branch doesn't have, and a branch to move that isn't that one.
+pub fn rebase_target(repo: &Path) -> Option<String> {
     let current = ops::run(repo, &["branch", "--show-current"]).ok()?;
     let current = current.trim();
-    let symbolic = ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"];
-    let origin_default = ops::run(repo, &symbolic).ok();
-    let origin_default = origin_default
-        .as_deref()
-        .and_then(|name| name.trim().split_once('/'))
-        .map(|(_, name)| name.to_owned());
-    let mut candidates = origin_default
-        .into_iter()
-        .chain(["main".to_owned(), "master".to_owned()]);
-    let target = candidates.find(|name| {
-        let full = format!("refs/heads/{name}");
-        ops::run(repo, &["rev-parse", "-q", "--verify", &full]).is_ok()
-    })?;
-    if current.is_empty() || current == target {
+    let (target, _) = status::default_branch(repo)?;
+    if current.is_empty()
+        || current == target
+        || !ops::resolves(repo, &format!("refs/heads/{target}"))
+    {
         return None;
     }
     let range = format!("HEAD..{target}");
     let count = ops::run(repo, &["rev-list", "--count", &range]).ok()?;
-    let count = count.trim().parse().ok()?;
-    (count > 0).then_some((target, count))
+    (count.trim().parse::<u32>().ok()? > 0).then_some(target)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
-    use tempfile::TempDir;
-
-    struct Repo(TempDir);
-
-    impl Repo {
-        fn new() -> Self {
-            let repo = Repo(TempDir::new().unwrap());
-            repo.git(&["init", "-q", "-b", "main"]);
-            repo.git(&["config", "user.name", "T"]);
-            repo.git(&["config", "user.email", "t@e.com"]);
-            repo.git(&["config", "commit.gpgsign", "false"]);
-            repo.git(&["config", "core.autocrlf", "false"]);
-            repo
-        }
-
-        fn path(&self) -> &Path {
-            self.0.path()
-        }
-
-        fn git(&self, args: &[&str]) -> String {
-            let output = Command::new("git")
-                .arg("-C")
-                .arg(self.path())
-                .args(args)
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "git {args:?}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            String::from_utf8_lossy(&output.stdout).trim().to_owned()
-        }
-
-        fn write(&self, path: &str, content: &str) {
-            fs::write(self.path().join(path), content).unwrap();
-        }
-
-        fn read(&self, path: &str) -> String {
-            fs::read_to_string(self.path().join(path)).unwrap()
-        }
-
-        fn commit(&self, subject: &str) -> String {
-            self.git(&["add", "-A"]);
-            self.git(&["commit", "-q", "--allow-empty", "-m", subject]);
-            self.git(&["rev-parse", "HEAD"])
-        }
-    }
+    use crate::testing::Repo;
 
     /// `feature` and `main` both changed line 2 of `file`.
     fn diverged() -> Repo {
@@ -857,9 +801,21 @@ mod tests {
     }
 
     #[test]
+    fn every_usual_default_branch_can_be_rebased_onto() {
+        let repo = Repo::new();
+        repo.git(&["branch", "-m", "trunk"]);
+        repo.commit("base");
+        repo.git(&["checkout", "-q", "-b", "feature"]);
+        repo.git(&["checkout", "-q", "trunk"]);
+        repo.commit("new on trunk");
+        repo.git(&["checkout", "-q", "feature"]);
+        assert_eq!(rebase_target(repo.path()), Some("trunk".to_owned()));
+    }
+
+    #[test]
     fn a_rebase_is_offered_only_off_the_default_branch_and_behind_it() {
         let repo = diverged();
-        assert_eq!(rebase_target(repo.path()), Some(("main".to_owned(), 1)));
+        assert_eq!(rebase_target(repo.path()), Some("main".to_owned()));
         repo.git(&["checkout", "-q", "main"]);
         assert_eq!(rebase_target(repo.path()), None);
     }

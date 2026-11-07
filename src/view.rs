@@ -7,6 +7,7 @@ mod diff;
 mod header;
 mod inspector;
 mod notice;
+mod parts;
 mod rows;
 mod sidebar;
 mod workspace;
@@ -211,14 +212,28 @@ impl GraphView {
             return;
         }
         let current = self.refs.fingerprint().to_owned();
+        Self::spawn_blocking(
+            move || git::read_refs(&repo),
+            move |this, refs, cx| {
+                let moved = !matches!(&refs, Ok(refs) if refs.fingerprint() == current);
+                if moved {
+                    this.reload(cx);
+                }
+            },
+            cx,
+        );
+    }
+
+    /// Runs `work` off the UI thread, then gives its result to `done`. Git is slow enough
+    /// that anything calling it goes through here.
+    fn spawn_blocking<T: Send + 'static>(
+        work: impl FnOnce() -> T + Send + 'static,
+        done: impl FnOnce(&mut Self, T, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) {
         cx.spawn(async move |this, cx| {
-            let refs = cx
-                .background_spawn(async move { git::read_refs(&repo) })
-                .await;
-            let moved = !matches!(&refs, Ok(refs) if refs.fingerprint() == current);
-            if moved {
-                this.update(cx, |this, cx| this.reload(cx)).ok();
-            }
+            let result = cx.background_spawn(async move { work() }).await;
+            this.update(cx, |this, cx| done(this, result, cx)).ok();
         })
         .detach();
     }
@@ -312,6 +327,11 @@ impl GraphView {
     /// How many commits are listed, leaving out the working changes row.
     pub fn commit_count(&self) -> usize {
         self.entries.iter().filter(|entry| !entry.working).count()
+    }
+
+    /// Where a commit is in the list.
+    fn row_of(&self, oid: &str) -> Option<usize> {
+        self.entries.iter().position(|e| &*e.commit.oid == oid)
     }
 
     fn select(&mut self, index: usize, cx: &mut Context<Self>) {

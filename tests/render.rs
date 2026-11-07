@@ -3,6 +3,10 @@
 //! Needs a working renderer, so it isn't part of `cargo test`. Run it with
 //! `cargo test --test render`. Set `RENDER_OUTPUT=dir` to keep the frames as PNGs.
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "../src/testing.rs"]
+mod testing;
+
 fn main() {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     render::run();
@@ -12,6 +16,7 @@ fn main() {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod render {
+    use crate::testing::{Repo, git};
     use gitclient::theme;
     use gitclient::view::{self, GraphView, Status};
     use gpui_kit::assets::Assets;
@@ -21,7 +26,6 @@ mod render {
         WindowOptions, px, size,
     };
     use std::path::Path;
-    use std::process::Command;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
@@ -29,26 +33,6 @@ mod render {
     const GRAPH_LEFT: u32 = 0;
     const GRAPH_RIGHT: u32 = 60;
     const LIST_TOP: u32 = 72;
-
-    fn git(repo: &Path, args: &[&str]) {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(repo)
-            .args(["-c", "user.name=Ada", "-c", "user.email=ada@example.com"])
-            .args(["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
-            .args(args)
-            .env("GIT_CONFIG_GLOBAL", repo.join(".no-global-config"))
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_AUTHOR_DATE", "2026-03-04T05:06:07Z")
-            .env("GIT_COMMITTER_DATE", "2026-03-04T05:06:07Z")
-            .output()
-            .expect("git runs");
-        assert!(
-            output.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
 
     fn commit(repo: &Path, subject: &str) {
         let name: String = subject
@@ -65,8 +49,9 @@ mod render {
         git(repo, &["commit", "-q", "-m", subject]);
     }
 
-    fn fixture(repo: &Path) {
-        git(repo, &["init", "-q", "-b", "main"]);
+    fn fixture() -> Repo {
+        let fixture = Repo::new();
+        let repo = fixture.path();
         commit(repo, "Initial commit");
         commit(repo, "Add the storage layer");
         git(repo, &["tag", "-a", "v0.1.0", "-m", "first release"]);
@@ -115,6 +100,23 @@ mod render {
         git(repo, &["checkout", "-q", "main"]);
         commit(repo, "Bump the version");
         git(repo, &["checkout", "-q", "wip"]);
+        fixture
+    }
+
+    /// An app on the real renderer, in the given appearance.
+    fn app(mode: ThemeMode) -> HeadlessAppContext {
+        let mut cx = HeadlessAppContext::with_platform(
+            gpui_kit::platform::current_platform(true).text_system(),
+            Arc::new(Assets),
+            gpui_kit::platform::current_headless_renderer,
+        );
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            theme::init(cx);
+            view::bind_keys(cx);
+            Theme::change(mode, None, cx);
+        });
+        cx
     }
 
     fn open(cx: &mut HeadlessAppContext, repo: &Path) -> (AnyWindowHandle, Entity<GraphView>) {
@@ -194,21 +196,8 @@ mod render {
     }
 
     fn assert_draws_lanes(mode: ThemeMode, name: &str) {
-        let repo = tempfile::tempdir().unwrap();
-        fixture(repo.path());
-
-        let mut cx = HeadlessAppContext::with_platform(
-            gpui_kit::platform::current_platform(true).text_system(),
-            Arc::new(Assets),
-            gpui_kit::platform::current_headless_renderer,
-        );
-        cx.update(|cx| {
-            gpui_kit::init(cx);
-            theme::init(cx);
-            view::bind_keys(cx);
-            Theme::change(mode, None, cx);
-        });
-
+        let repo = fixture();
+        let mut cx = app(mode);
         let (handle, view) = open(&mut cx, repo.path());
         assert_eq!(cx.update(|cx| view.read(cx).commit_count()), 11);
 
@@ -218,30 +207,18 @@ mod render {
     }
 
     fn assert_working_changes_lead_to_the_commit_screen() {
-        let repo = tempfile::tempdir().unwrap();
-        fixture(repo.path());
+        let repo = fixture();
         let lines: String = (0..30).map(|line| format!("line {line}\n")).collect();
-        std::fs::write(repo.path().join("notes.txt"), &lines).unwrap();
-        git(repo.path(), &["add", "notes.txt"]);
-        git(repo.path(), &["commit", "-q", "-m", "docs: add notes"]);
-        git(repo.path(), &["tag", "v0.1.1"]);
+        repo.write("notes.txt", &lines);
+        repo.commit("docs: add notes");
+        repo.git(&["tag", "v0.1.1"]);
         let edited = lines
             .replace("line 3\n", "changed 3\n")
             .replace("line 26\n", "changed 26\n");
-        std::fs::write(repo.path().join("notes.txt"), edited).unwrap();
-        std::fs::write(repo.path().join("draft.txt"), "a new file\n").unwrap();
+        repo.write("notes.txt", &edited);
+        repo.write("draft.txt", "a new file\n");
 
-        let mut cx = HeadlessAppContext::with_platform(
-            gpui_kit::platform::current_platform(true).text_system(),
-            Arc::new(Assets),
-            gpui_kit::platform::current_headless_renderer,
-        );
-        cx.update(|cx| {
-            gpui_kit::init(cx);
-            theme::init(cx);
-            view::bind_keys(cx);
-            Theme::change(ThemeMode::Dark, None, cx);
-        });
+        let mut cx = app(ThemeMode::Dark);
         let (handle, view) = open(&mut cx, repo.path());
         assert_eq!(cx.update(|cx| view.read(cx).commit_count()), 12);
         capture(&mut cx, handle, "working-row");
@@ -267,13 +244,9 @@ mod render {
     }
 
     fn assert_conflict_screen_opens() {
-        let repo = tempfile::tempdir().unwrap();
+        let repo = Repo::new();
         let path = repo.path();
-        git(path, &["init", "-q", "-b", "main"]);
-        git(path, &["config", "user.name", "Ada"]);
-        git(path, &["config", "user.email", "ada@example.com"]);
-        git(path, &["config", "commit.gpgsign", "false"]);
-        let write = |text: &str| std::fs::write(path.join("parser.rs"), text).unwrap();
+        let write = |text: &str| repo.write("parser.rs", text);
         write("fn parse(input: &str) {\n    input.trim();\n}\n");
         commit(path, "Add the parser");
         git(path, &["checkout", "-q", "-b", "feat/parser"]);
@@ -291,17 +264,7 @@ mod render {
             "fixture must conflict"
         );
 
-        let mut cx = HeadlessAppContext::with_platform(
-            gpui_kit::platform::current_platform(true).text_system(),
-            Arc::new(Assets),
-            gpui_kit::platform::current_headless_renderer,
-        );
-        cx.update(|cx| {
-            gpui_kit::init(cx);
-            theme::init(cx);
-            view::bind_keys(cx);
-            Theme::change(ThemeMode::Dark, None, cx);
-        });
+        let mut cx = app(ThemeMode::Dark);
         let (handle, view) = open(&mut cx, path);
         wait_for(&mut cx, |cx| {
             cx.update(|cx| view.read(cx).screen()) == view::Screen::Conflict

@@ -1,6 +1,8 @@
 //! Where a repository stands, and the one thing to do next.
 
+use crate::git::pick_default_branch;
 use crate::ops;
+use crate::text::{count, short_oid};
 use std::path::Path;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -64,13 +66,6 @@ pub enum Span {
     Branch(String),
 }
 
-fn count(number: u32, noun: &str) -> String {
-    match number {
-        1 => format!("1 {noun}"),
-        _ => format!("{number} {noun}s"),
-    }
-}
-
 impl RepoStatus {
     pub fn is_on_base(&self) -> bool {
         matches!((&self.branch, &self.base), (Some(b), Some((base, _))) if b == base)
@@ -123,7 +118,7 @@ impl RepoStatus {
                 ]
             }
             None => {
-                let short = &head[..head.len().min(7)];
+                let short = short_oid(head);
                 vec![Span::Text(format!("HEAD is detached at {short}."))]
             }
         };
@@ -134,11 +129,7 @@ impl RepoStatus {
         {
             spans.push(Span::Text(" ".into()));
             spans.push(Span::Branch(base.clone()));
-            spans.push(Span::Text(format!(
-                " has {} new {}.",
-                new,
-                if *new == 1 { "commit" } else { "commits" }
-            )));
+            spans.push(Span::Text(format!(" has {}.", count(new, "new commit"))));
         }
         if self.changed > 0 {
             let files = count(self.changed, "file");
@@ -171,19 +162,18 @@ pub fn read(repo: &Path) -> RepoStatus {
     status
 }
 
-fn default_branch(repo: &Path) -> Option<(String, String)> {
+/// The default branch, and what to compare with to see how far it has moved: origin's
+/// copy when origin named it, because that's the one that gets the new commits.
+pub(crate) fn default_branch(repo: &Path) -> Option<(String, String)> {
     let symbolic = ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"];
-    if let Ok(remote) = ops::run(repo, &symbolic) {
-        let remote = remote.trim();
-        if let Some((_, name)) = remote.split_once('/') {
-            return Some((name.to_owned(), remote.to_owned()));
-        }
-    }
-    ["main", "master", "trunk"].into_iter().find_map(|name| {
-        let full = format!("refs/heads/{name}");
-        ops::run(repo, &["rev-parse", "-q", "--verify", &full]).ok()?;
-        Some((name.to_owned(), name.to_owned()))
-    })
+    let origin = ops::run(repo, &symbolic).unwrap_or_default();
+    let origin = origin.trim().split_once('/').map(|(_, name)| name);
+    let compare_with = |name: &str| match origin {
+        Some(origin) if origin == name => format!("origin/{name}"),
+        _ => name.to_owned(),
+    };
+    let name = pick_default_branch(origin, |name| ops::resolves(repo, &compare_with(name)))?;
+    Some((name.to_owned(), compare_with(name)))
 }
 
 fn parse(output: &str) -> RepoStatus {
@@ -243,30 +233,8 @@ pub fn run_next_action(repo: &Path, action: &NextAction) -> Result<Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
+    use crate::testing::{empty_commit as commit, git};
     use tempfile::TempDir;
-
-    fn git(dir: &Path, args: &[&str]) {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(["-c", "user.name=T", "-c", "user.email=t@e.com"])
-            .args(["-c", "commit.gpgsign=false"])
-            .args(args)
-            .env("GIT_CONFIG_GLOBAL", dir.join(".no-global-config"))
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    fn commit(dir: &Path, subject: &str) {
-        git(dir, &["commit", "-q", "--allow-empty", "-m", subject]);
-    }
 
     fn cloned() -> (TempDir, TempDir, TempDir) {
         let (remote, one, two) = (
@@ -425,6 +393,20 @@ mod tests {
         let status = read(one.path());
         assert_eq!(status.changed, 2);
         assert!(text(&status.sentence()).ends_with("2 files changed."));
+    }
+
+    #[test]
+    fn an_origin_head_pointing_at_nothing_falls_back_to_a_usual_name() {
+        let (_remote, one, _two) = cloned();
+        git(
+            one.path(),
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/gone",
+            ],
+        );
+        assert_eq!(read(one.path()).base, Some(("main".to_owned(), 0)));
     }
 
     #[test]
