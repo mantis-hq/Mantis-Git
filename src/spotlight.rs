@@ -92,6 +92,7 @@ mod tests {
             .map(|(oid, parents)| {
                 let parents: Box<[Arc<str>]> = parents.iter().map(|&p| p.into()).collect();
                 Entry {
+                    working: false,
                     row: builder.push(oid, &parents),
                     commit: Commit {
                         oid: (*oid).into(),

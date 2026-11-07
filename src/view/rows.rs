@@ -59,6 +59,7 @@ impl GraphView {
             let commit_lit = spotlight.as_ref().is_none_or(|s| s.commit_is_lit(index));
             let is_head = self.refs.head.as_ref() == Some(&commit.oid);
             let is_merge = commit.parents.len() > 1;
+            let is_working = entry.working;
             let chips = commit_chips(self.refs.by_commit.get(&commit.oid));
             let (prefix, description) = split_subject(&commit.subject);
             let subject_color = if is_merge { subtext0 } else { foreground };
@@ -76,7 +77,11 @@ impl GraphView {
                     .when(!commit_lit, |row| row.opacity(FADED_ROW))
                     .when(!selected, |row| row.hover(|style| style.bg(hover)))
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.select(index, cx);
+                        if this.entries.get(index).is_some_and(|entry| entry.working) {
+                            this.open_commit_screen(cx);
+                        } else {
+                            this.select(index, cx);
+                        }
                         window.focus(&this.focus, cx);
                     }))
                     .child(
@@ -96,6 +101,7 @@ impl GraphView {
                                             NodeStyle {
                                                 is_head,
                                                 is_merge,
+                                                is_working,
                                                 head,
                                                 hollow: row_background,
                                             },
@@ -159,7 +165,9 @@ impl GraphView {
                             .flex_none()
                             .text_right()
                             .text_color(muted)
-                            .child(format_when(commit, Utc::now().timestamp())),
+                            .when(!is_working, |date| {
+                                date.child(format_when(commit, Utc::now().timestamp()))
+                            }),
                     ),
             );
         }
@@ -268,6 +276,7 @@ fn paint_cloud(bounds: Bounds<Pixels>, color: Hsla, window: &mut Window) {
 struct NodeStyle {
     is_head: bool,
     is_merge: bool,
+    is_working: bool,
     head: Hsla,
     /// Fills the middle of merge nodes and the HEAD ring, so it has to match the row
     /// behind them.
@@ -301,17 +310,17 @@ fn paint_row(
 
     for lane in row.through.iter() {
         let color = line_color(lane, column_lit(lane.column));
-        paint_vertical(x_of(lane.column), top, bottom, color, window);
+        paint_vertical(x_of(lane.column), top, bottom, color, lane.dashed, window);
     }
     for lane in &row.incoming {
         let color = line_color(lane, column_lit(lane.column));
         let from = point(x_of(lane.column), top);
-        paint_edge(from, point(node_x, middle), color, window);
+        paint_edge(from, point(node_x, middle), color, lane.dashed, window);
     }
     for lane in &row.outgoing {
         let color = line_color(lane, commit_lit);
         let to = point(x_of(lane.column), bottom);
-        paint_edge(point(node_x, middle), to, color, window);
+        paint_edge(point(node_x, middle), to, color, lane.dashed, window);
     }
 
     if is_clipped(row) {
@@ -328,6 +337,10 @@ fn paint_row(
         return;
     }
 
+    if node.is_working {
+        paint_dashed_ring(node_x, middle, NODE_RADIUS + 1., node.head, window);
+        return;
+    }
     if node.is_head {
         paint_circle(node_x, middle, NODE_RADIUS + 3., node.head, window);
         paint_circle(node_x, middle, NODE_RADIUS + 1.5, node.hollow, window);
@@ -351,15 +364,54 @@ fn is_clipped(row: &Row) -> bool {
     row.column >= MAX_VISIBLE_LANES
 }
 
-fn paint_vertical(x: Pixels, top: Pixels, bottom: Pixels, color: Hsla, window: &mut Window) {
+/// A ring of short arcs, for work that isn't a commit yet.
+fn paint_dashed_ring(x: Pixels, y: Pixels, radius: f32, color: Hsla, window: &mut Window) {
+    const DASHES: u32 = 6;
+    for dash in 0..DASHES {
+        let start = dash as f32 / DASHES as f32 * std::f32::consts::TAU;
+        let end = start + std::f32::consts::TAU / DASHES as f32 * 0.55;
+        let at = |angle: f32| point(x + px(angle.cos() * radius), y + px(angle.sin() * radius));
+        let mut path = PathBuilder::stroke(px(1.5));
+        path.move_to(at(start));
+        path.line_to(at((start + end) / 2.));
+        path.line_to(at(end));
+        if let Ok(path) = path.build() {
+            window.paint_path(path, color);
+        }
+    }
+}
+
+fn paint_vertical(
+    x: Pixels,
+    top: Pixels,
+    bottom: Pixels,
+    color: Hsla,
+    dashed: bool,
+    window: &mut Window,
+) {
+    if dashed {
+        let mut path = PathBuilder::stroke(px(LINE_WIDTH)).dash_array(&[px(4.), px(4.)]);
+        path.move_to(point(x, top));
+        path.line_to(point(x, bottom));
+        if let Ok(path) = path.build() {
+            window.paint_path(path, color);
+        }
+        return;
+    }
     let half = px(LINE_WIDTH / 2.);
     let bounds = Bounds::from_corners(point(x - half, top), point(x + half, bottom));
     window.paint_quad(fill(bounds, color));
 }
 
-fn paint_edge(from: Point<Pixels>, to: Point<Pixels>, color: Hsla, window: &mut Window) {
+fn paint_edge(
+    from: Point<Pixels>,
+    to: Point<Pixels>,
+    color: Hsla,
+    dashed: bool,
+    window: &mut Window,
+) {
     if from.x == to.x {
-        paint_vertical(from.x, from.y, to.y, color, window);
+        paint_vertical(from.x, from.y, to.y, color, dashed, window);
         return;
     }
     let bend = (to.y - from.y) * 0.6;

@@ -112,6 +112,8 @@ pub struct Refs {
     pub tags: Vec<NamedRef>,
     /// Stash subjects, newest first.
     pub stashes: Vec<String>,
+    /// How many files have uncommitted changes.
+    pub working_files: u32,
     /// How to lay out the graph for this repository.
     pub plan: Plan,
     /// The top of the working tree, or the repository itself when it is bare.
@@ -133,6 +135,8 @@ impl Refs {
 pub struct Entry {
     pub commit: Commit,
     pub row: Row,
+    /// This row is the working changes, not a commit, and `commit` only fills in its text.
+    pub working: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -167,18 +171,43 @@ pub fn load(repo: &Path, mut emit: impl FnMut(LoadEvent) -> bool) {
     }
 
     let mut builder = GraphBuilder::with_plan(refs.plan.clone());
+    let working = (refs.working_files > 0).then(|| working_entry(refs.working_files, &mut builder));
+    if let Some(working) = &working
+        && refs.tips.is_empty()
+        && !emit(LoadEvent::Batch(vec![working.clone()]))
+    {
+        return;
+    }
+    let mut working = working.filter(|_| !refs.tips.is_empty());
     let result = stream_commits(repo, &refs.tips, |commits| {
-        let batch = commits
+        let batch = working
+            .take()
             .into_iter()
-            .map(|commit| Entry {
+            .chain(commits.into_iter().map(|commit| Entry {
                 row: builder.push(&commit.oid, &commit.parents),
                 commit,
-            })
+                working: false,
+            }))
             .collect();
         emit(LoadEvent::Batch(batch))
     });
     if let Err(message) = result {
         emit(LoadEvent::Failed(message));
+    }
+}
+
+fn working_entry(files: u32, builder: &mut GraphBuilder) -> Entry {
+    let noun = if files == 1 { "file" } else { "files" };
+    Entry {
+        row: builder.working_row(),
+        commit: Commit {
+            oid: "".into(),
+            parents: Box::default(),
+            author: "".into(),
+            time: 0,
+            subject: format!("Working changes in {files} {noun}").into(),
+        },
+        working: true,
     }
 }
 
@@ -241,10 +270,14 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
         .then(|| PathBuf::from(String::from_utf8_lossy(&toplevel.stdout).trim_end()));
 
     let status = status::read(repo);
+    // A bare repository has no status to report, which just means nothing has changed.
+    let changes = run_git(repo, &["status", "--porcelain", "-z"])?;
+    let changes = String::from_utf8_lossy(&changes.stdout);
 
     let mut refs = Refs {
+        working_files: count_status_entries(&changes),
         workdir: workdir.or_else(|| Some(repo.to_owned())),
-        fingerprint: format!("{listing}\0{head_ref:?}\0{head:?}\0{status:?}"),
+        fingerprint: format!("{listing}\0{head_ref:?}\0{head:?}\0{status:?}\0{changes}"),
         status,
         ..Refs::default()
     };
@@ -487,6 +520,19 @@ fn fork_point(repo: &Path, base: &str) -> Option<Arc<str>> {
             .map(|head| String::from_utf8_lossy(&head.stdout).trim().into());
     };
     oldest.split_whitespace().nth(1).map(Arc::from)
+}
+
+/// Counts files in `status --porcelain -z`, where a rename's old path is its own field.
+fn count_status_entries(status: &str) -> u32 {
+    let mut count = 0;
+    let mut fields = status.split('\0').filter(|field| !field.is_empty());
+    while let Some(field) = fields.next() {
+        count += 1;
+        if field.starts_with('R') || field.starts_with('C') {
+            fields.next();
+        }
+    }
+    count
 }
 
 fn intern(tips: &mut Vec<Arc<str>>, oid: &str) -> Arc<str> {
@@ -810,6 +856,7 @@ mod tests {
         std::fs::write(repo.path().join("file"), "content").unwrap();
         let blob = repo.git_output(&["hash-object", "-w", "file"]);
         repo.git(&["tag", "blob-tag", &blob]);
+        std::fs::remove_file(repo.path().join("file")).unwrap();
 
         let (_, entries, error) = load_all(repo.path());
         assert_eq!(error, None);
@@ -1050,6 +1097,44 @@ mod tests {
         let refs = read_refs(repo.path()).unwrap();
         assert_eq!(refs.stashes.len(), 1);
         assert!(refs.stashes[0].contains("half done"));
+    }
+
+    #[test]
+    fn working_changes_become_the_top_row_and_count_a_rename_once() {
+        let repo = Repo::new();
+        std::fs::write(repo.path().join("a"), "content to rename\n").unwrap();
+        repo.git(&["add", "a"]);
+        repo.commit("base");
+        repo.git(&["mv", "a", "b"]);
+        std::fs::write(repo.path().join("new"), "x").unwrap();
+
+        let (refs, entries, _) = load_all(repo.path());
+        assert_eq!(refs.unwrap().working_files, 2);
+        assert!(entries[0].working);
+        assert_eq!(&*entries[0].commit.subject, "Working changes in 2 files");
+        assert!(!entries[1].working);
+    }
+
+    #[test]
+    fn a_repository_with_changes_but_no_commits_still_shows_them() {
+        let repo = Repo::new();
+        std::fs::write(repo.path().join("new"), "x").unwrap();
+        let (_, entries, error) = load_all(repo.path());
+        assert_eq!(error, None);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].working);
+    }
+
+    #[test]
+    fn a_clean_tree_has_no_working_row_and_saving_a_file_changes_the_fingerprint() {
+        let repo = Repo::new();
+        repo.commit("base");
+        let (refs, entries, _) = load_all(repo.path());
+        assert!(!entries[0].working);
+        let before = refs.unwrap();
+        std::fs::write(repo.path().join("new"), "x").unwrap();
+        let after = read_refs(repo.path()).unwrap();
+        assert_ne!(before.fingerprint(), after.fingerprint());
     }
 
     #[test]

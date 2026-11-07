@@ -7,3 +7,4 @@ pub mod spotlight;
 pub mod status;
 pub mod theme;
 pub mod view;
+pub mod working;

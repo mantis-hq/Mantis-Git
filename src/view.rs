@@ -280,8 +280,9 @@ impl GraphView {
         workdir.or_else(|| self.repo.clone())
     }
 
+    /// How many commits are listed, leaving out the working changes row.
     pub fn commit_count(&self) -> usize {
-        self.entries.len()
+        self.entries.iter().filter(|entry| !entry.working).count()
     }
 
     fn select(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -487,6 +488,7 @@ mod tests {
                     .into_iter()
                     .collect();
                 Entry {
+                    working: false,
                     row: builder.push(name, &parents),
                     commit: Commit {
                         oid: name.into(),
