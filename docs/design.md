@@ -6,7 +6,8 @@ reference is the design canvas: [link removed]
 is updated.
 
 The look is dark, modern, and minimal: Catppuccin Mocha, one typeface, and as few
-controls on screen as the task allows. Someone new should understand the state of
+controls on screen as the task allows. The app follows the OS appearance, so a light
+OS gets the Latte counterpart described under "Light mode". Someone new should understand the state of
 their repository in a few seconds.
 
 ## Principles
@@ -26,7 +27,8 @@ their repository in a few seconds.
 
 ## Colour
 
-Use Catppuccin Mocha values only. Do not invent colours, gradients, or new greys.
+Use the Catppuccin values listed here only. Do not invent colours, gradients, or new
+greys. The tables give Mocha; see "Light mode" for Latte.
 
 | Token      | Hex       | Use                                      |
 | ---------- | --------- | ---------------------------------------- |
@@ -57,6 +59,12 @@ Semantic colours:
 Branch lanes take these colours in order, then repeat: Mauve `#cba6f7`, Teal
 `#94e2d5`, Pink `#f5c2e7`, Sky `#89dceb`, Rosewater `#f5e0dc`, Flamingo `#f2cdcd`.
 `main` is the first of these. Lanes never use Blue, Green, Red, Yellow, or Peach.
+
+### Light mode
+
+Mocha is the design. When the OS asks for light, every token keeps its role and takes
+the same-named Catppuccin Latte value (Base `#eff1f5`, Text `#4c4f69`, Blue `#1e66f5`,
+and so on). Rules for usage are unchanged, and designs are reviewed in Mocha.
 
 Never carry meaning by hue alone. Pair colour with a letter (`M`, `A`), a shape, or a
 word.
@@ -117,8 +125,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 ## In code
 
 Set colours through the gpui-kit theme and read them from `cx.theme()`. Do not hard-code
-colours in views, except the semantic and lane palettes, which belong in one shared
-module.
+colours in views. The themes are in `src/catppuccin.json` and the lane palette is in
+`src/theme.rs`. Maple Mono is bundled in `src/fonts`.
 
 | gpui-kit theme field | Value     |
 | -------------------- | --------- |
@@ -131,7 +139,4 @@ module.
 
 Not built yet, so match this document as you touch each area:
 
-- Theme: `src/view.rs` still uses the default theme and hue-based `hsla` lane colours.
 - Lanes: `src/graph.rs` assigns lanes in arrival order, not HEAD first.
-- Metrics: `ROW_HEIGHT` is 28 and `LANE_WIDTH` is 14.
-- Font: Maple Mono is not bundled with the app.

@@ -1,3 +1,4 @@
+use gitclient::theme;
 use gitclient::view::{self, GraphView};
 use gpui_kit::*;
 use std::path::PathBuf;
@@ -10,6 +11,7 @@ fn main() {
 
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
+        theme::init(cx);
         view::bind_keys(cx);
 
         cx.on_window_closed(|cx, _| cx.quit()).detach();
@@ -23,6 +25,7 @@ fn main() {
             ..Default::default()
         };
         gpui_kit::open_window(options, cx, |window, cx| {
+            theme::follow_system(window, cx);
             cx.new(|cx| {
                 let mut view = GraphView::new(window, cx);
                 if let Some(repo) = repo {

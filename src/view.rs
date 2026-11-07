@@ -3,6 +3,7 @@
 
 use crate::git::{self, Entry, LoadEvent, Ref, RefKind, Refs};
 use crate::graph::{Lane, Row};
+use crate::theme::{lane_color, selected_row};
 use chrono::{DateTime, Local};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -14,10 +15,12 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-const ROW_HEIGHT: Pixels = px(28.);
-const LANE_WIDTH: f32 = 14.;
+const ROW_HEIGHT: Pixels = px(32.);
+const LANE_WIDTH: f32 = 16.;
 const GRAPH_PADDING: f32 = 6.;
-const LINE_WIDTH: f32 = 1.5;
+/// Keeps the "Graph" heading on one line when a history has few lanes.
+const MIN_GRAPH_WIDTH: f32 = 56.;
+const LINE_WIDTH: f32 = 1.75;
 const NODE_RADIUS: f32 = 4.;
 /// Wider graphs are clipped, so that a few hundred stale branches can't push the text out
 /// of the window.
@@ -272,14 +275,15 @@ impl GraphView {
 
     fn graph_width(&self) -> f32 {
         let lanes = self.max_columns.clamp(1, MAX_VISIBLE_LANES);
-        lanes as f32 * LANE_WIDTH + GRAPH_PADDING * 2.
+        (lanes as f32 * LANE_WIDTH + GRAPH_PADDING * 2.).max(MIN_GRAPH_WIDTH)
     }
 
     fn render_rows(&self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
         let theme = cx.theme();
         let is_dark = theme.is_dark();
-        let (foreground, muted, border) = (theme.foreground, theme.muted_foreground, theme.border);
-        let (background, hover, active) = (theme.background, theme.list_hover, theme.list_active);
+        let (foreground, muted) = (theme.foreground, theme.muted_foreground);
+        let (background, hover, active) = (theme.background, theme.list_hover, selected_row(theme));
+        let (head, on_head) = (theme.primary, theme.primary_foreground);
         let (warning, mono) = (theme.warning, theme.mono_font_family.clone());
         let graph_width = self.graph_width();
 
@@ -293,7 +297,7 @@ impl GraphView {
             let is_head = self.refs.head.as_ref() == Some(&commit.oid);
             let is_merge = commit.parents.len() > 1;
             let commit_refs = self.refs.by_commit.get(&commit.oid);
-            let lane_color = palette(entry.row.color, is_dark);
+            let lane = lane_color(entry.row.color, is_dark);
 
             rows.push(
                 div()
@@ -326,6 +330,7 @@ impl GraphView {
                                             NodeStyle {
                                                 is_head,
                                                 is_merge,
+                                                head,
                                                 hollow: row_background,
                                             },
                                             is_dark,
@@ -343,11 +348,18 @@ impl GraphView {
                             .min_w_0()
                             .gap_1p5()
                             .overflow_hidden()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(foreground)
+                                    .child(SharedString::from(commit.subject.clone())),
+                            )
                             .when_some(commit_refs, |row, refs| {
                                 row.children(
-                                    refs.iter().take(MAX_VISIBLE_REFS).map(|r| {
-                                        ref_label(r, lane_color, warning, foreground, muted)
-                                    }),
+                                    refs.iter()
+                                        .take(MAX_VISIBLE_REFS)
+                                        .map(|r| ref_label(r, lane, head, on_head, warning, muted)),
                                 )
                                 .when(
                                     refs.len() > MAX_VISIBLE_REFS,
@@ -359,14 +371,7 @@ impl GraphView {
                                         )
                                     },
                                 )
-                            })
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_color(foreground)
-                                    .child(SharedString::from(commit.subject.clone())),
-                            ),
+                            }),
                     )
                     .child(
                         div()
@@ -389,12 +394,10 @@ impl GraphView {
                             .w(OID_WIDTH)
                             .flex_none()
                             .font_family(mono.clone())
-                            .text_xs()
+                            .text_size(px(13.))
                             .text_color(muted)
                             .child(commit.short_oid().to_owned()),
-                    )
-                    .border_b_1()
-                    .border_color(border.opacity(0.25)),
+                    ),
             );
         }
         rows
@@ -402,17 +405,18 @@ impl GraphView {
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, border) = (theme.muted_foreground, theme.border);
+        let (muted, border, header) = (theme.muted_foreground, theme.border, theme.title_bar);
         let name = self.repo.as_deref().map(repository_name);
         let path = self.repo.as_ref().map(|path| path.display().to_string());
         let loading = self.status == Status::Loading;
 
         div()
             .h_flex()
-            .h(px(44.))
+            .h(px(52.))
             .flex_none()
             .px_3()
             .gap_2()
+            .bg(header)
             .border_b_1()
             .border_color(border)
             .when_some(name, |bar, name| {
@@ -465,7 +469,8 @@ impl GraphView {
             .flex_none()
             .pr_3()
             .gap_3()
-            .text_xs()
+            .text_size(px(13.))
+            .font_medium()
             .text_color(theme.muted_foreground)
             .bg(theme.list_head)
             .border_b_1()
@@ -604,37 +609,43 @@ fn format_date(time: i64) -> String {
         .unwrap_or_default()
 }
 
-fn ref_label(r: &Ref, lane: Hsla, tag: Hsla, foreground: Hsla, muted: Hsla) -> impl IntoElement {
-    let (color, text) = match r.kind {
-        RefKind::Tag => (tag, foreground),
-        RefKind::Remote => (muted, muted),
-        RefKind::Branch | RefKind::DetachedHead => (lane, foreground),
+fn ref_label(
+    r: &Ref,
+    lane: Hsla,
+    head: Hsla,
+    on_head: Hsla,
+    tag: Hsla,
+    muted: Hsla,
+) -> impl IntoElement {
+    let color = match r.kind {
+        RefKind::Tag => tag,
+        RefKind::Remote => muted,
+        RefKind::Branch | RefKind::DetachedHead => lane,
+    };
+    let (fill, text) = if r.is_head {
+        (head, on_head)
+    } else {
+        (color.opacity(0.14), color)
     };
     div()
         .flex_none()
         .max_w(px(180.))
         .truncate()
         .px_1p5()
-        .rounded_sm()
+        .rounded(px(4.))
         .text_xs()
+        .font_semibold()
         .text_color(text)
-        .border_1()
-        .border_color(color.opacity(0.7))
-        .bg(color.opacity(if r.is_head { 0.4 } else { 0.12 }))
-        .when(r.is_head, |label| label.font_semibold())
+        .bg(fill)
         .child(r.name.clone())
-}
-
-fn palette(color: u32, is_dark: bool) -> Hsla {
-    const HUES: [f32; 8] = [212., 150., 34., 330., 265., 178., 8., 92.];
-    let hue = HUES[color as usize % HUES.len()] / 360.;
-    hsla(hue, 0.75, if is_dark { 0.65 } else { 0.42 }, 1.)
 }
 
 struct NodeStyle {
     is_head: bool,
     is_merge: bool,
-    /// Fills the middle of merge nodes, so it has to match the row behind them.
+    head: Hsla,
+    /// Fills the middle of merge nodes and the HEAD ring, so it has to match the row
+    /// behind them.
     hollow: Hsla,
 }
 
@@ -672,17 +683,19 @@ fn paint_row(
         );
     }
 
-    let color = palette(row.color, is_dark);
     if node.is_head {
-        paint_circle(
-            node_x,
-            middle,
-            NODE_RADIUS + 2.5,
-            color.opacity(0.35),
-            window,
-        );
+        paint_circle(node_x, middle, NODE_RADIUS + 3., node.head, window);
+        paint_circle(node_x, middle, NODE_RADIUS + 1.5, node.hollow, window);
+        paint_circle(node_x, middle, NODE_RADIUS, node.head, window);
+        return;
     }
-    paint_circle(node_x, middle, NODE_RADIUS, color, window);
+    paint_circle(
+        node_x,
+        middle,
+        NODE_RADIUS,
+        lane_color(row.color, is_dark),
+        window,
+    );
     if node.is_merge {
         paint_circle(node_x, middle, NODE_RADIUS - 1.75, node.hollow, window);
     }
@@ -698,7 +711,7 @@ fn paint_vertical(
 ) {
     let half = px(LINE_WIDTH / 2.);
     let bounds = Bounds::from_corners(point(x - half, top), point(x + half, bottom));
-    window.paint_quad(fill(bounds, palette(lane.color, is_dark)));
+    window.paint_quad(fill(bounds, lane_color(lane.color, is_dark)));
 }
 
 fn paint_edge(
@@ -717,7 +730,7 @@ fn paint_edge(
     path.move_to(from);
     path.cubic_bezier_to(to, point(from.x, from.y + bend), point(to.x, to.y - bend));
     if let Ok(path) = path.build() {
-        window.paint_path(path, palette(lane.color, is_dark));
+        window.paint_path(path, lane_color(lane.color, is_dark));
     }
 }
 
@@ -730,7 +743,7 @@ fn paint_circle(x: Pixels, y: Pixels, radius: f32, color: Hsla, window: &mut Win
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that would bring in GPUI's `test` macro, which shadows Rust's.
-    use super::{Entry, GraphView, LoadEvent, Status, bind_keys};
+    use super::{Entry, GraphView, LoadEvent, MIN_GRAPH_WIDTH, Status, bind_keys};
     use crate::git::Commit;
     use crate::graph::GraphBuilder;
     use gpui_kit::{Entity, Modifiers, TestAppContext, VisualTestContext, point, px};
@@ -770,6 +783,15 @@ mod tests {
         let view = window.root(cx).unwrap();
         let cx = VisualTestContext::from_window(window.into(), cx);
         (view, cx)
+    }
+
+    #[gpui_kit::test]
+    fn a_single_lane_leaves_room_for_the_graph_heading(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_view(cx);
+        load(&view, &["a", "b"], &mut cx);
+        view.read_with(&cx, |view, _| {
+            assert_eq!(view.graph_width(), MIN_GRAPH_WIDTH);
+        });
     }
 
     fn load(view: &Entity<GraphView>, names: &[&str], cx: &mut VisualTestContext) {

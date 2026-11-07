@@ -12,6 +12,7 @@ fn main() {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod render {
+    use gitclient::theme;
     use gitclient::view::{self, GraphView, Status};
     use gpui_kit::assets::Assets;
     use gpui_kit::component::{Theme, ThemeMode};
@@ -164,7 +165,7 @@ mod render {
     }
 
     /// Distinct saturated colours in the graph column, which only the lanes can produce:
-    /// the rest of the theme is greys.
+    /// the surfaces behind them are barely tinted.
     fn lane_hues(frame: &image::RgbaImage) -> usize {
         let scale = frame.width() as f32 / 1000.;
         let mut hues = std::collections::BTreeSet::new();
@@ -172,7 +173,7 @@ mod render {
             for x in (GRAPH_LEFT as f32 * scale) as u32..(GRAPH_RIGHT as f32 * scale) as u32 {
                 let [r, g, b, _] = frame.get_pixel(x, y).0;
                 let (max, min) = (r.max(g).max(b) as i32, r.min(g).min(b) as i32);
-                if max - min > 90 {
+                if max - min > 45 {
                     hues.insert((r / 48, g / 48, b / 48));
                 }
             }
@@ -191,6 +192,7 @@ mod render {
         );
         cx.update(|cx| {
             gpui_kit::init(cx);
+            theme::init(cx);
             view::bind_keys(cx);
             Theme::change(mode, None, cx);
         });
