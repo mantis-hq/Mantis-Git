@@ -272,6 +272,7 @@ impl Render for Workspace {
             .v_flex()
             .size_full()
             .bg(background)
+            .text_size(px(13.))
             .on_action(cx.listener(|this, _: &ToggleDock, window, cx| this.toggle_dock(window, cx)))
             .on_action(
                 cx.listener(|this, _: &NewTerminal, window, cx| this.new_terminal(window, cx)),

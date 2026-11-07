@@ -1947,6 +1947,7 @@ impl Render for Settings {
             .v_flex()
             .size_full()
             .bg(background)
+            .text_size(px(13.))
             .text_color(text)
             .child(self.render_header(cx))
             .child(body)
