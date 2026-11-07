@@ -270,6 +270,8 @@ mod tests {
         assert_eq!(other.additions, 1, "stats stay aligned after a rename");
     }
 
+    // Windows doesn't allow tabs in file names.
+    #[cfg(unix)]
     #[test]
     fn paths_with_spaces_and_tabs_stay_whole() {
         let repo = Repo::new();
