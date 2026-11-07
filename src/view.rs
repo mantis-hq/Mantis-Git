@@ -249,6 +249,11 @@ impl GraphView {
         self.selected
     }
 
+    /// Whether a risky step is waiting for confirmation.
+    pub fn is_confirming(&self) -> bool {
+        self.confirm.is_some()
+    }
+
     /// What the band under the header says, if anything.
     pub fn notice_text(&self) -> Option<SharedString> {
         self.notice.as_ref().map(|notice| match notice {
@@ -600,6 +605,27 @@ mod tests {
             assert_eq!(view.notice_text().as_deref(), Some("push was rejected"));
             view.finish_operation(Ok(None), cx);
             assert_eq!(view.notice_text(), None);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn a_force_push_waits_for_confirmation_and_others_do_not(cx: &mut TestAppContext) {
+        use crate::status::NextAction;
+        let (view, mut cx) = open_view(cx);
+        view.update(&mut cx, |view, cx| {
+            let force = NextAction::ForcePush {
+                commits: 1,
+                replaced: 2,
+            };
+            view.start_action(force, cx);
+            assert!(view.is_confirming());
+            let band = view.confirm.as_ref().unwrap().message.clone();
+            assert!(band.contains("replaces 2 commits"), "{band}");
+            assert!(band.contains("git reflog"), "says how to undo it: {band}");
+
+            view.confirm = None;
+            view.start_action(NextAction::Push { commits: 1 }, cx);
+            assert!(!view.is_confirming());
         });
     }
 

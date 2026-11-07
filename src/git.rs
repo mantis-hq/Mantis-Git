@@ -4,6 +4,7 @@
 //! (reftables, SHA-256, partial clones, the commit-graph cache) without a libgit2 build.
 
 use crate::graph::{GraphBuilder, Row};
+use crate::status::{self, RepoStatus};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -69,6 +70,7 @@ pub struct Refs {
     pub head: Option<Arc<str>>,
     /// The top of the working tree, or the repository itself when it is bare.
     pub workdir: Option<PathBuf>,
+    pub status: RepoStatus,
     /// The commits to walk history from.
     tips: Vec<Arc<str>>,
     /// Compares equal exactly when no ref moved.
@@ -192,9 +194,12 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
         .success()
         .then(|| PathBuf::from(String::from_utf8_lossy(&toplevel.stdout).trim_end()));
 
+    let status = status::read(repo);
+
     let mut refs = Refs {
         workdir: workdir.or_else(|| Some(repo.to_owned())),
-        fingerprint: format!("{listing}\0{head_ref:?}\0{head:?}"),
+        fingerprint: format!("{listing}\0{head_ref:?}\0{head:?}\0{status:?}"),
+        status,
         ..Refs::default()
     };
 
