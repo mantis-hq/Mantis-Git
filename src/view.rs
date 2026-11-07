@@ -815,13 +815,13 @@ mod tests {
         let (view, mut cx) = open_view(cx);
         load(&view, &["b", "a"], &mut cx);
         view.update(&mut cx, |view, cx| {
-            view.spotlight("a".into(), cx);
+            view.spotlight("a".into(), false, cx);
             let spot = view.sidebar.spotlight.clone().unwrap();
             assert!(!spot.commit_is_lit(0) && spot.commit_is_lit(1));
 
-            view.spotlight("a".into(), cx);
+            view.spotlight("a".into(), false, cx);
             assert!(view.sidebar.spotlight.is_none());
-            view.spotlight("a".into(), cx);
+            view.spotlight("a".into(), false, cx);
         });
         load(&view, &["c", "b", "a"], &mut cx);
         view.read_with(&cx, |view, _| {

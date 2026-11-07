@@ -33,6 +33,8 @@ struct Leaf<'a> {
     tip: Arc<str>,
     color: Hsla,
     detail: String,
+    /// How it stands against its remote branch, such as `↑1 ↓2`.
+    sync: String,
     strong: bool,
 }
 
@@ -45,6 +47,7 @@ struct RefRow<'a> {
     tip: Arc<str>,
     color: Hsla,
     detail: String,
+    sync: String,
     on: bool,
     strong: bool,
     depth: usize,
@@ -190,24 +193,28 @@ impl GraphView {
     }
 
     /// Fades everything outside a branch's history, or turns that off again.
-    pub(super) fn spotlight(&mut self, tip: Arc<str>, cx: &mut Context<Self>) {
-        let same = self
-            .sidebar
-            .spotlight
-            .as_ref()
-            .is_some_and(|s| s.tip == tip);
-        self.sidebar.spotlight =
-            (!same).then(|| Arc::new(Spotlight::new(tip.clone(), &self.entries)));
-        if !same && let Some(row) = self.row_of(&tip) {
+    /// A click on a branch or tag. Plain picks it alone, and `add` (ctrl) adds or removes it.
+    pub(super) fn spotlight(&mut self, tip: Arc<str>, add: bool, cx: &mut Context<Self>) {
+        let tips = Spotlight::after_click(self.sidebar.spotlight.as_deref(), &tip, add);
+        let lit = !tips.is_empty();
+        let added = lit && tips.contains(&tip);
+        self.sidebar.spotlight = lit.then(|| Arc::new(Spotlight::new(tips, &self.entries)));
+        if added && let Some(row) = self.row_of(&tip) {
             self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
         }
         cx.notify();
     }
 
-    /// History changed, so the same branch's lit commits need working out again.
+    /// Spotlighting ends, as "Show all" does.
+    fn clear_spotlight(&mut self, cx: &mut Context<Self>) {
+        self.sidebar.spotlight = None;
+        cx.notify();
+    }
+
+    /// History changed, so the same branches' lit commits need working out again.
     pub(super) fn refresh_spotlight(&mut self) {
         if let Some(spot) = &self.sidebar.spotlight {
-            let spot = Spotlight::new(spot.tip.clone(), &self.entries);
+            let spot = Spotlight::new(spot.tips().to_vec(), &self.entries);
             self.sidebar.spotlight = Some(Arc::new(spot));
         }
     }
@@ -290,7 +297,7 @@ impl GraphView {
                     depth,
                 } => {
                     let leaf = &leaves[index];
-                    let on = spotlit.as_ref().is_some_and(|s| s.tip == leaf.tip);
+                    let on = spotlit.as_ref().is_some_and(|s| s.has_tip(&leaf.tip));
                     out.push(self.render_ref_row(
                         RefRow {
                             id: (list, index).into(),
@@ -302,6 +309,7 @@ impl GraphView {
                             tip: leaf.tip.clone(),
                             color: leaf.color,
                             detail: leaf.detail.clone(),
+                            sync: leaf.sync.clone(),
                             on,
                             strong: leaf.strong,
                             depth,
@@ -360,6 +368,7 @@ impl GraphView {
                 tip: branch.tip.clone(),
                 color: lane_color(branch.color, is_dark),
                 detail: branch.delta(default_branch),
+                sync: branch.remote_delta(),
                 strong: branch.is_head,
             })
             .collect();
@@ -400,7 +409,6 @@ impl GraphView {
                                                 .child("Branches"),
                                         )
                                         .when(spotlit.is_some(), |heading| {
-                                            let tip = spotlit.as_ref().map(|s| s.tip.clone());
                                             heading.child(
                                                 div()
                                                     .id("show-all")
@@ -409,13 +417,9 @@ impl GraphView {
                                                     .font_medium()
                                                     .text_color(link)
                                                     .child("Show all")
-                                                    .on_click(cx.listener(
-                                                        move |this, _, _, cx| {
-                                                            if let Some(tip) = tip.clone() {
-                                                                this.spotlight(tip, cx);
-                                                            }
-                                                        },
-                                                    )),
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.clear_spotlight(cx)
+                                                    })),
                                             )
                                         }),
                                 )
@@ -442,6 +446,7 @@ impl GraphView {
             tip,
             color,
             detail,
+            sync,
             on,
             strong,
             depth,
@@ -456,7 +461,9 @@ impl GraphView {
         let row = panel_row(id, on, cx)
             .h(px(30.))
             .pl(indent(depth))
-            .on_click(cx.listener(move |this, _, _, cx| this.spotlight(tip.clone(), cx)));
+            .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                this.spotlight(tip.clone(), event.modifiers().secondary(cx), cx)
+            }));
         wire_ref(row, target, color, cx)
             .child(div().size(px(8.)).flex_none().rounded_full().bg(color))
             .child(
@@ -475,6 +482,15 @@ impl GraphView {
                     .text_color(muted)
                     .child(detail),
             )
+            .when(!sync.is_empty(), |row| {
+                row.child(
+                    div()
+                        .flex_none()
+                        .text_size(TEXT_CHIP)
+                        .text_color(muted)
+                        .child(sync),
+                )
+            })
     }
 
     fn render_section(
@@ -503,6 +519,7 @@ impl GraphView {
                         _ => lane_color(named.color, is_dark),
                     },
                     detail: String::new(),
+                    sync: String::new(),
                     strong: false,
                 })
                 .collect();

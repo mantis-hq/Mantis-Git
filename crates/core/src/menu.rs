@@ -465,6 +465,7 @@ mod tests {
             color: LaneColor::default(),
             is_head,
             ahead_behind: None,
+            upstream: None,
         };
         let mut refs = Refs::default();
         refs.head = Some("aaaaaaaa".into());

@@ -164,6 +164,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Your branch line is blue down to where it forks. Shared history below that takes
   `main`'s colour.
 - Clicking a branch spotlights it: everything outside its history fades to about 28%.
+  `Ctrl`-click adds or removes branches, and the graph lights all of their histories.
+- A branch row ends with its count against the default branch (`+2 −1`), then against
+  the remote branch it tracks (`↑1 ↓2`: to push, to pull). Level or untracked shows nothing.
 
 ## Components
 
