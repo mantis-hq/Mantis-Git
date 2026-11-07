@@ -671,4 +671,39 @@ mod tests {
         });
         assert_eq!(state(&view, &cx), (2, 1), "a new tab shows the worktree");
     }
+
+    #[gpui_kit::test]
+    fn the_submodule_menu_opens_a_downloaded_one_in_a_tab(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_workspace(cx);
+        let (main, inner) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let tab = view.read_with(&cx, |view, _| view.active_view().clone());
+        let module = gitclient_core::submodule::Submodule {
+            name: "lib".into(),
+            path: "lib".into(),
+            folder: inner.path().to_owned(),
+            url: None,
+            recorded: "a".repeat(40),
+            head: Some("a".repeat(40)),
+            state: gitclient_core::submodule::State::Current,
+        };
+        let mut refs = gitclient_core::git::Refs::default();
+        refs.submodules = vec![module];
+        let main = main.path().to_owned();
+        tab.update(&mut cx, |tab, _| {
+            tab.repo = Some(main);
+            tab.refs = std::sync::Arc::new(refs);
+        });
+
+        // The first line of its menu is "Open lib in a new tab".
+        tab.update(&mut cx, |tab, cx| {
+            tab.open_submodule_menu(
+                "lib",
+                gpui_kit::point(gpui_kit::px(10.), gpui_kit::px(10.)),
+                cx,
+            );
+            assert!(tab.step_menu(1, cx));
+            tab.activate_menu(cx);
+        });
+        assert_eq!(state(&view, &cx), (2, 1), "a new tab shows the submodule");
+    }
 }

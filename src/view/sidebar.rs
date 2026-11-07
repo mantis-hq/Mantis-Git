@@ -3,12 +3,13 @@
 use super::menu::wire_ref;
 use super::parts::{TEXT_CHIP, TEXT_SMALL};
 use super::parts::{panel_row, section_label};
-use super::{GraphView, SwitchWorktree};
+use super::{GraphView, OpenWorktreeInTab, SwitchWorktree};
 use crate::theme::{lane_color, tokens};
 use gitclient_core::branch::Dragged;
 use gitclient_core::git::RefKind;
 use gitclient_core::picks::{Click, Picks, tip_of};
 use gitclient_core::spotlight::Spotlight;
+use gitclient_core::submodule::State as SubmoduleState;
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
@@ -25,6 +26,7 @@ pub(super) const WIDE_WINDOW: Pixels = px(1500.);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Section {
     Worktrees,
+    Submodules,
     Remotes,
     Tags,
     Stashes,
@@ -74,6 +76,7 @@ enum Item {
         depth: usize,
     },
     Worktree(usize),
+    Submodule(usize),
     Stash(usize),
 }
 
@@ -113,8 +116,8 @@ pub(super) struct State {
 impl State {
     pub(super) fn new() -> Self {
         Self {
-            // Worktrees are few and each is a place to go, so they start shown.
-            expanded: vec![Section::Worktrees],
+            // Worktrees and submodules are few and each is a place to go, so they start shown.
+            expanded: vec![Section::Worktrees, Section::Submodules],
             ..Self::default()
         }
     }
@@ -403,6 +406,19 @@ impl GraphView {
             }
         }
 
+        let modules = self.refs.submodules.len();
+        if modules > 0 {
+            let section = Section::Submodules;
+            items.push(Item::Header {
+                section,
+                title: "Submodules",
+                count: modules,
+            });
+            if self.sidebar.expanded.contains(&section) {
+                items.extend((0..modules).map(Item::Submodule));
+            }
+        }
+
         let sections = [
             (
                 Section::Remotes,
@@ -489,6 +505,10 @@ impl GraphView {
                 None => slot,
             },
             Item::Worktree(index) => match self.render_worktree_row(*index, cx) {
+                Some(row) => slot.child(row),
+                None => slot,
+            },
+            Item::Submodule(index) => match self.render_submodule_row(*index, cx) {
                 Some(row) => slot.child(row),
                 None => slot,
             },
@@ -752,6 +772,57 @@ impl GraphView {
                         .text_size(TEXT_CHIP)
                         .text_color(muted)
                         .child(unavailable.map_or(detail, str::to_owned)),
+                ),
+        )
+    }
+
+    /// One of the repository's submodules. Picking one opens it in a tab, when it has
+    /// been downloaded.
+    fn render_submodule_row(&self, index: usize, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let module = self.refs.submodules.get(index)?;
+        let theme = cx.theme();
+        let (muted, text) = (theme.muted_foreground, theme.secondary_foreground);
+        // The words say the same as the dot, since a colour alone carries no meaning.
+        let color = match module.state {
+            SubmoduleState::Current => theme.success,
+            SubmoduleState::Moved => theme.warning,
+            SubmoduleState::Conflict => tokens(theme.is_dark()).peach,
+            SubmoduleState::NotDownloaded => muted,
+        };
+        let (folder, menu_path) = (module.folder.clone(), module.path.clone());
+        let row = panel_row(("submodule", index), false, cx)
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.open_submodule_menu(&menu_path, event.position, cx);
+                }),
+            )
+            .h(px(30.))
+            .pl(indent(0))
+            .when(!module.is_downloaded(), |row| row.cursor_default())
+            .when(module.is_downloaded(), |row| {
+                row.on_click(cx.listener(move |_, _, _, cx| {
+                    cx.emit(OpenWorktreeInTab(folder.clone()));
+                }))
+            });
+        Some(
+            row.child(div().size(px(8.)).flex_none().rounded_full().bg(color))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(text)
+                        .child(module.label().to_owned()),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(TEXT_CHIP)
+                        .text_color(muted)
+                        .child(module.detail()),
                 ),
         )
     }

@@ -173,6 +173,8 @@ impl GraphView {
             cx.emit(SwitchWorktree(path.clone()));
         } else if let Command::OpenWorktreeInTab { path } = &command {
             cx.emit(OpenWorktreeInTab(path.clone()));
+        } else if let Command::OpenSubmoduleInTab { path } = &command {
+            cx.emit(OpenWorktreeInTab(path.clone()));
         } else if let Some(text) = copied_text(&command) {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
             self.notice = command
@@ -241,6 +243,16 @@ impl GraphView {
         cx: &mut Context<Self>,
     ) {
         let lines = menu::worktree_menu(&self.refs, path);
+        self.show_menu(position, lines, cx);
+    }
+
+    pub(super) fn open_submodule_menu(
+        &mut self,
+        path: &str,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let lines = menu::submodule_menu(&self.refs, path);
         self.show_menu(position, lines, cx);
     }
 

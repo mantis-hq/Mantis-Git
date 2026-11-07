@@ -6,6 +6,7 @@
 use crate::graph::{GraphBuilder, LaneColor, Plan, Row};
 use crate::ops::{self, Process, git, stderr_message};
 use crate::status::{self, RepoStatus};
+use crate::submodule::{self, Submodule};
 use crate::text::count;
 use crate::working::{self, Version};
 use crate::worktree::{self, Worktree};
@@ -185,6 +186,8 @@ pub struct Refs {
     pub stashes: Vec<String>,
     /// The repository's working trees, main one first. Empty when git can't say.
     pub worktrees: Vec<Worktree>,
+    /// The repositories this one pins, by path. Empty when it has none.
+    pub submodules: Vec<Submodule>,
     /// How to lay out the graph for this repository.
     pub plan: Plan,
     /// The top of the working tree, or the repository itself when it is bare.
@@ -363,11 +366,15 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
     let status = status::read(repo);
     let workdir = workdir.unwrap_or_else(|| repo.to_owned());
     let worktrees = worktree::list(repo, &workdir);
+    let submodules = submodule::list(&workdir);
 
     let mut refs = Refs {
-        fingerprint: format!("{listing}\0{head_ref:?}\0{head:?}\0{status:?}\0{worktrees:?}"),
+        fingerprint: format!(
+            "{listing}\0{head_ref:?}\0{head:?}\0{status:?}\0{worktrees:?}\0{submodules:?}"
+        ),
         workdir: Some(workdir),
         worktrees,
+        submodules,
         status,
         ..Refs::default()
     };

@@ -20,6 +20,7 @@ pub mod spotlight;
 pub mod ssh;
 pub mod state;
 pub mod status;
+pub mod submodule;
 pub mod terminal;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

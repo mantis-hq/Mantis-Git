@@ -194,6 +194,18 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   `git worktree add` that brings it back. The main worktree, the one on show and a locked
   one stay, and the menu says why. Git refuses to remove one with uncommitted changes,
   and the app never forces it. With one working tree the section isn't drawn.
+- Submodules: when a repository has any, the sidebar lists them under "Submodules", open
+  by default, after Worktrees. A row is the submodule's path, then where it stands in
+  Overlay 2 (its short commit, `moved to <hash>`, `not downloaded` or `in conflict`), with
+  a dot that says the same: Green at the commit the repository records, Yellow on another,
+  Peach in conflict, Overlay 2 when not downloaded. Clicking a downloaded one opens it in
+  a tab of its own, or brings its tab forward. Right-clicking opens the usual menu: "Open
+  <path> in a new tab", a line that names its result ("Download lib at 1a2b3c4", "Check
+  out 1a2b3c4 in lib", "Update lib"), "Update 2 submodules" when more than one needs it,
+  and "Copy path" and "Copy URL". A line that can't be used stays and says why. Checking
+  out the recorded commit in a submodule that is on another one asks first, and gives the
+  `git -C <path> checkout <hash>` that goes back. The app never forces anything. With no
+  submodules the section isn't drawn.
 - A branch row ends with its count against the default branch (`+2 −1`), then against
   the remote branch it tracks (`↑1 ↓2`: to push, to pull). Level or untracked shows nothing.
 
