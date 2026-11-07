@@ -193,6 +193,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   ("Merge feat/x into main", "Rebase main onto feat/x"). A line that can't be used stays,
   in Overlay 2, and says why. Only lines that remove something are red, and they ask
   first, saying how to undo. `Up`/`Down` move, `Enter` chooses, `Esc` closes.
+- **Double-click:** double-clicking a branch, in the sidebar or on a chip, checks it out. A
+  remote branch gets a local copy that follows it. The checked-out branch does nothing.
 - **Drag and drop:** branches and tags drag from the sidebar and from the refs column,
   and drop on local branches, which tint with 14% Blue. Dropping never acts: it opens a
   menu of what fits how the two histories relate (fast-forward, merge, rebase).

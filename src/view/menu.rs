@@ -191,6 +191,28 @@ impl GraphView {
         self.run_operation(label, move |repo| command.run(repo), cx);
     }
 
+    /// A double-click on a branch switches to it. The checked-out branch has nowhere to go.
+    pub(super) fn open_on_double_click(
+        &mut self,
+        target: &Dragged,
+        event: &ClickEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let switchable = matches!(target.kind, RefKind::Branch | RefKind::Remote)
+            && !(target.kind == RefKind::Branch
+                && self.refs.head_branch.as_deref() == Some(target.name.as_str()));
+        if event.click_count() < 2 || !switchable || self.busy.is_some() {
+            return;
+        }
+        self.run_command(
+            Command::CheckOutRef {
+                kind: target.kind,
+                name: target.name.clone(),
+            },
+            cx,
+        );
+    }
+
     pub(super) fn open_ref_menu(
         &mut self,
         target: Dragged,

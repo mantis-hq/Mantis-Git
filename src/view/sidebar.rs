@@ -521,7 +521,8 @@ impl GraphView {
             .on_click({
                 let target = target.clone();
                 cx.listener(move |this, event: &ClickEvent, _, cx| {
-                    this.pick(&target, event.modifiers(), &visible, cx)
+                    this.pick(&target, event.modifiers(), &visible, cx);
+                    this.open_on_double_click(&target, event, cx);
                 })
             });
         wire_ref(row, target, color, cx)

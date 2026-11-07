@@ -335,7 +335,12 @@ fn chip_element(
                 kind,
                 name: label.name.clone(),
             };
-            wire_ref(element, target, color, cx)
+            let clicked = target.clone();
+            wire_ref(element, target, color, cx).on_click(cx.listener(
+                move |this, event: &ClickEvent, _, cx| {
+                    this.open_on_double_click(&clicked, event, cx)
+                },
+            ))
         }
     }
 }
