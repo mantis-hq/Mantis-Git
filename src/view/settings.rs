@@ -11,10 +11,11 @@ use super::parts::{
 use super::parts::{TEXT_BODY, TEXT_SMALL, TEXT_STATUS};
 use super::repository_name;
 use crate::theme::{selected_row, tokens};
+use gitclient_core::caches::Caches;
 use gitclient_core::config::{self, Kind, Scope, Setting, Sources, Values, Version};
 use gitclient_core::identity::{self, Book, Choice, Identity, Match, Profile, RepoState};
 use gitclient_core::ssh;
-use gitclient_core::state::{self, AppState};
+use gitclient_core::state::{self, AppState, CACHE_SIZES_MB, bytes_label, cache_size_label};
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::*;
@@ -265,6 +266,10 @@ pub struct Settings {
     /// the window edits a test config, or when the system has no home folder.
     app: AppState,
     state_file: Option<PathBuf>,
+    /// The caches the app runs with, which the cache settings act on.
+    caches: Caches,
+    /// How much the caches hold on disk, once counted.
+    cache_size: Option<u64>,
     feedback: Feedback,
     /// Inputs the user has typed in since they were last saved or filled in.
     dirty: std::collections::HashSet<String>,
@@ -384,12 +389,15 @@ impl Settings {
                 .map(AppState::load)
                 .unwrap_or_default(),
             state_file,
+            caches: super::shared_caches(cx),
+            cache_size: None,
             feedback: Feedback::None,
             dirty: Default::default(),
             _new_inputs: new_inputs,
         };
         this.load(window, cx);
         this.load_suggestions(window, cx);
+        this.load_cache_size(cx);
         this
     }
 
@@ -397,6 +405,9 @@ impl Settings {
     pub fn show_page(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(page) = Page::ALL.get(index) {
             self.page = *page;
+            if *page == Page::App {
+                self.load_cache_size(cx);
+            }
             cx.notify();
         }
     }
@@ -1950,6 +1961,169 @@ impl Settings {
         cx.notify();
     }
 
+    /// Counts what the caches hold on disk. The count waits behind any write or trim
+    /// already queued, so it is read off the UI thread.
+    fn load_cache_size(&mut self, cx: &mut Context<Self>) {
+        let caches = self.caches.clone();
+        cx.spawn(async move |this, cx| {
+            let size = cx.background_spawn(async move { caches.disk_size() }).await;
+            this.update(cx, |this, cx| {
+                this.cache_size = Some(size);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Saves a change to the cache settings at once and applies it to the caches in use.
+    fn change_cache_setting(
+        &mut self,
+        change: impl FnOnce(&mut AppState),
+        said: impl FnOnce(&AppState) -> String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(file) = &self.state_file else {
+            return;
+        };
+        // Read again, so that the tabs the main window saved meanwhile are kept.
+        let mut state = AppState::load(file);
+        change(&mut state);
+        match state.save(file) {
+            Ok(()) => {
+                self.caches.set_disk(state.disk_settings());
+                self.feedback = Feedback::Saved(said(&state));
+                self.app = state;
+                self.load_cache_size(cx);
+            }
+            Err(error) => self.feedback = Feedback::Failed(error),
+        }
+        cx.notify();
+    }
+
+    fn set_disk_cache(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.change_cache_setting(
+            |state| state.disk_cache = on,
+            AppState::disk_cache_saved_message,
+            cx,
+        );
+    }
+
+    fn set_cache_mb(&mut self, megabytes: u32, cx: &mut Context<Self>) {
+        self.change_cache_setting(
+            |state| state.cache_mb = megabytes,
+            AppState::cache_size_saved_message,
+            cx,
+        );
+    }
+
+    fn clear_cache(&mut self, cx: &mut Context<Self>) {
+        self.caches.clear();
+        self.feedback = Feedback::Saved(AppState::cache_cleared_message().to_owned());
+        self.load_cache_size(cx);
+        cx.notify();
+    }
+
+    /// The "Cache" card: whether commits are kept on disk, how much, and how to empty it.
+    fn render_cache_group(&self, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let enabled = self.state_file.is_some();
+        let on = self.app.disk_cache;
+        let words = |title: &str, note: String| {
+            div()
+                .v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_0p5()
+                .child(
+                    div()
+                        .text_size(TEXT_BODY)
+                        .line_height(px(20.))
+                        .child(title.to_owned()),
+                )
+                .child(
+                    div()
+                        .text_size(TEXT_SMALL)
+                        .line_height(px(17.))
+                        .text_color(muted)
+                        .child(note),
+                )
+        };
+
+        let switch = div()
+            .px_4()
+            .py_3()
+            .gap_3()
+            .h_flex()
+            .child(words(
+                "Keep a cache on disk",
+                if enabled {
+                    self.app.disk_cache_sentence()
+                } else {
+                    "gitclient can't find a folder to keep this in.".to_owned()
+                },
+            ))
+            .children(enabled.then(|| {
+                checkbox("disk-cache", on, false, cx)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_disk_cache(!on, cx)))
+            }))
+            .into_any_element();
+
+        let mut sizes: Vec<u32> = CACHE_SIZES_MB.to_vec();
+        // A size set by hand, which no chip stands for, stays visible.
+        if !sizes.contains(&self.app.cache_mb) {
+            sizes.push(self.app.cache_mb);
+        }
+        let chips = sizes.into_iter().map(|megabytes| {
+            chip(
+                ("cache-size", megabytes as usize),
+                &cache_size_label(megabytes),
+                megabytes == self.app.cache_mb,
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.set_cache_mb(megabytes, cx)))
+        });
+        let size = div()
+            .v_flex()
+            .px_4()
+            .py_3()
+            .gap_2()
+            .child(words(
+                "Size limit",
+                "The oldest entries go first when the cache is full.".to_owned(),
+            ))
+            .child(div().flex().flex_wrap().gap_1().children(chips))
+            .into_any_element();
+
+        let used = match self.cache_size {
+            Some(bytes) => format!("Using {} on disk.", bytes_label(bytes)),
+            None => "Counting…".to_owned(),
+        };
+        let clear = div()
+            .px_4()
+            .py_3()
+            .gap_3()
+            .h_flex()
+            .child(words("Clear the cache", used))
+            .child(
+                Button::new("clear-cache")
+                    .ghost()
+                    .small()
+                    .label("Clear cache")
+                    .on_click(cx.listener(|this, _, _, cx| this.clear_cache(cx))),
+            )
+            .into_any_element();
+
+        let rows = if enabled && on {
+            vec![switch, size, clear]
+        } else if enabled {
+            vec![switch, clear]
+        } else {
+            vec![switch]
+        };
+        self.render_group("Cache", rows, cx)
+    }
+
     fn render_app(&self, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let on = self.app.reopen_tabs;
@@ -2002,6 +2176,7 @@ impl Settings {
                 ],
                 cx,
             ))
+            .child(self.render_cache_group(cx))
             .into_any_element()
     }
 }
@@ -2570,6 +2745,51 @@ mod tests {
 
         view.update(&mut cx, |settings, cx| settings.set_reopen_tabs(true, cx));
         assert!(AppState::load(&file).reopen_tabs);
+    }
+
+    #[gpui_kit::test]
+    fn the_cache_settings_save_at_once_and_keep_the_tabs(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("state");
+        let remembered = AppState {
+            tabs: vec!["/work/a".into()],
+            ..Default::default()
+        };
+        remembered.save(&file).unwrap();
+        let (view, mut cx) = open(None, Scope::File(dir.path().join("gitconfig")), cx);
+        assert!(AppState::load(&file).disk_cache, "on unless turned off");
+        assert_eq!(AppState::load(&file).cache_mb, 256);
+
+        view.update(&mut cx, |settings, cx| {
+            settings.state_file = Some(file.clone());
+            settings.set_disk_cache(false, cx);
+        });
+        assert!(!AppState::load(&file).disk_cache);
+        view.read_with(&cx, |settings, _| {
+            assert!(matches!(
+                &settings.feedback,
+                Feedback::Saved(message) if message.contains("no longer")
+            ));
+        });
+
+        view.update(&mut cx, |settings, cx| settings.set_cache_mb(1024, cx));
+        let saved = AppState::load(&file);
+        assert_eq!(saved.cache_mb, 1024);
+        assert_eq!(saved.tabs, remembered.tabs, "the tabs are left alone");
+        view.read_with(&cx, |settings, _| {
+            assert!(matches!(
+                &settings.feedback,
+                Feedback::Saved(message) if message.contains("1 GB")
+            ));
+        });
+
+        view.update(&mut cx, |settings, cx| settings.clear_cache(cx));
+        view.read_with(&cx, |settings, _| {
+            assert!(matches!(
+                &settings.feedback,
+                Feedback::Saved(message) if message.contains("Cleared")
+            ));
+        });
     }
 
     #[gpui_kit::test]

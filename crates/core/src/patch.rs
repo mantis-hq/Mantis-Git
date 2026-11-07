@@ -1,5 +1,6 @@
 //! Parses unified diffs, and rebuilds patches from parts of them.
 
+use crate::cache::{Cacheable, Reader, Writer};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,6 +35,79 @@ pub struct FilePatch {
     pub hunks: Vec<Hunk>,
     /// The lines before the first hunk.
     header: String,
+}
+
+impl Cacheable for FilePatch {
+    const FORMAT: u32 = 1;
+
+    fn weight(&self) -> usize {
+        let hunks: usize = self
+            .hunks
+            .iter()
+            .map(|hunk| {
+                let lines: usize = hunk.lines.iter().map(|line| line.text.len() + 48).sum();
+                hunk.title.len() + hunk.raw.len() + lines + 48
+            })
+            .sum();
+        self.path.len() + self.header.len() + hunks + 64
+    }
+
+    fn encode(&self, out: &mut Writer) {
+        out.str(&self.path);
+        out.bool(self.binary);
+        out.str(&self.header);
+        out.len(self.hunks.len());
+        for hunk in &self.hunks {
+            out.str(&hunk.title);
+            out.str(&hunk.raw);
+            out.len(hunk.lines.len());
+            for line in &hunk.lines {
+                out.u8(match line.kind {
+                    LineKind::Context => 0,
+                    LineKind::Added => 1,
+                    LineKind::Removed => 2,
+                });
+                out.opt_u32(line.old);
+                out.opt_u32(line.new);
+                out.str(&line.text);
+            }
+        }
+    }
+
+    fn decode(input: &mut Reader) -> Option<Self> {
+        let path = input.str()?.to_owned();
+        let binary = input.bool()?;
+        let header = input.str()?.to_owned();
+        let hunk_count = input.len()?;
+        let mut hunks = Vec::new();
+        for _ in 0..hunk_count {
+            let title = input.str()?.to_owned();
+            let raw = input.str()?.to_owned();
+            let line_count = input.len()?;
+            let mut lines = Vec::new();
+            for _ in 0..line_count {
+                let kind = match input.u8()? {
+                    0 => LineKind::Context,
+                    1 => LineKind::Added,
+                    2 => LineKind::Removed,
+                    _ => return None,
+                };
+                lines.push(Line {
+                    kind,
+                    old: input.opt_u32()?,
+                    new: input.opt_u32()?,
+                    text: input.str()?.into(),
+                });
+            }
+            hunks.push(Hunk { title, lines, raw });
+        }
+        Some(Self {
+            path,
+            binary,
+            hunks,
+            header,
+        })
+    }
 }
 
 impl FilePatch {

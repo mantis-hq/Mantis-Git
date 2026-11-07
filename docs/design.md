@@ -139,6 +139,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     `gitclient`), and empty tabs are left out. A path on the command line wins over the
     remembered tabs, and a folder that is gone is skipped. If there is no config folder the
     page says so and the tick box is not drawn.
+    Under "Cache", a tick box "Keep a cache on disk" (on by default) says that what git
+    reports about commits and their file diffs is kept between runs, so a commit seen before
+    opens at once. When it is on, a row of chips picks the size limit (64 MB, 256 MB by
+    default, 1 GB, 4 GB), and a row says how much is in use beside a quiet "Clear cache"
+    button. Changes apply at once to the running app. The cache lives in the system's cache
+    folder (`$XDG_CACHE_HOME` or `~/.cache` on Linux), never in the config folder, and an
+    entry that is damaged or out of date is simply read from git again.
 - Dock: a 36 px Mantle bar along the bottom of the window with a 1 px Surface 0 top
   border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
   under the bar, so history stays in view. `Ctrl \`` shows and hides it, and

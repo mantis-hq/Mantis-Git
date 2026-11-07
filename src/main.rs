@@ -1,5 +1,7 @@
 use gitclient::theme;
 use gitclient::view::{self, Workspace};
+use gitclient_core::cache;
+use gitclient_core::caches::Caches;
 use gitclient_core::state::{self, AppState};
 use gpui_kit::*;
 use std::path::PathBuf;
@@ -14,11 +16,17 @@ fn main() {
         .map(AppState::load)
         .unwrap_or_default();
     let startup = saved.startup(&given, std::env::current_dir().ok());
+    // Without a cache folder the caches still work, from memory.
+    let caches = match cache::default_dir() {
+        Some(root) => Caches::on_disk(root, saved.disk_settings()),
+        None => Caches::memory_only(),
+    };
 
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
         theme::init(cx);
         view::bind_keys(cx);
+        view::install_caches(caches, cx);
 
         // Settings is an add-on to the main window, so closing it alone keeps the app open.
         cx.on_window_closed(|cx, _| {

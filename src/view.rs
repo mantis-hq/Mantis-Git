@@ -19,6 +19,7 @@ mod workspace;
 pub use settings::{OpenSettings, Settings, open as open_settings, should_quit};
 pub use workspace::Workspace;
 
+use gitclient_core::caches::{self, Caches};
 use gitclient_core::git::{self, Entry, LoadEvent, Refs};
 use gitclient_core::selection::Selection;
 use gpui_kit::component::button::*;
@@ -96,6 +97,23 @@ pub enum Status {
     Failed(String),
 }
 
+/// The caches every window shares. Set once at startup with [`install_caches`]; a view
+/// that finds none, as in tests, keeps its own in memory.
+#[derive(Clone)]
+struct AppCaches(Caches);
+
+impl Global for AppCaches {}
+
+/// Makes `caches` the ones all windows use.
+pub fn install_caches(caches: Caches, cx: &mut App) {
+    cx.set_global(AppCaches(caches));
+}
+
+fn shared_caches(cx: &App) -> Caches {
+    cx.try_global::<AppCaches>()
+        .map_or_else(Caches::memory_only, |shared| shared.0.clone())
+}
+
 pub struct GraphView {
     repo: Option<PathBuf>,
     status: Status,
@@ -131,6 +149,10 @@ pub struct GraphView {
     /// Set while another tab is showing, so that only the visible tab reacts to the
     /// window coming back to the front.
     in_background: bool,
+    caches: Caches,
+    /// What besides a commit decides how git reports it, which keys the caches. `None`
+    /// until it has been read, and the caches go unused until then.
+    fingerprint: Option<Arc<str>>,
     _activation: Subscription,
 }
 
@@ -181,6 +203,8 @@ impl GraphView {
             commit: Default::default(),
             conflict: Default::default(),
             in_background: false,
+            caches: shared_caches(cx),
+            fingerprint: None,
             _activation: activation,
         }
     }
@@ -203,6 +227,7 @@ impl GraphView {
 
     /// Picks up what happened outside the app while this view was out of sight.
     pub(super) fn catch_up(&mut self, cx: &mut Context<Self>) {
+        self.refresh_fingerprint(cx);
         self.reload_if_refs_moved(cx);
         if self.working_row_is_selected() {
             self.reload_working(cx);
@@ -223,6 +248,8 @@ impl GraphView {
         self.screen = Screen::Graph;
         self.sidebar.picks.clear();
         self.sidebar.spotlight = None;
+        self.stop_loading_details();
+        self.fingerprint = None;
         self.inspector = Default::default();
         self.diff = Default::default();
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -235,6 +262,7 @@ impl GraphView {
         };
         self.status = Status::Loading;
         self.pending_refs = None;
+        self.refresh_fingerprint(cx);
         let events = git::spawn_load(repo);
         self.load_task = Some(cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
@@ -245,6 +273,24 @@ impl GraphView {
             this.update(cx, |this, cx| this.finish_load(cx)).ok();
         }));
         cx.notify();
+    }
+
+    /// Reads again what decides how git reports a commit, off the UI thread. A change to
+    /// git's config makes the caches start from scratch rather than answer wrongly.
+    fn refresh_fingerprint(&mut self, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let asked = repo.clone();
+        Self::spawn_blocking(
+            move || caches::fingerprint(&repo),
+            move |this, fingerprint, _| {
+                if this.repo.as_deref() == Some(asked.as_path()) {
+                    this.fingerprint = Some(fingerprint.into());
+                }
+            },
+            cx,
+        );
     }
 
     /// Picks up commits and branch changes made outside the app. Comparing refs costs a

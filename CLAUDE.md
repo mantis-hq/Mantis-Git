@@ -40,5 +40,6 @@ document in the same change.
 
 ## Commits and releases
 
-Work on short-lived branches and open PRs into `main`. PRs are squash-merged, so PR
+Only create a branch when asked to, or when working in a worktree; otherwise commit on the
+current branch. When a PR is wanted, open it into `main`. PRs are squash-merged, so PR
 titles must be Conventional Commits. See "Releasing" in `README.md`.

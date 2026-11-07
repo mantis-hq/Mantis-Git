@@ -6,6 +6,7 @@
 //! lines are ignored and kept out of the way of newer versions. Reading never fails: a
 //! missing or broken file is the same as a fresh install.
 
+use crate::cache::{DEFAULT_DISK_MB, DiskSettings};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -21,6 +22,10 @@ pub struct AppState {
     pub tabs: Vec<PathBuf>,
     /// The position in `tabs` of the tab that was in front.
     pub active: usize,
+    /// Whether what git said about commits is kept on disk between runs.
+    pub disk_cache: bool,
+    /// How much that may take, in megabytes.
+    pub cache_mb: u32,
 }
 
 impl Default for AppState {
@@ -29,6 +34,8 @@ impl Default for AppState {
             reopen_tabs: true,
             tabs: Vec::new(),
             active: 0,
+            disk_cache: true,
+            cache_mb: DEFAULT_DISK_MB,
         }
     }
 }
@@ -70,6 +77,10 @@ impl AppState {
             };
             match key.trim() {
                 "reopen_tabs" => state.reopen_tabs = value.trim() != "false",
+                "disk_cache" => state.disk_cache = value.trim() != "false",
+                "cache_mb" => {
+                    state.cache_mb = value.trim().parse().unwrap_or(DEFAULT_DISK_MB);
+                }
                 "active" => state.active = value.trim().parse().unwrap_or(0),
                 "tab" if !value.is_empty() => state.tabs.push(PathBuf::from(value)),
                 _ => {}
@@ -82,6 +93,8 @@ impl AppState {
         let mut text =
             String::from("# Remembered by gitclient. Safe to edit while it is closed.\n");
         text.push_str(&format!("reopen_tabs={}\n", self.reopen_tabs));
+        text.push_str(&format!("disk_cache={}\n", self.disk_cache));
+        text.push_str(&format!("cache_mb={}\n", self.cache_mb));
         text.push_str(&format!("active={}\n", self.active));
         for tab in &self.tabs {
             // A path that isn't text can't be written to a text file, so it isn't kept.
@@ -127,6 +140,49 @@ impl AppState {
         }
     }
 
+    /// The settings the caches are run with.
+    pub fn disk_settings(&self) -> DiskSettings {
+        DiskSettings::from_mb(self.disk_cache, self.cache_mb)
+    }
+
+    /// The sentence under the cache switch, saying what it does now.
+    pub fn disk_cache_sentence(&self) -> String {
+        if self.disk_cache {
+            format!(
+                "What git says about commits is kept on disk, up to {}, so that a commit you \
+                 have seen opens at once.",
+                cache_size_label(self.cache_mb)
+            )
+        } else {
+            "Commits are read from git each time you open gitclient.".to_owned()
+        }
+    }
+
+    /// What the header says after the cache switch is flipped.
+    pub fn disk_cache_saved_message(&self) -> String {
+        if self.disk_cache {
+            format!(
+                "Saved. Commits you open are kept on disk, up to {}.",
+                cache_size_label(self.cache_mb)
+            )
+        } else {
+            "Saved. Commits are no longer kept on disk.".to_owned()
+        }
+    }
+
+    /// What the header says after the cache size is changed.
+    pub fn cache_size_saved_message(&self) -> String {
+        format!(
+            "Saved. The cache may take up to {} on disk.",
+            cache_size_label(self.cache_mb)
+        )
+    }
+
+    /// What the header says after the cache is cleared.
+    pub fn cache_cleared_message() -> &'static str {
+        "Cleared the cache. Commits are read from git again as you open them."
+    }
+
     /// What the header says after the "Reopen repositories" switch is flipped.
     pub fn reopen_saved_message(&self) -> &'static str {
         if self.reopen_tabs {
@@ -146,6 +202,30 @@ impl AppState {
     }
 }
 
+/// The sizes offered for the disk cache, in megabytes.
+pub const CACHE_SIZES_MB: [u32; 4] = [64, 256, 1024, 4096];
+
+/// A size in megabytes in words, such as `256 MB` or `1 GB`.
+pub fn cache_size_label(megabytes: u32) -> String {
+    if megabytes >= 1024 && megabytes.is_multiple_of(1024) {
+        format!("{} GB", megabytes / 1024)
+    } else {
+        format!("{megabytes} MB")
+    }
+}
+
+/// How much is on disk, in words, for the settings page.
+pub fn bytes_label(bytes: u64) -> String {
+    const MB: u64 = 1024 * 1024;
+    if bytes < MB {
+        "under 1 MB".to_owned()
+    } else if bytes < 1024 * MB {
+        format!("{} MB", bytes / MB)
+    } else {
+        format!("{:.1} GB", bytes as f64 / (1024 * MB) as f64)
+    }
+}
+
 /// Where the app keeps its state on this system, or `None` if there is no home folder.
 pub fn default_file() -> Option<PathBuf> {
     file_in(config_home(|name| std::env::var_os(name))?)
@@ -153,6 +233,11 @@ pub fn default_file() -> Option<PathBuf> {
 
 fn file_in(home: PathBuf) -> Option<PathBuf> {
     Some(home.join(FOLDER_NAME).join(FILE_NAME))
+}
+
+/// The folder for per-user app config, as it is on this system.
+pub fn config_dir() -> Option<PathBuf> {
+    config_home(|name| std::env::var_os(name))
 }
 
 /// The folder for per-user app config: `%APPDATA%`, `~/Library/Application Support`, or
@@ -193,6 +278,29 @@ mod tests {
     }
 
     #[test]
+    fn the_disk_cache_is_on_at_256_mb_unless_the_file_says_otherwise() {
+        let fresh = AppState::parse("");
+        assert!(fresh.disk_cache);
+        assert_eq!(fresh.cache_mb, 256);
+        assert_eq!(fresh.disk_settings().max_bytes, 256 * 1024 * 1024);
+
+        let set = AppState::parse("disk_cache=false\ncache_mb=64\n");
+        assert!(!set.disk_cache && !set.disk_settings().enabled);
+        assert_eq!(set.cache_mb, 64);
+        // Nonsense falls back to the default instead of failing.
+        assert_eq!(AppState::parse("cache_mb=lots").cache_mb, 256);
+    }
+
+    #[test]
+    fn sizes_are_said_in_words() {
+        assert_eq!(cache_size_label(256), "256 MB");
+        assert_eq!(cache_size_label(1024), "1 GB");
+        assert_eq!(bytes_label(10), "under 1 MB");
+        assert_eq!(bytes_label(42 * 1024 * 1024), "42 MB");
+        assert_eq!(bytes_label(3 * 1024 * 1024 * 1024 / 2), "1.5 GB");
+    }
+
+    #[test]
     fn state_survives_a_round_trip_through_a_file() {
         let root = tempfile::tempdir().unwrap();
         let file = root.path().join("nested").join("state");
@@ -200,6 +308,8 @@ mod tests {
             reopen_tabs: false,
             tabs: vec!["/work/a".into(), "/work/with space/b".into()],
             active: 1,
+            disk_cache: false,
+            cache_mb: 1024,
         };
         state.save(&file).unwrap();
         assert_eq!(AppState::load(&file), state);

@@ -94,19 +94,38 @@ impl GraphView {
             return;
         };
         let oid = commit.oid.clone();
+        let fingerprint = self.fingerprint.clone();
+        // Seen before: no git, no spinner, and no waiting on anything.
+        let cached = fingerprint
+            .as_deref()
+            .and_then(|fingerprint| self.caches.peek_details(fingerprint, &oid));
+        if let Some(details) = cached {
+            self.inspector.details = Some(details);
+            self.inspector
+                .files_scroll
+                .scroll_to_item(0, ScrollStrategy::Top);
+            self.details_loaded(cx);
+            return cx.notify();
+        }
+
         let wanted = oid.clone();
+        let caches = self.caches.clone();
         let cancel = Cancel::new();
         self.inspector.loading = Some(cancel.clone());
         let finished = cancel.clone();
         Self::spawn_blocking(
-            move || details::read(&repo, &wanted, &cancel),
+            move || match fingerprint {
+                // The disk is read here too, so a commit seen in an earlier run is quick.
+                Some(fingerprint) => caches.read_details(&repo, &fingerprint, &wanted, &cancel),
+                None => details::read(&repo, &wanted, &cancel).map(Arc::new),
+            },
             move |this, details, cx| {
                 // Only the newest read has anything to say: an older one was cancelled.
                 if finished.is_cancelled() || this.selected_oid.as_ref() != Some(&oid) {
                     return;
                 }
                 this.inspector.loading = None;
-                this.inspector.details = details.ok().map(Arc::new);
+                this.inspector.details = details.ok();
                 this.inspector
                     .files_scroll
                     .scroll_to_item(0, ScrollStrategy::Top);
@@ -118,7 +137,7 @@ impl GraphView {
     }
 
     /// Cancels the read of the previous selection's details, if it is still running.
-    fn stop_loading_details(&mut self) {
+    pub(super) fn stop_loading_details(&mut self) {
         if let Some(cancel) = self.inspector.loading.take() {
             cancel.cancel();
         }

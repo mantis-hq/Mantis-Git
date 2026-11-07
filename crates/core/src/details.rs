@@ -1,5 +1,6 @@
 //! What a single commit changed, and the commands that act on one.
 
+use crate::cache::{Cacheable, Reader, Writer};
 use crate::ops::{self, Cancel};
 use crate::patch::{self, FilePatch};
 use crate::text::{count, short_oid};
@@ -45,6 +46,51 @@ impl CommitDetails {
         self.files.iter().fold((0, 0), |(add, del), file| {
             (add + file.additions, del + file.deletions)
         })
+    }
+}
+
+impl Cacheable for CommitDetails {
+    const FORMAT: u32 = 1;
+
+    fn weight(&self) -> usize {
+        let files: usize = self
+            .files
+            .iter()
+            .map(|file| file.path.len() + file.old_path.as_ref().map_or(0, |old| old.len()) + 64)
+            .sum();
+        self.oid.len() + self.body.len() + files + 64
+    }
+
+    fn encode(&self, out: &mut Writer) {
+        out.str(&self.oid);
+        out.str(&self.body);
+        out.len(self.files.len());
+        for file in &self.files {
+            out.u32(u32::from(file.status));
+            out.str(&file.path);
+            out.opt_str(file.old_path.as_deref());
+            out.u32(file.additions);
+            out.u32(file.deletions);
+            out.bool(file.binary);
+        }
+    }
+
+    fn decode(input: &mut Reader) -> Option<Self> {
+        let oid = input.str()?.into();
+        let body = input.str()?.to_owned();
+        let count = input.len()?;
+        let mut files = Vec::new();
+        for _ in 0..count {
+            files.push(FileChange {
+                status: char::from_u32(input.u32()?)?,
+                path: input.str()?.into(),
+                old_path: input.opt_str()?.map(Into::into),
+                additions: input.u32()?,
+                deletions: input.u32()?,
+                binary: input.bool()?,
+            });
+        }
+        Some(Self { oid, body, files })
     }
 }
 

@@ -117,9 +117,16 @@ impl GraphView {
         cx.notify();
 
         let oid = details.oid.clone();
+        let fingerprint = self.fingerprint.clone();
+        let caches = self.caches.clone();
+        // Even a cached diff is flattened into rows in the background, since a large one
+        // takes a while to lay out.
         Self::spawn_blocking(
             move || {
-                let patch = details::file_diff(&repo, &oid, &file)?;
+                let patch = match fingerprint {
+                    Some(fingerprint) => caches.read_diff(&repo, &fingerprint, &oid, &file)?,
+                    None => Arc::new(details::file_diff(&repo, &oid, &file)?),
+                };
                 Ok::<_, String>(Shown::new(oid, &file, &patch))
             },
             move |this, shown, cx| {
