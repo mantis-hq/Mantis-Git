@@ -735,19 +735,8 @@ impl Settings {
         };
         let label = row.label.read(cx).value().trim().to_owned();
         match id {
-            None => {
-                if profile == self.book.default {
-                    return;
-                }
-                let saved = format!("Saved the default, {}.", profile.display());
-                self.change(
-                    saved,
-                    move |_, base| identity::save_default(base, &profile),
-                    None,
-                    window,
-                    cx,
-                );
-            }
+            // The default is the global config, edited on the Git config page.
+            None => {}
             Some(id) => {
                 let unchanged = self
                     .book
@@ -1517,7 +1506,7 @@ impl Settings {
                         .text_size(px(13.))
                         .line_height(px(18.))
                         .text_color(muted)
-                        .child("Your global name and email, used when no rule or choice picks another."),
+                        .child("Your global name and email, used when no rule or choice picks another. Change them on the Git config page."),
                 ),
             Some(id) => {
                 let id = id.clone();
@@ -1539,20 +1528,48 @@ impl Settings {
                     )
             }
         };
+        // The default is shown, not edited here: it is the global config, which has its
+        // own page, and a card that looks like the others invites changing it by accident.
+        let shown = |text: &'static str, value: &str| {
+            div()
+                .v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_1()
+                .child(section_label(muted).child(text))
+                .child(
+                    div()
+                        .min_h(px(32.))
+                        .truncate()
+                        .text_size(px(14.))
+                        .line_height(px(32.))
+                        .when(value.is_empty(), |value| value.text_color(muted))
+                        .child(if value.is_empty() { "Not set" } else { value }.to_owned()),
+                )
+        };
+        let fields = if id.is_none() {
+            let profile = &self.book.default;
+            div()
+                .h_flex()
+                .gap_3()
+                .child(shown("Name", &profile.name))
+                .child(shown("Email", &profile.email))
+                .child(shown("Signing key", &profile.signing_key))
+        } else {
+            div()
+                .h_flex()
+                .gap_3()
+                .child(labelled("Name", &row.name))
+                .child(labelled("Email", &row.email))
+                .child(labelled("Signing key", &row.key))
+        };
         let card = div()
             .v_flex()
             .px_4()
             .py_3()
             .gap_3()
             .child(div().h_flex().child(head))
-            .child(
-                div()
-                    .h_flex()
-                    .gap_3()
-                    .child(labelled("Name", &row.name))
-                    .child(labelled("Email", &row.email))
-                    .child(labelled("Signing key", &row.key)),
-            );
+            .child(fields);
         match id {
             None => card.into_any_element(),
             Some(id) => card
@@ -2291,21 +2308,20 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn the_default_is_listed_first_as_an_identity_and_edits_the_global_name(
+    fn the_default_is_listed_first_as_an_identity_but_cannot_be_changed_here(
         cx: &mut TestAppContext,
     ) {
         let (_dir, scope) = file_scope();
         config::set(&scope, "user.name", "Pretext").unwrap();
         config::set(&scope, "user.email", "p@example.com").unwrap();
         let (view, mut cx) = open(None, scope.clone(), cx);
-        view.read_with(&cx, |view, cx| {
+        view.read_with(&cx, |view, _| {
             assert_eq!(view.identity_rows.len(), 1);
-            let row = &view.identity_rows[0];
-            assert_eq!(row.id, None, "the default is the first row");
-            assert_eq!(row.email.read(cx).value().as_ref(), "p@example.com");
+            assert_eq!(view.identity_rows[0].id, None, "the default is first");
+            assert_eq!(view.book.default.email, "p@example.com");
         });
 
-        // Typing a new email into the default saves the global one.
+        // Even if its inputs were somehow edited and left, nothing is saved.
         let email = view.read_with(&cx, |view, _| view.identity_rows[0].email.clone());
         view.update_in(&mut cx, |_, window, cx| {
             email.update(cx, |input, cx| {
@@ -2316,8 +2332,8 @@ mod tests {
         email.update(&mut cx, |_, cx| cx.emit(InputEvent::Blur));
         settle(&mut cx);
         let values = config::read(&scope).unwrap();
-        assert_eq!(values.get("user.email"), Some("new@example.com"));
-        assert_eq!(values.get("user.name"), Some("Pretext"), "the rest is kept");
+        assert_eq!(values.get("user.email"), Some("p@example.com"));
+        assert_eq!(values.get("user.name"), Some("Pretext"));
     }
 
     #[gpui_kit::test]
