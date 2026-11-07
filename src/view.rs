@@ -426,6 +426,8 @@ impl Render for GraphView {
             .track_focus(&self.focus)
             .bg(background)
             .text_color(foreground)
+            // Maple Mono would otherwise draw `->` as an arrow, which isn't what code says.
+            .font_features(FontFeatures::disable_ligatures())
             .on_action(cx.listener(|this, _: &SelectPrevious, _, cx| this.move_selection(-1, cx)))
             .on_action(cx.listener(|this, _: &SelectNext, _, cx| this.move_selection(1, cx)))
             .on_action(cx.listener(|this, _: &SelectPreviousPage, _, cx| {
