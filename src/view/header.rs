@@ -10,7 +10,6 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use std::rc::Rc;
 
 impl GraphView {
     pub(super) fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -116,11 +115,11 @@ impl GraphView {
     /// Runs the header's action, stopping to explain first if it can lose work.
     pub fn start_action(&mut self, action: NextAction, cx: &mut Context<Self>) {
         if let NextAction::ForcePush { replaced, .. } = action {
-            self.confirm = Some(Confirm {
-                message: self.refs.status.force_push_warning(replaced).into(),
-                action: "Force push".into(),
-                run: Rc::new(move |this, cx| this.run_action(action.clone(), cx)),
-            });
+            self.confirm = Some(Confirm::banner(
+                self.refs.status.force_push_warning(replaced),
+                "Force push",
+                move |this, cx| this.run_action(action.clone(), cx),
+            ));
             cx.notify();
             return;
         }

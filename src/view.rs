@@ -141,6 +141,8 @@ pub struct GraphView {
     busy: Option<SharedString>,
     notice: Option<Notice>,
     confirm: Option<Confirm>,
+    /// Whether the key now down is a repeat of one still held.
+    key_held: bool,
     sidebar: sidebar::State,
     inspector: inspector::State,
     diff: diff::State,
@@ -197,6 +199,7 @@ impl GraphView {
             busy: None,
             notice: None,
             confirm: None,
+            key_held: false,
             sidebar: sidebar::State::new(),
             inspector: Default::default(),
             diff: Default::default(),
@@ -641,6 +644,7 @@ impl Render for GraphView {
         };
         let notice = self.render_notice(cx);
         let menu = self.render_menu(cx);
+        let popup = self.render_confirm_popup(cx);
 
         div()
             .v_flex()
@@ -648,6 +652,9 @@ impl Render for GraphView {
             .size_full()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, _| {
+                this.key_held = event.is_held;
+            }))
             .bg(background)
             .text_size(parts::TEXT_BODY)
             .text_color(foreground)
@@ -670,12 +677,13 @@ impl Render for GraphView {
             .on_action(cx.listener(|this, _: &settings::OpenSettings, _, cx| {
                 settings::open(this.repo.clone(), cx)
             }))
-            .on_action(cx.listener(|this, _: &CloseMenu, _, cx| this.close_menu(cx)))
-            .on_action(cx.listener(|this, _: &ActivateMenu, _, cx| this.activate_menu(cx)))
+            .on_action(cx.listener(|this, _: &CloseMenu, _, cx| this.press_escape(cx)))
+            .on_action(cx.listener(|this, _: &ActivateMenu, _, cx| this.press_enter(cx)))
             .children(bar)
             .children(notice)
             .child(content)
             .children(menu)
+            .children(popup)
     }
 }
 
@@ -889,6 +897,57 @@ mod tests {
             view.confirm = None;
             view.start_action(NextAction::Push { commits: 1 }, cx);
             assert!(!view.is_confirming());
+        });
+    }
+
+    #[gpui_kit::test]
+    fn a_deletion_popup_takes_enter_and_escape_and_the_risky_one_needs_two_presses(
+        cx: &mut TestAppContext,
+    ) {
+        use super::notice::Confirm;
+        use gitclient_core::menu::Weight;
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let (view, mut cx) = open_view(cx);
+        let ran = Rc::new(Cell::new(0));
+        let ask = |view: &mut GraphView, weight| {
+            let ran = ran.clone();
+            view.confirm = Some(Confirm {
+                message: "This deletes it.".into(),
+                action: "Delete".into(),
+                run: Rc::new(move |_, _| ran.set(ran.get() + 1)),
+                weight,
+                armed: None,
+            });
+        };
+        view.update(&mut cx, |view, cx| {
+            ask(view, Weight::Popup);
+            view.press_escape(cx);
+            assert!(!view.is_confirming());
+            assert_eq!(ran.get(), 0, "Escape cancels");
+
+            ask(view, Weight::Popup);
+            view.key_held = true;
+            view.press_enter(cx);
+            assert!(view.is_confirming(), "a held key doesn't answer");
+            view.key_held = false;
+            view.press_enter(cx);
+            assert!(!view.is_confirming());
+            assert_eq!(ran.get(), 1, "Enter confirms");
+
+            ask(view, Weight::DoublePress);
+            view.press_enter(cx);
+            assert!(view.is_confirming());
+            assert_eq!(ran.get(), 1, "one press only arms it");
+            view.press_enter(cx);
+            assert!(!view.is_confirming());
+            assert_eq!(ran.get(), 2, "the second press confirms");
+
+            ask(view, Weight::DoublePress);
+            view.press_enter(cx);
+            view.press_escape(cx);
+            assert!(!view.is_confirming());
+            assert_eq!(ran.get(), 2);
         });
     }
 

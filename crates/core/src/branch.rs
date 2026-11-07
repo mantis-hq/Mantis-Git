@@ -223,12 +223,29 @@ pub fn delete_warning(kind: RefKind, name: &str, tip: Option<&str>) -> String {
     }
 }
 
+/// Whether deleting a ref loses commits that nothing else keeps: a local branch the default
+/// branch doesn't contain, with commits its remote branch doesn't have either (or none).
+/// A tag, a merged branch and a pushed branch can all be brought back from elsewhere.
+pub fn loses_commits(refs: &crate::git::Refs, kind: RefKind, name: &str) -> bool {
+    if kind != RefKind::Branch {
+        return false;
+    }
+    let Some(branch) = refs.branches.iter().find(|branch| branch.name == name) else {
+        return false;
+    };
+    let unmerged = !matches!(branch.ahead_behind, Some((0, _)));
+    let unpushed = branch.upstream.is_none_or(|(ahead, _)| ahead > 0);
+    unmerged && unpushed
+}
+
 /// A branch or tag that is about to be deleted, with where it pointed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Doomed {
     pub kind: RefKind,
     pub name: String,
     pub tip: Option<String>,
+    /// Whether deleting it loses commits that nothing else keeps, see [`loses_commits`].
+    pub at_risk: bool,
 }
 
 fn counted(number: usize, one: &str, many: &str) -> String {
@@ -580,6 +597,7 @@ mod tests {
             kind,
             name: name.into(),
             tip: Some(repo.git(&["rev-parse", name])),
+            at_risk: false,
         };
         let refs = [
             doomed(RefKind::Branch, "side"),

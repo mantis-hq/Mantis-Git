@@ -219,6 +219,16 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   ("Merge feat/x into main", "Rebase main onto feat/x"). A line that can't be used stays,
   in Overlay 2, and says why. Only lines that remove something are red, and they ask
   first, saying how to undo. `Up`/`Down` move, `Enter` chooses, `Esc` closes.
+- **Delete confirmation:** deleting a branch, tag or worktree asks in a small popup centred
+  over the window, never in the band under the header. A card on Mantle with a Surface 0
+  border and 8 px radius holds the sentence (which says how to undo it), a line naming the
+  keys, and "Cancel" and the result ("Delete") as quiet buttons. `Enter` confirms and `Esc`
+  cancels; clicking outside cancels too. A held-down key never answers. Deleting a branch
+  that is neither merged into the default branch nor pushed loses commits nothing else
+  keeps, so `Enter` has to be pressed twice within 600 ms: the first press turns the key
+  line Red and says "Press Enter again to delete." Rules for which is which live in core
+  (`Weight` in `crates/core/src/menu.rs`). Other risky steps (rebase, force push, hard
+  reset) still use the band.
 - **Double-click:** double-clicking a branch, in the sidebar or on a chip, checks it out. A
   remote branch gets a local copy that follows it. The checked-out branch does nothing.
 - **Drag and drop:** branches and tags drag from the sidebar and from the refs column,
