@@ -1,31 +1,36 @@
-use gpui_kit::component::button::*;
-use gpui_kit::component::*;
+use gitclient::view::{self, GraphView};
 use gpui_kit::*;
-
-struct Root;
-
-impl Render for Root {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .v_flex()
-            .gap_2()
-            .size_full()
-            .items_center()
-            .justify_center()
-            .child("gitclient")
-            .child(
-                Button::new("ok")
-                    .primary()
-                    .label("Hello")
-                    .on_click(|_, _, _| println!("Clicked!")),
-            )
-    }
-}
+use std::path::PathBuf;
 
 fn main() {
+    let repo = std::env::args_os()
+        .nth(1)
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok());
+
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
-        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Root))
-            .expect("Failed to open window");
+        view::bind_keys(cx);
+
+        cx.on_window_closed(|cx, _| cx.quit()).detach();
+
+        let options = WindowOptions {
+            titlebar: Some(TitlebarOptions {
+                title: Some("gitclient".into()),
+                ..Default::default()
+            }),
+            window_bounds: Some(WindowBounds::centered(size(px(1200.), px(800.)), cx)),
+            ..Default::default()
+        };
+        gpui_kit::open_window(options, cx, |window, cx| {
+            cx.new(|cx| {
+                let mut view = GraphView::new(window, cx);
+                if let Some(repo) = repo {
+                    view.open(repo, cx);
+                }
+                view
+            })
+        })
+        .expect("Failed to open window");
     });
 }
