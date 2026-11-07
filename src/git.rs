@@ -29,6 +29,21 @@ impl Commit {
     }
 }
 
+/// Splits off a Conventional Commit prefix, which is drawn quieter than the description.
+pub fn split_subject(subject: &str) -> (&str, &str) {
+    let Some((kind, _)) = subject.split_once(": ") else {
+        return ("", subject);
+    };
+    let word = kind.split('(').next().unwrap_or(kind).trim_end_matches('!');
+    let scope_closes = !kind.contains('(') || kind.trim_end_matches('!').ends_with(')');
+    let is_word = !word.is_empty() && word.chars().all(|c| c.is_ascii_lowercase());
+    if is_word && scope_closes {
+        subject.split_at(kind.len() + 2)
+    } else {
+        ("", subject)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RefKind {
     /// HEAD pointing straight at a commit.
@@ -52,6 +67,8 @@ pub struct Ref {
 pub struct Refs {
     pub by_commit: HashMap<Arc<str>, Vec<Ref>>,
     pub head: Option<Arc<str>>,
+    /// The top of the working tree, or the repository itself when it is bare.
+    pub workdir: Option<PathBuf>,
     /// The commits to walk history from.
     tips: Vec<Arc<str>>,
     /// Compares equal exactly when no ref moved.
@@ -117,7 +134,7 @@ pub fn load(repo: &Path, mut emit: impl FnMut(LoadEvent) -> bool) {
     }
 }
 
-fn git(repo: &Path) -> Command {
+pub(crate) fn git(repo: &Path) -> Command {
     let mut command = Command::new("git");
     command
         .arg("-C")
@@ -169,7 +186,14 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
         .success()
         .then(|| String::from_utf8_lossy(&head.stdout).trim().into());
 
+    let toplevel = run_git(repo, &["rev-parse", "--show-toplevel"])?;
+    let workdir = toplevel
+        .status
+        .success()
+        .then(|| PathBuf::from(String::from_utf8_lossy(&toplevel.stdout).trim_end()));
+
     let mut refs = Refs {
+        workdir: workdir.or_else(|| Some(repo.to_owned())),
         fingerprint: format!("{listing}\0{head_ref:?}\0{head:?}"),
         ..Refs::default()
     };
@@ -341,7 +365,7 @@ fn parse_commit(line: &[u8]) -> Result<Commit, String> {
     })
 }
 
-fn stderr_message(stderr: &[u8]) -> String {
+pub(crate) fn stderr_message(stderr: &[u8]) -> String {
     let message = String::from_utf8_lossy(stderr);
     let message = message.trim();
     if message.is_empty() {
@@ -422,6 +446,26 @@ mod tests {
             .iter()
             .map(|r| (r.kind, r.name.clone()))
             .collect()
+    }
+
+    #[test]
+    fn subjects_split_at_a_conventional_commit_prefix() {
+        assert_eq!(split_subject("feat: add it"), ("feat: ", "add it"));
+        assert_eq!(split_subject("fix(ui): add it"), ("fix(ui): ", "add it"));
+        assert_eq!(split_subject("feat!: add it"), ("feat!: ", "add it"));
+        assert_eq!(
+            split_subject("feat(ui)!: add it"),
+            ("feat(ui)!: ", "add it")
+        );
+    }
+
+    #[test]
+    fn other_subjects_stay_whole() {
+        assert_eq!(split_subject("Fix a bug"), ("", "Fix a bug"));
+        assert_eq!(split_subject("Note: read this"), ("", "Note: read this"));
+        assert_eq!(split_subject("two words: no"), ("", "two words: no"));
+        assert_eq!(split_subject("[rcore] Fix: x"), ("", "[rcore] Fix: x"));
+        assert_eq!(split_subject(": empty"), ("", ": empty"));
     }
 
     #[test]

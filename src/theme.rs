@@ -20,6 +20,30 @@ const FONT_FILES: [&[u8]; 3] = [
 const DARK_LANES: [u32; 6] = [0xcba6f7, 0x94e2d5, 0xf5c2e7, 0x89dceb, 0xf5e0dc, 0xf2cdcd];
 const LIGHT_LANES: [u32; 6] = [0x8839ef, 0x179299, 0xea76cb, 0x04a5e5, 0xdc8a78, 0xdd7878];
 
+/// Design tokens gpui-kit's theme has no field for. Everything else comes from `cx.theme()`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tokens {
+    /// Paused, needs a decision.
+    pub peach: Hsla,
+    /// Secondary text.
+    pub subtext0: Hsla,
+    /// Line numbers and idle checkbox outlines. Too low in contrast for body text.
+    pub overlay1: Hsla,
+}
+
+pub fn tokens(is_dark: bool) -> Tokens {
+    let (peach, subtext0, overlay1) = if is_dark {
+        (0xfab387, 0xa6adc8, 0x7f849c)
+    } else {
+        (0xfe640b, 0x6c6f85, 0x8c8fa1)
+    };
+    Tokens {
+        peach: rgb(peach).into(),
+        subtext0: rgb(subtext0).into(),
+        overlay1: rgb(overlay1).into(),
+    }
+}
+
 /// Installs the themes and font. Call once, after `gpui_kit::init`.
 pub fn init(cx: &mut App) {
     cx.text_system()

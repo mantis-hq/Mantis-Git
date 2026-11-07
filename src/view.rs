@@ -1,36 +1,27 @@
-//! The commit graph window: a virtualized list of commits with their lanes drawn beside
-//! them.
+//! The main window. This file owns the state shared across the app and the overall
+//! layout; each region and screen lives in its own module.
 
-use crate::git::{self, Entry, LoadEvent, Ref, RefKind, Refs};
-use crate::graph::{Lane, Row};
-use crate::theme::{lane_color, selected_row};
-use chrono::{DateTime, Local};
+mod commit_screen;
+mod conflict_screen;
+mod diff;
+mod header;
+mod inspector;
+mod notice;
+mod rows;
+mod sidebar;
+
+use crate::git::{self, Entry, LoadEvent, Refs};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use notice::{Confirm, Notice};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-const ROW_HEIGHT: Pixels = px(32.);
-const LANE_WIDTH: f32 = 16.;
-const GRAPH_PADDING: f32 = 6.;
-/// Keeps the "Graph" heading on one line when a history has few lanes.
-const MIN_GRAPH_WIDTH: f32 = 56.;
-const LINE_WIDTH: f32 = 1.75;
-const NODE_RADIUS: f32 = 4.;
-/// Wider graphs are clipped, so that a few hundred stale branches can't push the text out
-/// of the window.
-const MAX_VISIBLE_LANES: u32 = 24;
-const MAX_VISIBLE_REFS: usize = 3;
 const PAGE_ROWS: usize = 20;
-
-const AUTHOR_WIDTH: Pixels = px(150.);
-const DATE_WIDTH: Pixels = px(136.);
-const OID_WIDTH: Pixels = px(72.);
 
 const KEY_CONTEXT: &str = "GraphView";
 
@@ -71,6 +62,15 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
+/// What fills the window. Task screens replace the graph and link back to it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Screen {
+    #[default]
+    Graph,
+    Commit,
+    Conflict,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
     NoRepository,
@@ -94,6 +94,16 @@ pub struct GraphView {
     scroll: UniformListScrollHandle,
     focus: FocusHandle,
     load_task: Option<Task<()>>,
+    screen: Screen,
+    /// The running git operation, in words. Only one runs at a time.
+    busy: Option<SharedString>,
+    notice: Option<Notice>,
+    confirm: Option<Confirm>,
+    sidebar: sidebar::State,
+    inspector: inspector::State,
+    diff: diff::State,
+    commit: commit_screen::State,
+    conflict: conflict_screen::State,
     _activation: Subscription,
 }
 
@@ -119,6 +129,15 @@ impl GraphView {
             scroll: UniformListScrollHandle::new(),
             focus,
             load_task: None,
+            screen: Screen::Graph,
+            busy: None,
+            notice: None,
+            confirm: None,
+            sidebar: Default::default(),
+            inspector: Default::default(),
+            diff: Default::default(),
+            commit: Default::default(),
+            conflict: Default::default(),
             _activation: activation,
         }
     }
@@ -230,6 +249,28 @@ impl GraphView {
         self.selected
     }
 
+    /// What the band under the header says, if anything.
+    pub fn notice_text(&self) -> Option<SharedString> {
+        self.notice.as_ref().map(|notice| match notice {
+            Notice::Info(message) | Notice::Error(message) => message.clone(),
+        })
+    }
+
+    pub fn screen(&self) -> Screen {
+        self.screen
+    }
+
+    pub fn show_screen(&mut self, screen: Screen, cx: &mut Context<Self>) {
+        self.screen = screen;
+        cx.notify();
+    }
+
+    /// The folder git commands should run in: the top of the working tree once known.
+    pub fn workdir(&self) -> Option<PathBuf> {
+        let workdir = self.refs.workdir.clone();
+        workdir.or_else(|| self.repo.clone())
+    }
+
     pub fn commit_count(&self) -> usize {
         self.entries.len()
     }
@@ -241,6 +282,7 @@ impl GraphView {
         self.selected = Some(index);
         self.selected_oid = Some(entry.commit.oid.clone());
         self.scroll.scroll_to_item(index, ScrollStrategy::Nearest);
+        self.selection_changed(cx);
         cx.notify();
     }
 
@@ -271,221 +313,6 @@ impl GraphView {
             }
         })
         .detach();
-    }
-
-    fn graph_width(&self) -> f32 {
-        let lanes = self.max_columns.clamp(1, MAX_VISIBLE_LANES);
-        (lanes as f32 * LANE_WIDTH + GRAPH_PADDING * 2.).max(MIN_GRAPH_WIDTH)
-    }
-
-    fn render_rows(&self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
-        let theme = cx.theme();
-        let is_dark = theme.is_dark();
-        let (foreground, muted) = (theme.foreground, theme.muted_foreground);
-        let (background, hover, active) = (theme.background, theme.list_hover, selected_row(theme));
-        let (head, on_head) = (theme.primary, theme.primary_foreground);
-        let (warning, mono) = (theme.warning, theme.mono_font_family.clone());
-        let graph_width = self.graph_width();
-
-        let mut rows = Vec::with_capacity(range.len());
-        for index in range {
-            let entry = &self.entries[index];
-            let commit = &entry.commit;
-            let selected = self.selected == Some(index);
-            let row_background = if selected { active } else { background };
-            let lane_row = entry.row.clone();
-            let is_head = self.refs.head.as_ref() == Some(&commit.oid);
-            let is_merge = commit.parents.len() > 1;
-            let commit_refs = self.refs.by_commit.get(&commit.oid);
-            let lane = lane_color(entry.row.color, is_dark);
-
-            rows.push(
-                div()
-                    .id(index)
-                    .h_flex()
-                    .h(ROW_HEIGHT)
-                    .w_full()
-                    .pr_3()
-                    .gap_3()
-                    .text_sm()
-                    .bg(row_background)
-                    .when(!selected, |row| row.hover(|style| style.bg(hover)))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.select(index, cx);
-                        window.focus(&this.focus, cx);
-                    }))
-                    .child(
-                        div()
-                            .w(px(graph_width))
-                            .h_full()
-                            .flex_none()
-                            .overflow_hidden()
-                            .child(
-                                canvas(
-                                    |_, _, _| (),
-                                    move |bounds, _, window, _| {
-                                        paint_row(
-                                            bounds,
-                                            &lane_row,
-                                            NodeStyle {
-                                                is_head,
-                                                is_merge,
-                                                head,
-                                                hollow: row_background,
-                                            },
-                                            is_dark,
-                                            window,
-                                        );
-                                    },
-                                )
-                                .size_full(),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .h_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .gap_1p5()
-                            .overflow_hidden()
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_color(foreground)
-                                    .child(SharedString::from(commit.subject.clone())),
-                            )
-                            .when_some(commit_refs, |row, refs| {
-                                row.children(
-                                    refs.iter()
-                                        .take(MAX_VISIBLE_REFS)
-                                        .map(|r| ref_label(r, lane, head, on_head, warning, muted)),
-                                )
-                                .when(
-                                    refs.len() > MAX_VISIBLE_REFS,
-                                    |row| {
-                                        row.child(
-                                            div().flex_none().text_xs().text_color(muted).child(
-                                                format!("+{}", refs.len() - MAX_VISIBLE_REFS),
-                                            ),
-                                        )
-                                    },
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .w(AUTHOR_WIDTH)
-                            .flex_none()
-                            .truncate()
-                            .text_color(muted)
-                            .child(SharedString::from(commit.author.clone())),
-                    )
-                    .child(
-                        div()
-                            .w(DATE_WIDTH)
-                            .flex_none()
-                            .truncate()
-                            .text_color(muted)
-                            .child(format_date(commit.time)),
-                    )
-                    .child(
-                        div()
-                            .w(OID_WIDTH)
-                            .flex_none()
-                            .font_family(mono.clone())
-                            .text_size(px(13.))
-                            .text_color(muted)
-                            .child(commit.short_oid().to_owned()),
-                    ),
-            );
-        }
-        rows
-    }
-
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (muted, border, header) = (theme.muted_foreground, theme.border, theme.title_bar);
-        let name = self.repo.as_deref().map(repository_name);
-        let path = self.repo.as_ref().map(|path| path.display().to_string());
-        let loading = self.status == Status::Loading;
-
-        div()
-            .h_flex()
-            .h(px(52.))
-            .flex_none()
-            .px_3()
-            .gap_2()
-            .bg(header)
-            .border_b_1()
-            .border_color(border)
-            .when_some(name, |bar, name| {
-                bar.child(div().font_semibold().child(name))
-            })
-            .when_some(path, |bar, path| {
-                bar.child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_sm()
-                        .text_color(muted)
-                        .child(path),
-                )
-            })
-            .child(div().flex_1())
-            .when(loading, |bar| bar.child(Spinner::new().small()))
-            .when(!self.entries.is_empty(), |bar| {
-                bar.child(
-                    div()
-                        .flex_none()
-                        .text_sm()
-                        .text_color(muted)
-                        .child(format!("{} commits", self.entries.len())),
-                )
-            })
-            .when(self.repo.is_some(), |bar| {
-                bar.child(
-                    Button::new("refresh")
-                        .ghost()
-                        .small()
-                        .label("Refresh")
-                        .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
-                )
-            })
-            .child(
-                Button::new("open")
-                    .ghost()
-                    .small()
-                    .label("Open…")
-                    .on_click(cx.listener(|this, _, _, cx| this.prompt_for_repository(cx))),
-            )
-    }
-
-    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        div()
-            .h_flex()
-            .h(px(26.))
-            .flex_none()
-            .pr_3()
-            .gap_3()
-            .text_size(px(13.))
-            .font_medium()
-            .text_color(theme.muted_foreground)
-            .bg(theme.list_head)
-            .border_b_1()
-            .border_color(theme.border)
-            .child(
-                div()
-                    .w(px(self.graph_width()))
-                    .flex_none()
-                    .pl_2()
-                    .child("Graph"),
-            )
-            .child(div().flex_1().min_w_0().child("Description"))
-            .child(div().w(AUTHOR_WIDTH).flex_none().child("Author"))
-            .child(div().w(DATE_WIDTH).flex_none().child("Date"))
-            .child(div().w(OID_WIDTH).flex_none().child("Commit"))
     }
 
     fn render_message(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -531,39 +358,66 @@ impl GraphView {
     }
 }
 
+impl GraphView {
+    fn render_graph(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        if self.entries.is_empty() {
+            return self.render_message(cx).into_any_element();
+        }
+        let sidebar = self.render_sidebar(cx);
+        let inspector = self.render_inspector(cx);
+        let diff = self.render_diff(cx);
+        let main = div()
+            .v_flex()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .child(self.render_column_header(cx))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        uniform_list(
+                            "commits",
+                            self.entries.len(),
+                            cx.processor(|this, range: Range<usize>, _, cx| {
+                                this.render_rows(range, cx)
+                            }),
+                        )
+                        .track_scroll(&self.scroll)
+                        .size_full(),
+                    )
+                    .vertical_scrollbar(&self.scroll),
+            )
+            .children(diff);
+
+        div()
+            .h_flex()
+            .items_stretch()
+            .flex_1()
+            .min_h_0()
+            .children(sidebar)
+            .child(main)
+            .children(inspector)
+            .into_any_element()
+    }
+}
+
 impl Render for GraphView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (background, foreground) = (theme.background, theme.foreground);
 
-        let content = if self.entries.is_empty() {
-            self.render_message(cx).into_any_element()
-        } else {
-            div()
-                .v_flex()
-                .flex_1()
-                .min_h_0()
-                .child(self.render_header(cx))
-                .child(
-                    div()
-                        .relative()
-                        .flex_1()
-                        .min_h_0()
-                        .child(
-                            uniform_list(
-                                "commits",
-                                self.entries.len(),
-                                cx.processor(|this, range: Range<usize>, _, cx| {
-                                    this.render_rows(range, cx)
-                                }),
-                            )
-                            .track_scroll(&self.scroll)
-                            .size_full(),
-                        )
-                        .vertical_scrollbar(&self.scroll),
-                )
-                .into_any_element()
+        let (bar, content) = match self.screen {
+            Screen::Graph => (
+                Some(self.render_toolbar(cx).into_any_element()),
+                self.render_graph(cx),
+            ),
+            Screen::Commit => (None, self.render_commit_screen(window, cx)),
+            Screen::Conflict => (None, self.render_conflict_screen(window, cx)),
         };
+        let notice = self.render_notice(cx);
 
         div()
             .v_flex()
@@ -588,7 +442,8 @@ impl Render for GraphView {
             .on_action(
                 cx.listener(|this, _: &OpenRepository, _, cx| this.prompt_for_repository(cx)),
             )
-            .child(self.render_toolbar(cx))
+            .children(bar)
+            .children(notice)
             .child(content)
     }
 }
@@ -599,151 +454,11 @@ fn repository_name(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-fn format_date(time: i64) -> String {
-    DateTime::from_timestamp(time, 0)
-        .map(|date| {
-            date.with_timezone(&Local)
-                .format("%Y-%m-%d %H:%M")
-                .to_string()
-        })
-        .unwrap_or_default()
-}
-
-fn ref_label(
-    r: &Ref,
-    lane: Hsla,
-    head: Hsla,
-    on_head: Hsla,
-    tag: Hsla,
-    muted: Hsla,
-) -> impl IntoElement {
-    let color = match r.kind {
-        RefKind::Tag => tag,
-        RefKind::Remote => muted,
-        RefKind::Branch | RefKind::DetachedHead => lane,
-    };
-    let (fill, text) = if r.is_head {
-        (head, on_head)
-    } else {
-        (color.opacity(0.14), color)
-    };
-    div()
-        .flex_none()
-        .max_w(px(180.))
-        .truncate()
-        .px_1p5()
-        .rounded(px(4.))
-        .text_xs()
-        .font_semibold()
-        .text_color(text)
-        .bg(fill)
-        .child(r.name.clone())
-}
-
-struct NodeStyle {
-    is_head: bool,
-    is_merge: bool,
-    head: Hsla,
-    /// Fills the middle of merge nodes and the HEAD ring, so it has to match the row
-    /// behind them.
-    hollow: Hsla,
-}
-
-fn paint_row(
-    bounds: Bounds<Pixels>,
-    row: &Row,
-    node: NodeStyle,
-    is_dark: bool,
-    window: &mut Window,
-) {
-    let x_of = |column: u32| bounds.left() + px(GRAPH_PADDING + (column as f32 + 0.5) * LANE_WIDTH);
-    let (top, bottom) = (bounds.top(), bounds.bottom());
-    let middle = top + bounds.size.height / 2.;
-    let node_x = x_of(row.column);
-
-    for lane in row.through.iter() {
-        paint_vertical(x_of(lane.column), top, bottom, lane, is_dark, window);
-    }
-    for lane in &row.incoming {
-        paint_edge(
-            point(x_of(lane.column), top),
-            point(node_x, middle),
-            lane,
-            is_dark,
-            window,
-        );
-    }
-    for lane in &row.outgoing {
-        paint_edge(
-            point(node_x, middle),
-            point(x_of(lane.column), bottom),
-            lane,
-            is_dark,
-            window,
-        );
-    }
-
-    if node.is_head {
-        paint_circle(node_x, middle, NODE_RADIUS + 3., node.head, window);
-        paint_circle(node_x, middle, NODE_RADIUS + 1.5, node.hollow, window);
-        paint_circle(node_x, middle, NODE_RADIUS, node.head, window);
-        return;
-    }
-    paint_circle(
-        node_x,
-        middle,
-        NODE_RADIUS,
-        lane_color(row.color, is_dark),
-        window,
-    );
-    if node.is_merge {
-        paint_circle(node_x, middle, NODE_RADIUS - 1.75, node.hollow, window);
-    }
-}
-
-fn paint_vertical(
-    x: Pixels,
-    top: Pixels,
-    bottom: Pixels,
-    lane: &Lane,
-    is_dark: bool,
-    window: &mut Window,
-) {
-    let half = px(LINE_WIDTH / 2.);
-    let bounds = Bounds::from_corners(point(x - half, top), point(x + half, bottom));
-    window.paint_quad(fill(bounds, lane_color(lane.color, is_dark)));
-}
-
-fn paint_edge(
-    from: Point<Pixels>,
-    to: Point<Pixels>,
-    lane: &Lane,
-    is_dark: bool,
-    window: &mut Window,
-) {
-    if from.x == to.x {
-        paint_vertical(from.x, from.y, to.y, lane, is_dark, window);
-        return;
-    }
-    let bend = (to.y - from.y) * 0.6;
-    let mut path = PathBuilder::stroke(px(LINE_WIDTH));
-    path.move_to(from);
-    path.cubic_bezier_to(to, point(from.x, from.y + bend), point(to.x, to.y - bend));
-    if let Ok(path) = path.build() {
-        window.paint_path(path, lane_color(lane.color, is_dark));
-    }
-}
-
-fn paint_circle(x: Pixels, y: Pixels, radius: f32, color: Hsla, window: &mut Window) {
-    let radius = px(radius);
-    let bounds = Bounds::from_corners(point(x - radius, y - radius), point(x + radius, y + radius));
-    window.paint_quad(fill(bounds, color).corner_radii(radius));
-}
-
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that would bring in GPUI's `test` macro, which shadows Rust's.
-    use super::{Entry, GraphView, LoadEvent, MIN_GRAPH_WIDTH, Status, bind_keys};
+    use super::rows::MIN_GRAPH_WIDTH;
+    use super::{Entry, GraphView, LoadEvent, Status, bind_keys};
     use crate::git::Commit;
     use crate::graph::GraphBuilder;
     use gpui_kit::{Entity, Modifiers, TestAppContext, VisualTestContext, point, px};
@@ -874,6 +589,17 @@ mod tests {
             view.apply(LoadEvent::Failed("nope".into()), cx);
             view.finish_load(cx);
             assert_eq!(view.status(), &Status::Failed("nope".into()));
+        });
+    }
+
+    #[gpui_kit::test]
+    fn a_failed_operation_says_why_and_a_quiet_one_says_nothing(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_view(cx);
+        view.update(&mut cx, |view, cx| {
+            view.finish_operation(Err("push was rejected".into()), cx);
+            assert_eq!(view.notice_text().as_deref(), Some("push was rejected"));
+            view.finish_operation(Ok(None), cx);
+            assert_eq!(view.notice_text(), None);
         });
     }
 

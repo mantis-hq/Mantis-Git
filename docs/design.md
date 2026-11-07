@@ -126,7 +126,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 
 Set colours through the gpui-kit theme and read them from `cx.theme()`. Do not hard-code
 colours in views. The themes are in `src/catppuccin.json` and the lane palette is in
-`src/theme.rs`. Maple Mono is bundled in `src/fonts`.
+`src/theme.rs`, along with the few tokens gpui-kit has no field for (Peach, Subtext 0,
+Overlay 1). Maple Mono is bundled in `src/fonts`.
 
 | gpui-kit theme field | Value     |
 | -------------------- | --------- |
