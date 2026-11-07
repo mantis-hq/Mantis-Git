@@ -1,6 +1,7 @@
 //! What a single commit changed, and the commands that act on one.
 
 use crate::ops;
+use crate::patch::{self, FilePatch};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -118,6 +119,33 @@ fn parse_changes(output: &str) -> Vec<FileChange> {
         numstat_index += 1;
     }
     files
+}
+
+/// Reads one file's diff within a commit.
+pub fn file_diff(repo: &Path, oid: &str, file: &FileChange) -> Result<FilePatch, String> {
+    let mut args = vec![
+        "-c",
+        "core.quotepath=off",
+        "diff-tree",
+        "--root",
+        "-r",
+        "-p",
+        "-M",
+        "--no-commit-id",
+        "--no-color",
+        "--no-ext-diff",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        oid,
+        "--",
+        &*file.path,
+    ];
+    // A rename only shows as one if git can see both of its ends.
+    if let Some(old_path) = &file.old_path {
+        args.push(old_path);
+    }
+    let diff = ops::run(repo, &args)?;
+    Ok(patch::parse(&diff).into_iter().next().unwrap_or_default())
 }
 
 /// Switches to a branch, or to the bare commit when no branch names it.
@@ -295,6 +323,48 @@ mod tests {
 
         let merge = repo.git(&["rev-parse", "HEAD"]);
         assert!(read(repo.path(), &merge).unwrap().files.is_empty());
+    }
+
+    #[test]
+    fn a_files_diff_is_read_on_its_own() {
+        let repo = Repo::new();
+        repo.write("a", "one\n");
+        repo.write("b", "two\n");
+        repo.commit("base");
+        repo.write("a", "changed\n");
+        repo.write("b", "also\n");
+        let oid = repo.commit("both");
+
+        let details = read(repo.path(), &oid).unwrap();
+        let patch = file_diff(repo.path(), &oid, &details.files[0]).unwrap();
+        assert_eq!(patch.path, "a");
+        assert_eq!(patch.hunks[0].lines.len(), 2);
+    }
+
+    #[test]
+    fn a_renamed_files_diff_shows_only_what_changed() {
+        let repo = Repo::new();
+        repo.write("before", &lines(20, "same"));
+        repo.commit("base");
+        repo.git(&["mv", "before", "after"]);
+        repo.write("after", &format!("{}extra\n", lines(20, "same")));
+        let oid = repo.commit("rename");
+
+        let details = read(repo.path(), &oid).unwrap();
+        let patch = file_diff(repo.path(), &oid, &details.files[0]).unwrap();
+        assert_eq!(patch.path, "after");
+        let added = patch.hunks[0].lines.iter().filter(|l| l.old.is_none());
+        assert_eq!(added.count(), 1, "not the whole file");
+    }
+
+    #[test]
+    fn a_root_commits_file_diff_is_all_additions() {
+        let repo = Repo::new();
+        repo.write("a", "one\ntwo\n");
+        let oid = repo.commit("root");
+        let details = read(repo.path(), &oid).unwrap();
+        let patch = file_diff(repo.path(), &oid, &details.files[0]).unwrap();
+        assert_eq!(patch.hunks[0].lines.len(), 2);
     }
 
     #[test]

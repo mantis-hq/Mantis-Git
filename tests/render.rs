@@ -51,7 +51,18 @@ mod render {
     }
 
     fn commit(repo: &Path, subject: &str) {
-        git(repo, &["commit", "-q", "--allow-empty", "-m", subject]);
+        let name: String = subject
+            .chars()
+            .filter(char::is_ascii_alphabetic)
+            .take(12)
+            .collect();
+        let code: String = (0..40)
+            .map(|line| format!("pub fn step_{line}(input: u32) -> u32 {{ input + {line} }}\n"))
+            .collect();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join(format!("src/{name}.rs")), code).unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-q", "-m", subject]);
     }
 
     fn fixture(repo: &Path) {
@@ -111,7 +122,7 @@ mod render {
             .update(|cx| {
                 let bounds = Bounds {
                     origin: Default::default(),
-                    size: size(px(1000.), px(420.)),
+                    size: size(px(1200.), px(800.)),
                 };
                 let options = WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -167,7 +178,7 @@ mod render {
     /// Distinct saturated colours in the graph column, which only the lanes can produce:
     /// the surfaces behind them are barely tinted.
     fn lane_hues(frame: &image::RgbaImage) -> usize {
-        let scale = frame.width() as f32 / 1000.;
+        let scale = frame.width() as f32 / 1200.;
         let mut hues = std::collections::BTreeSet::new();
         for y in (LIST_TOP as f32 * scale) as u32..frame.height() {
             for x in (GRAPH_LEFT as f32 * scale) as u32..(GRAPH_RIGHT as f32 * scale) as u32 {

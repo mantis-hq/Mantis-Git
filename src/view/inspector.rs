@@ -3,7 +3,7 @@
 use super::{GraphView, Status};
 use crate::details::{self, CommitDetails, FileChange};
 use crate::git::{Commit, RefKind, split_subject};
-use crate::theme::tokens;
+use crate::theme::{selected_row, tokens};
 use chrono::{Local, TimeZone};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -21,6 +21,11 @@ pub(super) struct State {
 }
 
 impl GraphView {
+    pub(super) fn selected_details(&self) -> Option<&Arc<CommitDetails>> {
+        let oid = &self.selected_commit()?.oid;
+        self.inspector.details.as_ref().filter(|d| d.oid == *oid)
+    }
+
     fn selected_commit(&self) -> Option<&Commit> {
         Some(&self.entries.get(self.selected?)?.commit)
     }
@@ -43,6 +48,7 @@ impl GraphView {
                     return;
                 }
                 this.inspector.details = details.ok().map(Arc::new);
+                this.details_loaded(cx);
                 cx.notify();
             })
             .ok();
@@ -116,7 +122,7 @@ impl GraphView {
                         .child(self.render_facts(commit, cx))
                         .child(self.render_actions(commit, cx))
                         .when_some(loaded, |panel, details| {
-                            panel.child(render_files(commit, details, cx))
+                            panel.child(self.render_files(commit, details, cx))
                         }),
                 )
                 .into_any_element(),
@@ -296,47 +302,6 @@ impl GraphView {
     }
 }
 
-fn render_files(commit: &Commit, details: &CommitDetails, cx: &mut App) -> impl IntoElement {
-    let theme = cx.theme();
-    let (muted, added, removed) = (theme.muted_foreground, theme.success, theme.danger);
-    let count = details.files.len();
-    let (additions, deletions) = details.totals();
-    let is_merge = commit.parents.len() > 1;
-
-    div()
-        .v_flex()
-        .gap(px(2.))
-        .child(
-            div()
-                .h_flex()
-                .h(px(24.))
-                .justify_between()
-                .text_size(px(13.))
-                .font_medium()
-                .text_color(muted)
-                .child(format!(
-                    "{count} {} changed",
-                    if count == 1 { "file" } else { "files" }
-                ))
-                .child(
-                    div()
-                        .h_flex()
-                        .gap_1()
-                        .text_xs()
-                        .child(div().text_color(added).child(format!("+{additions}")))
-                        .child(div().text_color(removed).child(format!("−{deletions}"))),
-                ),
-        )
-        .children(details.files.iter().map(|file| render_file(file, cx)))
-        .when(is_merge && count == 0, |list| {
-            list.child(
-                div()
-                    .text_color(tokens(cx.theme().is_dark()).subtext0)
-                    .child("This merge has no changes of its own."),
-            )
-        })
-}
-
 pub(super) fn status_color(file: &FileChange, cx: &App) -> Hsla {
     let theme = cx.theme();
     match file.status {
@@ -346,35 +311,107 @@ pub(super) fn status_color(file: &FileChange, cx: &App) -> Hsla {
     }
 }
 
-fn render_file(file: &FileChange, cx: &App) -> impl IntoElement {
-    let muted = cx.theme().muted_foreground;
-    let (folder, name) = file.split_path();
-    let count = if file.binary {
-        "binary".to_owned()
-    } else {
-        format!("+{} −{}", file.additions, file.deletions)
-    };
-    div()
-        .h_flex()
-        .h(px(28.))
-        .gap_2()
-        .child(
-            div()
-                .w(px(12.))
-                .flex_none()
-                .text_xs()
-                .font_medium()
-                .text_color(status_color(file, cx))
-                .child(file.status.to_string()),
-        )
-        .child(
-            div()
-                .h_flex()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .child(div().flex_none().text_color(muted).child(folder.to_owned()))
-                .child(div().min_w_0().truncate().child(name.to_owned())),
-        )
-        .child(div().flex_none().text_xs().text_color(muted).child(count))
+impl GraphView {
+    fn render_files(
+        &self,
+        commit: &Commit,
+        details: &CommitDetails,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = cx.theme();
+        let (muted, added, removed) = (theme.muted_foreground, theme.success, theme.danger);
+        let count = details.files.len();
+        let (additions, deletions) = details.totals();
+        let is_merge = commit.parents.len() > 1;
+        let merge_note = tokens(cx.theme().is_dark()).subtext0;
+        let mut files = Vec::with_capacity(count);
+        for (index, file) in details.files.iter().enumerate() {
+            files.push(self.render_file(index, file, cx));
+        }
+
+        div()
+            .v_flex()
+            .gap(px(2.))
+            .child(
+                div()
+                    .h_flex()
+                    .h(px(24.))
+                    .justify_between()
+                    .text_size(px(13.))
+                    .font_medium()
+                    .text_color(muted)
+                    .child(format!(
+                        "{count} {} changed",
+                        if count == 1 { "file" } else { "files" }
+                    ))
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_1()
+                            .text_xs()
+                            .child(div().text_color(added).child(format!("+{additions}")))
+                            .child(div().text_color(removed).child(format!("−{deletions}"))),
+                    ),
+            )
+            .children(files)
+            .when(is_merge && count == 0, |list| {
+                list.child(
+                    div()
+                        .text_color(merge_note)
+                        .child("This merge has no changes of its own."),
+                )
+            })
+    }
+
+    fn render_file(
+        &self,
+        index: usize,
+        file: &FileChange,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let theme = cx.theme();
+        let (muted, active, hover) = (
+            theme.muted_foreground,
+            selected_row(theme),
+            theme.list_hover,
+        );
+        let shown = self.shown_file() == Some(index);
+        let (folder, name) = file.split_path();
+        let count = if file.binary {
+            "binary".to_owned()
+        } else {
+            format!("+{} −{}", file.additions, file.deletions)
+        };
+        div()
+            .id(("file", index))
+            .h_flex()
+            .h(px(28.))
+            .mx(px(-8.))
+            .px_2()
+            .gap_2()
+            .rounded(px(6.))
+            .cursor_pointer()
+            .when(shown, |row| row.bg(active))
+            .when(!shown, |row| row.hover(|style| style.bg(hover)))
+            .on_click(cx.listener(move |this, _, _, cx| this.show_file(index, cx)))
+            .child(
+                div()
+                    .w(px(12.))
+                    .flex_none()
+                    .text_xs()
+                    .font_medium()
+                    .text_color(status_color(file, cx))
+                    .child(file.status.to_string()),
+            )
+            .child(
+                div()
+                    .h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .child(div().flex_none().text_color(muted).child(folder.to_owned()))
+                    .child(div().min_w_0().truncate().child(name.to_owned())),
+            )
+            .child(div().flex_none().text_xs().text_color(muted).child(count))
+    }
 }
