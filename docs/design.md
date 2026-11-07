@@ -201,6 +201,14 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   and "Create <name>" buttons, never blue. Enter creates it. The new branch is checked out,
   and the band under the header says how to undo it. A name git would refuse, or one
   already taken, is explained in that band and nothing changes.
+- Remotes: the "Remotes" header ends in a quiet blue "+ Add" that opens a form band under
+  the header (the notice band's look), with a name, an address, and quiet "Cancel" and
+  result-named buttons ("Add remote", "Save origin"). `Enter` saves and `Esc` closes. Each
+  remote's top folder in the list, or a row saying "no branches yet" for one nothing has
+  been fetched from, opens a menu on right-click: "Edit <name>" (the same form, filled in;
+  renaming also renames its remote branches), "Copy address", and in red "Remove remote
+  <name>", which asks first and gives the `git remote add` that brings it back. Names that
+  can't work are turned down in the form in Peach, before git runs.
 - A branch row ends with its count against the default branch (`+2 −1`), then against
   the remote branch it tracks (`↑1 ↓2`: to push, to pull). Level or untracked shows nothing.
 
@@ -219,7 +227,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   ("Merge feat/x into main", "Rebase main onto feat/x"). A line that can't be used stays,
   in Overlay 2, and says why. Only lines that remove something are red, and they ask
   first, saying how to undo. `Up`/`Down` move, `Enter` chooses, `Esc` closes.
-- **Delete confirmation:** deleting a branch, tag or worktree asks in a small popup centred
+- **Delete confirmation:** deleting a branch, tag, worktree or remote asks in a small popup centred
   over the window, never in the band under the header. A card on Mantle with a Surface 0
   border and 8 px radius holds the sentence (which says how to undo it), a line naming the
   keys, and "Cancel" and the result ("Delete") as quiet buttons. `Enter` confirms and `Esc`

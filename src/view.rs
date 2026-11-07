@@ -10,6 +10,7 @@ mod inspector;
 mod menu;
 mod notice;
 mod parts;
+mod remotes;
 mod rows;
 mod settings;
 mod sidebar;
@@ -143,6 +144,8 @@ pub struct GraphView {
     confirm: Option<Confirm>,
     /// Whether the key now down is a repeat of one still held.
     key_held: bool,
+    /// The form that adds or edits a remote, while it is open.
+    remote_form: Option<remotes::RemoteForm>,
     sidebar: sidebar::State,
     inspector: inspector::State,
     diff: diff::State,
@@ -200,6 +203,7 @@ impl GraphView {
             notice: None,
             confirm: None,
             key_held: false,
+            remote_form: None,
             sidebar: sidebar::State::new(),
             inspector: Default::default(),
             diff: Default::default(),
@@ -248,6 +252,7 @@ impl GraphView {
         // Nothing of the old repository, or worktree, applies to the new one.
         self.selection = Selection::default();
         self.menu = None;
+        self.remote_form = None;
         self.screen = Screen::Graph;
         self.sidebar.picks.clear();
         self.sidebar.spotlight = None;
@@ -642,7 +647,9 @@ impl Render for GraphView {
             Screen::Commit => (None, self.render_commit_screen(window, cx)),
             Screen::Conflict => (None, self.render_conflict_screen(window, cx)),
         };
+        self.ensure_remote_inputs(window, cx);
         let notice = self.render_notice(cx);
+        let remote_form = self.render_remote_form(cx);
         let menu = self.render_menu(cx);
         let popup = self.render_confirm_popup(cx);
 
@@ -681,6 +688,7 @@ impl Render for GraphView {
             .on_action(cx.listener(|this, _: &ActivateMenu, _, cx| this.press_enter(cx)))
             .children(bar)
             .children(notice)
+            .children(remote_form)
             .child(content)
             .children(menu)
             .children(popup)
@@ -1192,6 +1200,33 @@ mod tests {
 
             view.close_menu(cx);
             assert!(view.menu.is_none());
+        });
+    }
+
+    #[gpui_kit::test]
+    fn editing_a_remote_starts_from_its_address_and_escape_closes_the_menu_before_the_form(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, mut cx) = open_view(cx);
+        view.update(&mut cx, |view, cx| {
+            let mut refs = gitclient_core::git::Refs::default();
+            refs.remote_configs = vec![gitclient_core::remote::Remote {
+                name: "origin".into(),
+                url: "git@host:a.git".into(),
+                push_url: None,
+            }];
+            view.refs = Arc::new(refs);
+            assert!(view.is_remote("origin") && !view.is_remote("feat"));
+
+            view.open_remote_form(Some("origin".into()), cx);
+            let form = view.remote_form.as_ref().unwrap();
+            assert_eq!(form.prefill(), ("origin", "git@host:a.git"));
+
+            view.open_remote_menu("origin", point(px(10.), px(10.)), cx);
+            view.dismiss(cx);
+            assert!(view.menu.is_none() && view.remote_form.is_some());
+            view.dismiss(cx);
+            assert!(view.remote_form.is_none());
         });
     }
 

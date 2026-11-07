@@ -204,13 +204,13 @@ impl GraphView {
         self.run_confirmed(cx);
     }
 
-    /// Escape: closes a confirmation popup, or else the menu.
+    /// Escape: closes a confirmation popup, or else the menu, or else the remote form.
     pub(super) fn press_escape(&mut self, cx: &mut Context<Self>) {
         if self.confirm.as_ref().is_some_and(Confirm::is_popup) {
             self.confirm = None;
             cx.notify();
         } else {
-            self.close_menu(cx);
+            self.dismiss(cx);
         }
     }
 

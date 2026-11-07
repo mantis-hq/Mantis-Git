@@ -6,6 +6,7 @@ use crate::branch::{self, Doomed, Dragged, DropAction, Relation};
 use crate::conflict;
 use crate::details;
 use crate::git::{Commit, RefKind, Refs};
+use crate::remote;
 use crate::text::{count, short_oid};
 use crate::worktree;
 use std::path::{Path, PathBuf};
@@ -75,6 +76,15 @@ pub enum Command {
     },
     RemoveWorktree {
         path: PathBuf,
+        /// What removing it does and how to bring it back, worked out when the menu opened.
+        warning: String,
+    },
+    /// Handled by the interface, which owns the form that edits a remote.
+    EditRemote {
+        name: String,
+    },
+    RemoveRemote {
+        name: String,
         /// What removing it does and how to bring it back, worked out when the menu opened.
         warning: String,
     },
@@ -151,6 +161,8 @@ impl Command {
             Self::SwitchWorktree { .. } | Self::OpenWorktreeInTab { .. } => "Switching",
             Self::NewBranch { .. } => "Creating a branch",
             Self::RemoveWorktree { .. } => "Removing the worktree",
+            Self::EditRemote { .. } => "Editing",
+            Self::RemoveRemote { .. } => "Removing the remote",
             Self::Copy { .. } => "Copying",
         }
     }
@@ -179,6 +191,11 @@ impl Command {
                 weight: deletion_weight(*at_risk),
             }),
             Self::RemoveWorktree { warning, .. } => Some(Confirmation {
+                message: warning.clone(),
+                action: "Remove",
+                weight: Weight::Popup,
+            }),
+            Self::RemoveRemote { warning, .. } => Some(Confirmation {
                 message: warning.clone(),
                 action: "Remove",
                 weight: Weight::Popup,
@@ -241,9 +258,11 @@ impl Command {
             },
             Self::Reset { oid, hard } => details::reset(repo, oid, *hard),
             Self::RemoveWorktree { path, .. } => worktree::remove(repo, path),
+            Self::RemoveRemote { name, .. } => remote::remove(repo, name),
             Self::SwitchWorktree { .. }
             | Self::OpenWorktreeInTab { .. }
             | Self::NewBranch { .. }
+            | Self::EditRemote { .. }
             | Self::Copy { .. } => Ok(None),
         }
     }
@@ -459,6 +478,39 @@ pub fn worktree_menu(refs: &Refs, path: &Path) -> Vec<Line> {
         )
         .danger()
     });
+    lines
+}
+
+/// The menu for a remote in the sidebar.
+pub fn remote_menu(refs: &Refs, name: &str) -> Vec<Line> {
+    let Some(remote) = refs
+        .remote_configs
+        .iter()
+        .find(|remote| remote.name == name)
+    else {
+        return Vec::new();
+    };
+    let mut lines = vec![
+        Line::Heading(name.to_owned()),
+        Line::item(
+            format!("Edit {name}"),
+            Command::EditRemote {
+                name: name.to_owned(),
+            },
+        ),
+        Line::item("Copy address", copy(&remote.url, "the address")),
+        Line::Separator,
+    ];
+    lines.push(
+        Line::item(
+            format!("Remove remote {name}"),
+            Command::RemoveRemote {
+                name: name.to_owned(),
+                warning: remote::remove_warning(remote),
+            },
+        )
+        .danger(),
+    );
     lines
 }
 
@@ -697,6 +749,34 @@ mod tests {
             color: LaneColor::default(),
         }];
         refs
+    }
+
+    #[test]
+    fn a_remote_menu_edits_copies_and_removes_with_a_way_back() {
+        let mut refs = refs();
+        refs.remote_configs = vec![crate::remote::Remote {
+            name: "origin".into(),
+            url: "git@host:a.git".into(),
+            push_url: None,
+        }];
+        let lines = remote_menu(&refs, "origin");
+        let commands: Vec<_> = lines.iter().filter_map(Line::command).collect();
+        assert_eq!(
+            commands[0],
+            &Command::EditRemote {
+                name: "origin".into()
+            }
+        );
+        assert_eq!(commands[1], &copy("git@host:a.git", "the address"));
+        let remove = commands[2];
+        assert!(
+            remove
+                .confirmation()
+                .unwrap()
+                .message
+                .contains("git remote add origin git@host:a.git")
+        );
+        assert!(remote_menu(&refs, "nowhere").is_empty());
     }
 
     #[test]
