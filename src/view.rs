@@ -627,6 +627,7 @@ impl GraphView {
 impl Render for GraphView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sidebar.window_is_wide = window.viewport_size().width >= sidebar::WIDE_WINDOW;
+        self.ensure_new_branch_input(window, cx);
         let theme = cx.theme();
         let (background, foreground) = (theme.background, theme.foreground);
 
@@ -1164,7 +1165,7 @@ mod tests {
             };
             view.open_ref_menu(main, point(px(10.), px(10.)), cx);
             view.step_menu(1, cx);
-            assert_eq!(at(view).as_deref(), Some("Copy name"));
+            assert_eq!(at(view).as_deref(), Some("New branch from main"));
         });
     }
 

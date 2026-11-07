@@ -64,6 +64,13 @@ pub enum Command {
     OpenWorktreeInTab {
         path: PathBuf,
     },
+    /// Handled by the interface, which asks for a name: makes a branch at `start`.
+    NewBranch {
+        /// A revision to start at, or the checked-out commit when `None`.
+        start: Option<String>,
+        /// What to call that place, such as `a1b2c3d` or `main`.
+        label: String,
+    },
     RemoveWorktree {
         path: PathBuf,
         /// What removing it does and how to bring it back, worked out when the menu opened.
@@ -104,6 +111,7 @@ impl Command {
             Self::Revert { .. } => "Reverting",
             Self::Reset { .. } => "Resetting",
             Self::SwitchWorktree { .. } | Self::OpenWorktreeInTab { .. } => "Switching",
+            Self::NewBranch { .. } => "Creating a branch",
             Self::RemoveWorktree { .. } => "Removing the worktree",
             Self::Copy { .. } => "Copying",
         }
@@ -185,9 +193,10 @@ impl Command {
             },
             Self::Reset { oid, hard } => details::reset(repo, oid, *hard),
             Self::RemoveWorktree { path, .. } => worktree::remove(repo, path),
-            Self::SwitchWorktree { .. } | Self::OpenWorktreeInTab { .. } | Self::Copy { .. } => {
-                Ok(None)
-            }
+            Self::SwitchWorktree { .. }
+            | Self::OpenWorktreeInTab { .. }
+            | Self::NewBranch { .. }
+            | Self::Copy { .. } => Ok(None),
         }
     }
 }
@@ -288,6 +297,13 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
         }
     }
 
+    lines.push(Line::item(
+        format!("New branch from {name}"),
+        Command::NewBranch {
+            start: Some(name.clone()),
+            label: name.clone(),
+        },
+    ));
     lines.push(Line::Separator);
     lines.push(Line::item("Copy name", copy(&name, "the name")));
 
@@ -493,6 +509,13 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
         Command::Revert {
             oids: vec![oid.clone()],
             is_merge: actions.is_merge,
+        },
+    ));
+    lines.push(Line::item(
+        format!("New branch from {}", short_oid(&oid)),
+        Command::NewBranch {
+            start: Some(oid.clone()),
+            label: short_oid(&oid).to_owned(),
         },
     ));
 
@@ -737,6 +760,7 @@ mod tests {
                 "Check out feat/x",
                 "Merge feat/x into main",
                 "Rebase main onto feat/x",
+                "New branch from feat/x",
                 "Copy name",
                 "Delete branch feat/x"
             ]
@@ -749,7 +773,14 @@ mod tests {
     #[test]
     fn the_checked_out_branch_can_be_neither_checked_out_nor_deleted() {
         let lines = ref_menu(&refs(), &target(RefKind::Branch, "main"));
-        assert_eq!(labels(&lines), ["main is already checked out", "Copy name"]);
+        assert_eq!(
+            labels(&lines),
+            [
+                "main is already checked out",
+                "New branch from main",
+                "Copy name"
+            ]
+        );
         assert!(lines[1].command().is_none());
     }
 
@@ -761,6 +792,7 @@ mod tests {
             [
                 "Check out v1.0.0 without a branch",
                 "Merge v1.0.0 into main",
+                "New branch from v1.0.0",
                 "Copy name",
                 "Delete tag v1.0.0"
             ]
@@ -784,6 +816,7 @@ mod tests {
             [
                 "This commit is already checked out",
                 "Revert",
+                "New branch from aaaaaaa",
                 "Copy hash",
                 "Copy subject"
             ]
@@ -796,6 +829,7 @@ mod tests {
                 "Merge into main",
                 "Cherry-pick onto main",
                 "Revert",
+                "New branch from bbbbbbb",
                 "Reset main to here, keeping changes",
                 "Reset main to here, discarding changes",
                 "Copy hash",

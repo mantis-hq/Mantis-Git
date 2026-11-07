@@ -194,6 +194,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   `git worktree add` that brings it back. The main worktree, the one on show and a locked
   one stay, and the menu says why. Git refuses to remove one with uncommitted changes,
   and the app never forces it. With one working tree the section isn't drawn.
+- New branch: a quiet "New branch" link ends the Branches heading, and branch, tag and
+  commit menus have "New branch from <name or hash>". Either opens a form at the top of the
+  sidebar (the sidebar opens if closed): a section label saying where the branch starts
+  ("New branch, starting at main"), a name input with the cursor in it, and quiet "Cancel"
+  and "Create <name>" buttons, never blue. Enter creates it. The new branch is checked out,
+  and the band under the header says how to undo it. A name git would refuse, or one
+  already taken, is explained in that band and nothing changes.
 - A branch row ends with its count against the default branch (`+2 −1`), then against
   the remote branch it tracks (`↑1 ↓2`: to push, to pull). Level or untracked shows nothing.
 

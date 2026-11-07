@@ -173,6 +173,8 @@ impl GraphView {
             cx.emit(SwitchWorktree(path.clone()));
         } else if let Command::OpenWorktreeInTab { path } = &command {
             cx.emit(OpenWorktreeInTab(path.clone()));
+        } else if let Command::NewBranch { start, label } = &command {
+            self.begin_new_branch(start.clone(), label.clone(), cx);
         } else if let Some(text) = copied_text(&command) {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
             self.notice = command
