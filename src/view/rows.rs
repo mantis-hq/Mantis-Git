@@ -8,11 +8,11 @@ use gitclient_core::branch::Dragged;
 use gitclient_core::git::{Chip, Commit, RefKind, split_subject};
 use gitclient_core::graph::{Lane, Row};
 use gitclient_core::spotlight::Spotlight;
-use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use std::ops::Range;
+use std::time::Duration;
 
 const ROW_HEIGHT: Pixels = px(32.);
 const LANE_WIDTH: f32 = 16.;
@@ -26,6 +26,8 @@ const CLIPPED_MARKER_RADIUS: f32 = 3.;
 const MAX_VISIBLE_REFS: usize = 1;
 /// Refs get their own column left of the graph, so subjects stay aligned.
 const REFS_WIDTH: f32 = 180.;
+/// Long enough to cross from a chip onto the card that lists its siblings.
+const REFS_CLOSE_DELAY: Duration = Duration::from_millis(150);
 /// How far things outside a spotlighted branch fade.
 const FADED_ROW: f32 = 0.28;
 const FADED_LINE: f32 = 0.16;
@@ -39,6 +41,118 @@ impl GraphView {
         lanes as f32 * LANE_WIDTH + GRAPH_PADDING * 2.
     }
 
+    /// The refs at a commit. A commit with more than one shows the first, and hovering opens
+    /// a card listing all of them, each of which can be dragged and right-clicked like the
+    /// chip itself.
+    fn render_refs_column(
+        &self,
+        index: usize,
+        chips: &[Chip<'_>],
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let theme = cx.theme();
+        let (panel, border, muted) = (theme.title_bar, theme.border, theme.muted_foreground);
+        let colors = ChipColors {
+            is_dark: theme.is_dark(),
+            head: theme.primary,
+            on_head: theme.primary_foreground,
+            tag: theme.warning,
+        };
+        let has_more = chips.len() > MAX_VISIBLE_REFS;
+        let open = has_more && self.hovered_refs == Some(index);
+
+        let first = chips
+            .iter()
+            .take(MAX_VISIBLE_REFS)
+            .enumerate()
+            .map(|(slot, chip)| chip_element(("chip", index * 1000 + slot), chip, &colors, cx))
+            .collect::<Vec<_>>();
+        let popover = open.then(|| {
+            let all = chips
+                .iter()
+                .enumerate()
+                .map(|(slot, chip)| {
+                    chip_element(("popover-chip", index * 1000 + slot), chip, &colors, cx)
+                })
+                .collect::<Vec<_>>();
+            deferred(
+                div()
+                    .id(("refs-popover", index))
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .v_flex()
+                    .items_start()
+                    .gap_1()
+                    .p_1()
+                    .min_w(px(REFS_WIDTH))
+                    .rounded(px(8.))
+                    .bg(panel)
+                    .border_1()
+                    .border_color(border)
+                    .occlude()
+                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                        this.popover_hovered = *hovered;
+                        if !hovered {
+                            this.leave_refs(index, cx);
+                        }
+                    }))
+                    .children(all),
+            )
+            .with_priority(5)
+        });
+
+        div()
+            .id(("refs", index))
+            .relative()
+            .w(px(REFS_WIDTH))
+            .h_full()
+            .flex_none()
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                if *hovered {
+                    if this.hovered_refs != Some(index) {
+                        this.hovered_refs = Some(index);
+                        cx.notify();
+                    }
+                } else {
+                    this.leave_refs(index, cx);
+                }
+            }))
+            .child(
+                div()
+                    .size_full()
+                    .h_flex()
+                    .gap_1p5()
+                    .overflow_hidden()
+                    .children(first)
+                    .when(has_more, |col| {
+                        col.child(
+                            div()
+                                .flex_none()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(format!("+{}", chips.len() - MAX_VISIBLE_REFS)),
+                        )
+                    }),
+            )
+            .children(popover)
+    }
+
+    /// Closes the refs card shortly after the pointer leaves, unless it moved onto the card.
+    pub(super) fn leave_refs(&mut self, index: usize, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(REFS_CLOSE_DELAY).await;
+            this.update(cx, |this, cx| {
+                if this.hovered_refs == Some(index) && !this.popover_hovered {
+                    this.hovered_refs = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     pub(super) fn render_rows(
         &self,
         range: Range<usize>,
@@ -47,9 +161,8 @@ impl GraphView {
         let theme = cx.theme();
         let is_dark = theme.is_dark();
         let (foreground, muted) = (theme.foreground, theme.muted_foreground);
+        let head = theme.primary;
         let (background, hover, active) = (theme.background, theme.list_hover, selected_row(theme));
-        let (head, on_head) = (theme.primary, theme.primary_foreground);
-        let warning = theme.warning;
         let subtext0 = tokens(is_dark).subtext0;
         let graph_width = self.graph_width();
 
@@ -92,54 +205,7 @@ impl GraphView {
                         this.click_row(index, event.modifiers(), cx);
                         window.focus(&this.focus, cx);
                     }))
-                    .child(
-                        div()
-                            .id(("refs", index))
-                            .w(px(REFS_WIDTH))
-                            .h_full()
-                            .flex_none()
-                            .h_flex()
-                            .gap_1p5()
-                            .overflow_hidden()
-                            .when(chips.len() > MAX_VISIBLE_REFS, |col| {
-                                let all = chips
-                                    .iter()
-                                    .map(|chip| chip.label.name.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                col.tooltip(move |window, cx| {
-                                    Tooltip::new(all.clone()).build(window, cx)
-                                })
-                            })
-                            .children(chips.iter().take(MAX_VISIBLE_REFS).map(|chip| {
-                                let label = chip.label;
-                                let lane = lane_color(label.color, is_dark);
-                                let element =
-                                    ref_label(("chip", index), chip, lane, head, on_head, warning);
-                                match label.kind {
-                                    // Not a name anything can be done to.
-                                    RefKind::DetachedHead => element,
-                                    kind => {
-                                        let color =
-                                            if kind == RefKind::Tag { warning } else { lane };
-                                        let target = Dragged {
-                                            kind,
-                                            name: label.name.clone(),
-                                        };
-                                        wire_ref(element, target, color, cx)
-                                    }
-                                }
-                            }))
-                            .when(chips.len() > MAX_VISIBLE_REFS, |col| {
-                                col.child(
-                                    div()
-                                        .flex_none()
-                                        .text_xs()
-                                        .text_color(muted)
-                                        .child(format!("+{}", chips.len() - MAX_VISIBLE_REFS)),
-                                )
-                            }),
-                    )
+                    .child(self.render_refs_column(index, &chips, cx))
                     .child(
                         div()
                             .w(px(graph_width))
@@ -234,6 +300,42 @@ fn format_when(commit: &Commit, now: i64) -> String {
         86_400..604_800 => date.format("%a").to_string(),
         _ if date.year() == today.year() => date.format("%b %-d").to_string(),
         _ => date.format("%Y").to_string(),
+    }
+}
+
+/// What chips are drawn with.
+struct ChipColors {
+    is_dark: bool,
+    head: Hsla,
+    on_head: Hsla,
+    tag: Hsla,
+}
+
+/// A chip that can be right-clicked and, unless HEAD is detached, dragged.
+fn chip_element(
+    id: impl Into<ElementId>,
+    chip: &Chip,
+    colors: &ChipColors,
+    cx: &mut Context<GraphView>,
+) -> Stateful<Div> {
+    let label = chip.label;
+    let lane = lane_color(label.color, colors.is_dark);
+    let element = ref_label(id, chip, lane, colors.head, colors.on_head, colors.tag);
+    match label.kind {
+        // Not a name anything can be done to.
+        RefKind::DetachedHead => element,
+        kind => {
+            let color = if kind == RefKind::Tag {
+                colors.tag
+            } else {
+                lane
+            };
+            let target = Dragged {
+                kind,
+                name: label.name.clone(),
+            };
+            wire_ref(element, target, color, cx)
+        }
     }
 }
 
