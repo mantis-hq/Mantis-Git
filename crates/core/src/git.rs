@@ -8,6 +8,7 @@ use crate::ops::{self, Process, git, stderr_message};
 use crate::status::{self, RepoStatus};
 use crate::text::count;
 use crate::working::{self, Version};
+use crate::worktree::{self, Worktree};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -182,6 +183,8 @@ pub struct Refs {
     pub tags: Vec<NamedRef>,
     /// Stash subjects, newest first.
     pub stashes: Vec<String>,
+    /// The repository's working trees, main one first. Empty when git can't say.
+    pub worktrees: Vec<Worktree>,
     /// How to lay out the graph for this repository.
     pub plan: Plan,
     /// The top of the working tree, or the repository itself when it is bare.
@@ -358,10 +361,13 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
     let workdir = toplevel.map(|path| PathBuf::from(path.trim_end()));
 
     let status = status::read(repo);
+    let workdir = workdir.unwrap_or_else(|| repo.to_owned());
+    let worktrees = worktree::list(repo, &workdir);
 
     let mut refs = Refs {
-        workdir: workdir.or_else(|| Some(repo.to_owned())),
-        fingerprint: format!("{listing}\0{head_ref:?}\0{head:?}\0{status:?}"),
+        fingerprint: format!("{listing}\0{head_ref:?}\0{head:?}\0{status:?}\0{worktrees:?}"),
+        workdir: Some(workdir),
+        worktrees,
         status,
         ..Refs::default()
     };

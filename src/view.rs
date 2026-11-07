@@ -134,6 +134,12 @@ pub struct GraphView {
     _activation: Subscription,
 }
 
+/// Asks whoever holds this view to show another working tree of the same repository: the
+/// tab already on it, or a new one.
+pub struct SwitchWorktree(pub PathBuf);
+
+impl EventEmitter<SwitchWorktree> for GraphView {}
+
 impl GraphView {
     /// A view with no repository open. Call [`GraphView::open`] to show one.
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -164,7 +170,7 @@ impl GraphView {
             busy: None,
             notice: None,
             confirm: None,
-            sidebar: Default::default(),
+            sidebar: sidebar::State::new(),
             inspector: Default::default(),
             diff: Default::default(),
             commit: Default::default(),

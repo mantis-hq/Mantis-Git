@@ -1,9 +1,9 @@
 //! The branch sidebar. Clicking a branch spotlights its history in the graph.
 
-use super::GraphView;
 use super::menu::wire_ref;
 use super::parts::{TEXT_CHIP, TEXT_SMALL};
 use super::parts::{panel_row, section_label};
+use super::{GraphView, SwitchWorktree};
 use crate::theme::{lane_color, tokens};
 use gitclient_core::branch::Dragged;
 use gitclient_core::git::{NamedRef, RefKind};
@@ -14,6 +14,7 @@ use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -23,6 +24,7 @@ pub(super) const WIDE_WINDOW: Pixels = px(1500.);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Section {
+    Worktrees,
     Remotes,
     Tags,
     Stashes,
@@ -68,6 +70,16 @@ pub(super) struct State {
     expanded: Vec<Section>,
     /// Folders the user closed, as `<list>/<path>`. Folders start open.
     closed_folders: Vec<String>,
+}
+
+impl State {
+    pub(super) fn new() -> Self {
+        Self {
+            // Worktrees are few and each is a place to go, so they start shown.
+            expanded: vec![Section::Worktrees],
+            ..Self::default()
+        }
+    }
 }
 
 /// One visible row of a ref list that groups `feat/x` under a `feat` folder.
@@ -189,6 +201,11 @@ fn toggle<T: PartialEq>(list: &mut Vec<T>, item: T) {
 impl GraphView {
     pub(super) fn sidebar_is_open(&self) -> bool {
         self.sidebar.open.unwrap_or(self.sidebar.window_is_wide)
+    }
+
+    /// Switches to another working tree, which the window's tabs take care of.
+    fn switch_worktree(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        cx.emit(SwitchWorktree(path));
     }
 
     pub(super) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
@@ -411,6 +428,7 @@ impl GraphView {
             })
             .collect();
         let branches = self.render_tree("branches", &leaves, cx);
+        let worktrees = self.render_worktrees(cx);
         let remotes = self.render_section(Section::Remotes, "Remotes", &self.refs.remotes, cx);
         let tags = self.render_section(Section::Tags, "Tags", &self.refs.tags, cx);
         let stashes = self.render_stashes(cx);
@@ -467,6 +485,7 @@ impl GraphView {
                             div()
                                 .v_flex()
                                 .gap(px(2.))
+                                .child(worktrees)
                                 .child(remotes)
                                 .child(tags)
                                 .child(stashes),
@@ -567,6 +586,71 @@ impl GraphView {
         } else {
             Vec::new()
         };
+        div().v_flex().gap(px(2.)).child(header).children(rows)
+    }
+
+    /// The repository's working trees, when it has more than the one. Picking another
+    /// opens it, in the tab already on it or a new one.
+    fn render_worktrees(&self, cx: &mut Context<Self>) -> Div {
+        let trees = &self.refs.worktrees;
+        if trees.len() < 2 {
+            return div();
+        }
+        let open = self.sidebar.expanded.contains(&Section::Worktrees);
+        let header = self.render_section_header(Section::Worktrees, "Worktrees", trees.len(), cx);
+        let is_dark = cx.theme().is_dark();
+        let theme = cx.theme();
+        let (muted, text, strong) = (
+            theme.muted_foreground,
+            theme.secondary_foreground,
+            theme.foreground,
+        );
+        let rows = trees
+            .iter()
+            .enumerate()
+            .filter(|_| open)
+            .map(|(index, tree)| {
+                let color = match &tree.branch {
+                    Some(branch) => lane_color(self.refs.branch_color(branch), is_dark),
+                    None => muted,
+                };
+                let unavailable = tree.unavailable();
+                let path = tree.path.clone();
+                let mut detail = tree.detail();
+                if tree.locked {
+                    detail.push_str(" · locked");
+                }
+                let row =
+                    panel_row(("worktree", index), tree.is_current, cx)
+                        .h(px(30.))
+                        .pl(indent(0))
+                        .when(unavailable.is_some(), |row| {
+                            row.opacity(0.5).cursor_default()
+                        })
+                        .when(!tree.is_current && unavailable.is_none(), |row| {
+                            row.on_click(cx.listener(move |this, _, _, cx| {
+                                this.switch_worktree(path.clone(), cx)
+                            }))
+                        });
+                row.child(div().size(px(8.)).flex_none().rounded_full().bg(color))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(if tree.is_current { strong } else { text })
+                            .when(tree.is_current, |name| name.font_semibold())
+                            .child(tree.label()),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(TEXT_CHIP)
+                            .text_color(muted)
+                            .child(unavailable.map_or(detail, str::to_owned)),
+                    )
+            });
         div().v_flex().gap(px(2.)).child(header).children(rows)
     }
 

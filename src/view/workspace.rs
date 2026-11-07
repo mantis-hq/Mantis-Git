@@ -6,7 +6,7 @@
 
 use super::dock::{Dock, NewTerminal, ToggleDock};
 use super::parts::TEXT_BODY;
-use super::{GraphView, parts, repository_name};
+use super::{GraphView, SwitchWorktree, parts, repository_name};
 use gpui_kit::component::button::*;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
@@ -48,12 +48,14 @@ pub struct Workspace {
 impl Workspace {
     /// A workspace with one empty tab.
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let first = cx.new(|cx| GraphView::new(window, cx));
-        Self {
-            tabs: vec![first],
+        let mut this = Self {
+            tabs: Vec::new(),
             active: 0,
             dock: cx.new(Dock::new),
-        }
+        };
+        let first = this.make_tab(window, cx);
+        this.tabs.push(first);
+        this
     }
 
     pub fn dock(&self) -> &Entity<Dock> {
@@ -80,6 +82,18 @@ impl Workspace {
         let directory = self.tabs[self.active].read(cx).workdir();
         self.dock
             .update(cx, |dock, _| dock.set_directory(directory.as_deref()));
+    }
+
+    /// A tab with no repository, which listens for asks to switch to another worktree.
+    fn make_tab(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<GraphView> {
+        let view = cx.new(|cx| GraphView::new(window, cx));
+        cx.subscribe_in(
+            &view,
+            window,
+            |this, _, event: &SwitchWorktree, window, cx| this.open(event.0.clone(), window, cx),
+        )
+        .detach();
+        view
     }
 
     /// Opens `repo` in a tab: the one already showing it, else the active tab if that is
@@ -126,7 +140,7 @@ impl Workspace {
     }
 
     pub fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let view = cx.new(|cx| GraphView::new(window, cx));
+        let view = self.make_tab(window, cx);
         self.tabs.insert(self.active + 1, view);
         self.activate(self.active + 1, window, cx);
     }
@@ -137,7 +151,7 @@ impl Workspace {
         }
         if self.tabs.len() == 1 {
             // The last tab empties instead of closing, so the window never has nothing.
-            self.tabs[0] = cx.new(|cx| GraphView::new(window, cx));
+            self.tabs[0] = self.make_tab(window, cx);
             self.activate(0, window, cx);
             return;
         }
@@ -442,6 +456,35 @@ mod tests {
             state(&view, &cx),
             (2, 0),
             "switches to the tab already showing it"
+        );
+    }
+
+    #[gpui_kit::test]
+    fn switching_worktree_opens_it_in_a_tab_and_returns_to_the_tab_it_already_has(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::view::SwitchWorktree;
+        let (view, mut cx) = open_workspace(cx);
+        let (main, linked) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let path = main.path().to_owned();
+        view.update_in(&mut cx, |view, window, cx| view.open(path, window, cx));
+        let first = view.read_with(&cx, |view, _| view.active_view().clone());
+
+        let to = linked.path().to_owned();
+        first.update(&mut cx, |_, cx| cx.emit(SwitchWorktree(to)));
+        assert_eq!(
+            state(&view, &cx),
+            (2, 1),
+            "the linked tree gets its own tab"
+        );
+
+        let back = main.path().to_owned();
+        let second = view.read_with(&cx, |view, _| view.active_view().clone());
+        second.update(&mut cx, |_, cx| cx.emit(SwitchWorktree(back)));
+        assert_eq!(
+            state(&view, &cx),
+            (2, 0),
+            "and the first tab is shown again"
         );
     }
 }

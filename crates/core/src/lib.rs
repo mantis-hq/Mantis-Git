@@ -22,3 +22,4 @@ pub mod terminal;
 pub mod testing;
 pub mod text;
 pub mod working;
+pub mod worktree;

@@ -169,6 +169,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   refs opens a menu for all of them ("Delete 3 branches"), which asks first and lists the
   command to bring each back. A checked-out branch and remote branches stay, and the menu
   says so.
+- Worktrees: when a repository has more than one working tree, the sidebar lists them
+  under "Worktrees", open by default, between Branches and Remotes. A row is the folder's
+  name, then its branch (or `detached at <hash>`) in Overlay 2, with a dot in that
+  branch's colour. The one on show is selected and semibold. Clicking another switches to
+  it: the tab already on it, else a new tab, like opening a repository. A worktree whose
+  folder is gone is dimmed and says so. With one working tree the section isn't drawn.
 - A branch row ends with its count against the default branch (`+2 −1`), then against
   the remote branch it tracks (`↑1 ↓2`: to push, to pull). Level or untracked shows nothing.
 
