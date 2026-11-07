@@ -509,6 +509,20 @@ mod tests {
         });
     }
 
+    #[gpui_kit::test]
+    fn wide_histories_stop_growing_the_graph_at_eight_lanes(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_view(cx);
+        load(&view, &["a"], &mut cx);
+        view.update(&mut cx, |view, _| {
+            view.max_columns = 259;
+            let eight = view.graph_width();
+            view.max_columns = 9;
+            assert_eq!(view.graph_width(), eight);
+            view.max_columns = 7;
+            assert!(view.graph_width() < eight);
+        });
+    }
+
     fn load(view: &Entity<GraphView>, names: &[&str], cx: &mut VisualTestContext) {
         view.update(cx, |view, cx| {
             view.status = Status::Loading;

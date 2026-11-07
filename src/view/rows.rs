@@ -18,8 +18,9 @@ pub(super) const MIN_GRAPH_WIDTH: f32 = 56.;
 const LINE_WIDTH: f32 = 1.75;
 const NODE_RADIUS: f32 = 4.;
 /// Wider graphs are clipped, so that a few hundred stale branches can't push the text out
-/// of the window.
-const MAX_VISIBLE_LANES: u32 = 24;
+/// of the window. Rows with a commit past the edge show a marker there instead.
+const MAX_VISIBLE_LANES: u32 = 8;
+const CLIPPED_MARKER_RADIUS: f32 = 3.;
 const MAX_VISIBLE_REFS: usize = 3;
 
 const AUTHOR_WIDTH: Pixels = px(150.);
@@ -263,6 +264,20 @@ fn paint_row(
         );
     }
 
+    if is_clipped(row) {
+        let edge = bounds.right() - px(CLIPPED_MARKER_RADIUS + 1.);
+        paint_circle(
+            edge,
+            middle,
+            CLIPPED_MARKER_RADIUS + 1.5,
+            node.hollow,
+            window,
+        );
+        let color = lane_color(row.color, is_dark);
+        paint_circle(edge, middle, CLIPPED_MARKER_RADIUS, color, window);
+        return;
+    }
+
     if node.is_head {
         paint_circle(node_x, middle, NODE_RADIUS + 3., node.head, window);
         paint_circle(node_x, middle, NODE_RADIUS + 1.5, node.hollow, window);
@@ -279,6 +294,11 @@ fn paint_row(
     if node.is_merge {
         paint_circle(node_x, middle, NODE_RADIUS - 1.75, node.hollow, window);
     }
+}
+
+/// Whether a row's commit lands past the visible lanes, where its dot can't be seen.
+fn is_clipped(row: &Row) -> bool {
+    row.column >= MAX_VISIBLE_LANES
 }
 
 fn paint_vertical(
@@ -318,4 +338,22 @@ fn paint_circle(x: Pixels, y: Pixels, radius: f32, color: Hsla, window: &mut Win
     let radius = px(radius);
     let bounds = Bounds::from_corners(point(x - radius, y - radius), point(x + radius, y + radius));
     window.paint_quad(fill(bounds, color).corner_radii(radius));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_VISIBLE_LANES, is_clipped};
+    use crate::graph::GraphBuilder;
+    use std::sync::Arc;
+
+    #[test]
+    fn only_commits_past_the_last_visible_lane_are_clipped() {
+        let mut builder = GraphBuilder::new();
+        let parents: [Arc<str>; 1] = ["root".into()];
+        let rows: Vec<_> = (0..MAX_VISIBLE_LANES + 1)
+            .map(|tip| builder.push(&tip.to_string(), &parents))
+            .collect();
+        assert!(!is_clipped(&rows[MAX_VISIBLE_LANES as usize - 1]));
+        assert!(is_clipped(&rows[MAX_VISIBLE_LANES as usize]));
+    }
 }
