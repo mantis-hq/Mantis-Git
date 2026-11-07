@@ -4,14 +4,13 @@
 //! (reftables, SHA-256, partial clones, the commit-graph cache) without a libgit2 build.
 
 use crate::graph::{GraphBuilder, LaneColor, Plan, Row};
-use crate::ops::{self, git, stderr_message};
+use crate::ops::{self, Process, git, stderr_message};
 use crate::status::{self, RepoStatus};
 use crate::text::count;
 use crate::working::{self, Version};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Stdio};
 use std::sync::Arc;
 use std::thread;
 
@@ -614,32 +613,22 @@ fn stream_commits(
         return Ok(());
     }
 
-    let mut child = git(repo)
-        .args([
-            "log",
-            "--stdin",
-            "--topo-order",
-            "--encoding=UTF-8",
-            "--no-color",
-            // log.showSignature would otherwise mix gpg output into the records.
-            "--no-show-signature",
-            "--format=%H%x00%P%x00%aN%x00%at%x00%s",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("could not run git: {error}"))?;
-    let guard = KillOnDrop(&mut child);
+    let mut command = git(repo);
+    command.args([
+        "log",
+        "--stdin",
+        "--topo-order",
+        "--encoding=UTF-8",
+        "--no-color",
+        // log.showSignature would otherwise mix gpg output into the records.
+        "--no-show-signature",
+        "--format=%H%x00%P%x00%aN%x00%at%x00%s",
+    ]);
+    // Dropping the process, as every early return below does, stops git.
+    let mut process = Process::spawn(&mut command, true)?;
 
-    let mut stdin = guard.0.stdin.take().expect("stdin is piped");
-    let stdout = guard.0.stdout.take().expect("stdout is piped");
-    let mut stderr = guard.0.stderr.take().expect("stderr is piped");
-    let stderr = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stderr.read_to_end(&mut bytes);
-        bytes
-    });
+    let mut stdin = process.stdin.take().expect("stdin is piped");
+    let stdout = process.stdout.take().expect("stdout is piped");
 
     // git reads all of stdin before it writes anything, so this can't deadlock. If git
     // quits early the write fails, and its exit status is what gets reported below.
@@ -649,6 +638,7 @@ fn stream_commits(
     let mut reader = BufReader::with_capacity(1 << 16, stdout);
     let mut line = Vec::new();
     let mut batch = Vec::with_capacity(BATCH_SIZE);
+    let mut total = 0;
     loop {
         line.clear();
         let read = reader
@@ -658,40 +648,27 @@ fn stream_commits(
             break;
         }
         batch.push(parse_commit(&line)?);
-        if batch.len() == BATCH_SIZE
-            && !sink(std::mem::replace(
+        if batch.len() == BATCH_SIZE {
+            total += batch.len();
+            // The records are not worth printing, so the log shows progress instead.
+            process.note(&format!("{} read", count(total as u32, "commit")));
+            if !sink(std::mem::replace(
                 &mut batch,
                 Vec::with_capacity(BATCH_SIZE),
-            ))
-        {
-            return Ok(());
+            )) {
+                return Ok(());
+            }
         }
     }
+    total += batch.len();
     if !batch.is_empty() && !sink(batch) {
         return Ok(());
     }
+    process.note(&format!("{} read", count(total as u32, "commit")));
 
-    let status = guard
-        .0
-        .wait()
-        .map_err(|error| format!("could not wait for git: {error}"))?;
-    let stderr = stderr.join().unwrap_or_default();
-    if status.success() {
-        Ok(())
-    } else {
-        Err(stderr_message(&stderr))
-    }
-}
-
-/// Stops `git` when a load is abandoned partway through.
-struct KillOnDrop<'a>(&'a mut Child);
-
-impl Drop for KillOnDrop<'_> {
-    fn drop(&mut self) {
-        if matches!(self.0.try_wait(), Ok(None)) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
+    match process.finish()? {
+        (true, _) => Ok(()),
+        (false, stderr) => Err(stderr_message(&stderr)),
     }
 }
 
@@ -715,7 +692,7 @@ fn parse_commit(line: &[u8]) -> Result<Commit, String> {
 mod tests {
     use super::*;
     use crate::testing::{AUTHOR, Repo};
-    use std::process::Command;
+    use std::process::{Command, Stdio};
     use tempfile::TempDir;
 
     fn load_all(repo: &Path) -> (Option<Arc<Refs>>, Vec<Entry>, Option<String>) {

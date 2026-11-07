@@ -4,7 +4,8 @@
 //! commits stay as they were when you switch away. The strip only appears once there
 //! are two tabs, since one tab is a control that does nothing.
 
-use super::{GraphView, repository_name};
+use super::dock::{Dock, NewTerminal, ToggleDock};
+use super::{GraphView, parts, repository_name};
 use gpui_kit::component::button::*;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
@@ -40,6 +41,7 @@ pub(super) fn bind_workspace_keys(cx: &mut App) {
 pub struct Workspace {
     tabs: Vec<Entity<GraphView>>,
     active: usize,
+    dock: Entity<Dock>,
 }
 
 impl Workspace {
@@ -49,7 +51,34 @@ impl Workspace {
         Self {
             tabs: vec![first],
             active: 0,
+            dock: cx.new(Dock::new),
         }
+    }
+
+    pub fn dock(&self) -> &Entity<Dock> {
+        &self.dock
+    }
+
+    /// Shows or hides the dock. Hiding hands the keyboard back to the repository.
+    fn toggle_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.dock.update(cx, |dock, cx| dock.toggle(window, cx));
+        if !self.dock.read(cx).is_open() {
+            let focus = self.tabs[self.active].read(cx).focus_handle().clone();
+            window.focus(&focus, cx);
+        }
+    }
+
+    fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_dock_directory(cx);
+        self.dock
+            .update(cx, |dock, cx| dock.new_terminal(window, cx));
+    }
+
+    /// New terminals start in the folder of the repository on show.
+    fn sync_dock_directory(&self, cx: &mut Context<Self>) {
+        let directory = self.tabs[self.active].read(cx).workdir();
+        self.dock
+            .update(cx, |dock, _| dock.set_directory(directory.as_deref()));
     }
 
     /// Opens `repo` in a tab: the one already showing it, else the active tab if that is
@@ -200,33 +229,13 @@ impl Workspace {
     }
 
     fn render_tab(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
-        let selected = crate::theme::selected_row(theme);
-        let (text, muted) = (theme.foreground, theme.muted_foreground);
-        let active = index == self.active;
         let path = self.tabs[index]
             .read(cx)
             .repository()
             .map(|path| path.display().to_string());
         let name = self.tab_name(index, cx);
 
-        div()
-            .id(("tab", index))
-            .h_flex()
-            .h(px(28.))
-            .max_w(px(220.))
-            .pl_3()
-            .pr_1()
-            .gap_1()
-            .items_center()
-            .rounded(px(6.))
-            .cursor_pointer()
-            .text_sm()
-            .when(active, |tab| tab.bg(selected).text_color(text))
-            .when(!active, |tab| {
-                tab.text_color(muted)
-                    .hover(|tab| tab.bg(selected.opacity(0.5)))
-            })
+        parts::tab(("tab", index), index == self.active, cx)
             .on_click(cx.listener(move |this, _, window, cx| this.activate(index, window, cx)))
             .when_some(path, |tab, path| {
                 tab.tooltip(move |window, cx| Tooltip::new(path.clone()).build(window, cx))
@@ -258,29 +267,45 @@ impl Render for Workspace {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let background = cx.theme().background;
         let strip = (self.tabs.len() > 1).then(|| self.render_strip(cx));
+        self.sync_dock_directory(cx);
         div()
             .v_flex()
             .size_full()
             .bg(background)
-            .key_context(WORKSPACE_CONTEXT)
-            .on_action(cx.listener(|this, _: &NewTab, window, cx| this.new_tab(window, cx)))
+            .on_action(cx.listener(|this, _: &ToggleDock, window, cx| this.toggle_dock(window, cx)))
             .on_action(
-                cx.listener(|this, _: &CloseTab, window, cx| {
-                    this.close_tab(this.active, window, cx)
-                }),
+                cx.listener(|this, _: &NewTerminal, window, cx| this.new_terminal(window, cx)),
             )
-            .on_action(cx.listener(|this, _: &NextTab, window, cx| this.step(1, window, cx)))
-            .on_action(cx.listener(|this, _: &PreviousTab, window, cx| this.step(-1, window, cx)))
-            .on_action(
-                cx.listener(|this, _: &OpenRepositoryInTab, window, cx| this.prompt(window, cx)),
-            )
-            .children(strip)
             .child(
+                // The tab shortcuts live here and not on the window, so that a terminal
+                // below keeps Ctrl W and Ctrl T for the shell.
                 div()
+                    .v_flex()
                     .flex_1()
                     .min_h_0()
-                    .child(self.tabs[self.active].clone()),
+                    .key_context(WORKSPACE_CONTEXT)
+                    .on_action(cx.listener(|this, _: &NewTab, window, cx| this.new_tab(window, cx)))
+                    .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
+                        this.close_tab(this.active, window, cx)
+                    }))
+                    .on_action(
+                        cx.listener(|this, _: &NextTab, window, cx| this.step(1, window, cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &PreviousTab, window, cx| this.step(-1, window, cx)),
+                    )
+                    .on_action(cx.listener(|this, _: &OpenRepositoryInTab, window, cx| {
+                        this.prompt(window, cx)
+                    }))
+                    .children(strip)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .child(self.tabs[self.active].clone()),
+                    ),
             )
+            .child(self.dock.clone())
     }
 }
 
@@ -317,6 +342,54 @@ mod tests {
         assert_eq!(state(&view, &cx), (2, 1));
         cx.simulate_keystrokes("ctrl-t");
         assert_eq!(state(&view, &cx), (3, 2));
+    }
+
+    fn dock_state(view: &Entity<Workspace>, cx: &VisualTestContext) -> (bool, usize, usize) {
+        view.read_with(cx, |view, cx| {
+            let dock = view.dock().read(cx);
+            (dock.is_open(), dock.terminal_count(), dock.active_tab())
+        })
+    }
+
+    #[gpui_kit::test]
+    fn the_dock_toggles_with_its_key_and_opens_on_the_log(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_workspace(cx);
+        assert_eq!(dock_state(&view, &cx), (false, 0, 0), "starts closed");
+        cx.simulate_keystrokes("ctrl-`");
+        assert_eq!(dock_state(&view, &cx), (true, 0, 0));
+        cx.simulate_keystrokes("ctrl-`");
+        assert_eq!(dock_state(&view, &cx), (false, 0, 0));
+    }
+
+    #[cfg(unix)]
+    #[gpui_kit::test]
+    fn a_terminal_keeps_the_keys_the_shell_needs_and_closes_from_its_tab(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_workspace(cx);
+        cx.simulate_keystrokes("ctrl-t");
+        cx.simulate_keystrokes("ctrl-shift-`");
+        assert_eq!(
+            dock_state(&view, &cx),
+            (true, 1, 1),
+            "opens on the new terminal"
+        );
+
+        // Ctrl W deletes a word in a shell. It must not close the repository tab.
+        cx.simulate_keystrokes("ctrl-w");
+        assert_eq!(state(&view, &cx), (2, 1));
+
+        // Hiding the dock gives the repository its shortcuts back.
+        cx.simulate_keystrokes("ctrl-`");
+        cx.simulate_keystrokes("ctrl-w");
+        assert_eq!(state(&view, &cx), (1, 0));
+
+        view.update_in(&mut cx, |view, window, cx| {
+            view.dock().update(cx, |dock, cx| dock.show(0, window, cx));
+        });
+        assert_eq!(
+            dock_state(&view, &cx),
+            (true, 1, 0),
+            "the log is always first"
+        );
     }
 
     #[gpui_kit::test]

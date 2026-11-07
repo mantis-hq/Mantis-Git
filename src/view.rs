@@ -4,6 +4,7 @@
 mod commit_screen;
 mod conflict_screen;
 mod diff;
+mod dock;
 mod header;
 mod inspector;
 mod menu;
@@ -12,6 +13,7 @@ mod parts;
 mod rows;
 mod settings;
 mod sidebar;
+mod terminal;
 mod workspace;
 
 pub use settings::{OpenSettings, should_quit};
@@ -52,6 +54,7 @@ actions!(
 pub fn bind_keys(cx: &mut App) {
     workspace::bind_workspace_keys(cx);
     settings::bind_keys(cx);
+    dock::bind_keys(cx);
     // KeyBinding::new has no OS to resolve a `secondary-` modifier against, and panics.
     let (refresh, sidebar) = if cfg!(target_os = "macos") {
         ("cmd-r", "cmd-b")

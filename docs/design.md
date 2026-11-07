@@ -112,6 +112,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   sit in Mantle cards (8 px radius) grouped under section labels. A choice is a row of
   chips, the picked one with a tick and the Surface 0 fill, never blue. Closing settings
   leaves the app open; closing the main window quits it.
+- Dock: a 36 px Mantle bar along the bottom of the window with a 1 px Surface 0 top
+  border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
+  under the bar, so history stays in view. `Ctrl \`` shows and hides it, and
+  `Ctrl Shift \`` opens a terminal. Closed, the bar still says which command is running
+  and for how long, so a slow command is never a silent wait.
 - Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide. Rows have no
   column headings or hash: the refs column, the graph, the subject, then author and a short time
   ("12m", "3h", "Tue", "Oct 30"). The full hash belongs to the inspector.
@@ -166,6 +171,21 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   choice between the two sides.
 - **Files:** a status letter, then the path with its folder muted, then `+n −n`.
 - **Diffs:** added and removed lines use a 10% green or red wash. Text stays Text.
+- **Dock tabs:** the bar holds tabs like the repository tabs, the same 28 px quiet button.
+  The first is always the **Log**, then one per terminal, a `+` to open another, and
+  `Clear` and `Hide` at the right. Terminals start in the repository's folder and keep
+  their number as others close.
+- **Log:** each git command as the app ran it, after a muted `$`, in weight 600 and Text
+  colour, and how it stands at the right in words: `running · 12s`, `exit 0 · 0.2s` in
+  Green, `exit 128 · 0.2s` in Red. Its output sits under it as it arrives, stdout in
+  Subtext 0, stderr in Overlay 2, and in Red when the command failed. It keeps to the
+  newest line unless you scroll up.
+- **Terminal:** code type on Mantle. The cursor is a Blue block with Crust text and shows
+  only while the terminal has focus. Colours the shell asks for by number use Catppuccin's
+  terminal mapping: black Surface 1, red, green, yellow, blue, Pink for magenta, Teal for
+  cyan, white Subtext 1, and the bright set is the same but for Surface 2 as bright black
+  and Subtext 0 as bright white. Latte takes the same-named Latte values. The 256-colour
+  cube and the grey ramp are the standard ones, since programs rely on them.
 - **Focus:** every control shows a 2 px blue focus ring, and each action has a key.
 
 ## In code

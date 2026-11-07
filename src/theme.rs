@@ -93,10 +93,57 @@ pub fn lane_color(color: LaneColor, is_dark: bool) -> Hsla {
     }
 }
 
+/// Catppuccin's terminal colours: black, red, green, yellow, blue, pink, teal, white, then
+/// the bright set.
+const DARK_ANSI: [u32; 16] = [
+    0x45475a, 0xf38ba8, 0xa6e3a1, 0xf9e2af, 0x89b4fa, 0xf5c2e7, 0x94e2d5, 0xbac2de, 0x585b70,
+    0xf38ba8, 0xa6e3a1, 0xf9e2af, 0x89b4fa, 0xf5c2e7, 0x94e2d5, 0xa6adc8,
+];
+const LIGHT_ANSI: [u32; 16] = [
+    0x5c5f77, 0xd20f39, 0x40a02b, 0xdf8e1d, 0x1e66f5, 0xea76cb, 0x179299, 0xacb0be, 0x6c6f85,
+    0xd20f39, 0x40a02b, 0xdf8e1d, 0x1e66f5, 0xea76cb, 0x179299, 0xbcc0cc,
+];
+
+/// A colour a terminal program asked for by number. The first 16 are the theme's; the rest
+/// are the standard 6×6×6 cube and grey ramp, which programs rely on being the same
+/// everywhere.
+pub fn ansi_color(index: u8, is_dark: bool) -> Hsla {
+    let named = if is_dark { DARK_ANSI } else { LIGHT_ANSI };
+    match index {
+        0..=15 => rgb(named[index as usize]).into(),
+        16..=231 => {
+            let cube = index - 16;
+            let level = |n: u8| if n == 0 { 0 } else { 55 + 40 * n as u32 };
+            let (r, g, b) = (level(cube / 36), level(cube / 6 % 6), level(cube % 6));
+            rgb(r << 16 | g << 8 | b).into()
+        }
+        _ => {
+            let grey = 8 + 10 * (index as u32 - 232);
+            rgb(grey << 16 | grey << 8 | grey).into()
+        }
+    }
+}
+
+/// A colour a terminal program asked for by its red, green and blue.
+pub fn rgb_color(red: u8, green: u8, blue: u8) -> Hsla {
+    rgb((red as u32) << 16 | (green as u32) << 8 | blue as u32).into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gpui_kit::TestAppContext;
+
+    #[test]
+    fn terminal_colours_use_the_theme_then_the_standard_cube() {
+        assert_eq!(ansi_color(1, true), color(0xf38ba8));
+        assert_eq!(ansi_color(1, false), color(0xd20f39));
+        assert_eq!(ansi_color(16, true), color(0x000000));
+        assert_eq!(ansi_color(196, true), color(0xff0000));
+        assert_eq!(ansi_color(231, true), color(0xffffff));
+        assert_eq!(ansi_color(232, true), color(0x080808));
+        assert_eq!(rgb_color(1, 2, 3), color(0x010203));
+    }
     use gpui_kit::component::ThemeMode;
 
     fn color(hex: u32) -> Hsla {

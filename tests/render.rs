@@ -268,11 +268,110 @@ mod render {
         capture(&mut cx, handle, "conflict");
     }
 
+    /// The dock over a loaded repository: the log with the commands that loaded it, then a
+    /// terminal that has run something.
+    fn assert_dock_shows_the_log_and_a_terminal() {
+        use gitclient::view::Workspace;
+        use image::GenericImageView as _;
+        let repo = fixture();
+        let mut cx = app(ThemeMode::Dark);
+        let path = repo.path().to_owned();
+        let (handle, workspace) = cx
+            .update(|cx| {
+                let bounds = Bounds {
+                    origin: Default::default(),
+                    size: size(px(1200.), px(800.)),
+                };
+                let options = WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                };
+                gpui_kit::open_window(options, cx, |window, cx| {
+                    cx.new(|cx| {
+                        let mut workspace = Workspace::new(window, cx);
+                        workspace.open(path, window, cx);
+                        workspace
+                    })
+                })
+            })
+            .expect("window opens");
+        cx.allow_parking();
+        wait_for(&mut cx, |cx| {
+            cx.update(|cx| {
+                let view = workspace.read(cx).active_view().clone();
+                *view.read(cx).status() == Status::Loaded
+            })
+        });
+
+        // Loading the repository logged pages of diff. A short log shows how it reads.
+        gitclient_core::log::clear();
+        gitclient_core::ops::run(repo.path(), &["status", "--short", "--branch"]).unwrap();
+        assert!(gitclient_core::ops::run(repo.path(), &["rev-parse", "no-such-ref"]).is_err());
+        cx.update_window(handle, |_, window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace
+                    .dock()
+                    .update(cx, |dock, cx| dock.show(0, window, cx))
+            })
+        })
+        .unwrap();
+        let log = capture(&mut cx, handle, "dock-log");
+
+        cx.update_window(handle, |_, window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace
+                    .dock()
+                    .update(cx, |dock, cx| dock.new_terminal(window, cx))
+            })
+        })
+        .unwrap();
+        let terminal = cx
+            .update(|cx| {
+                let dock = workspace.read(cx).dock().read(cx);
+                dock.active_terminal().cloned()
+            })
+            .expect("a terminal opened");
+        cx.update(|cx| {
+            terminal
+                .read(cx)
+                .terminal()
+                .expect("the shell started")
+                .write(b"git log --oneline -3; echo ready\r")
+        });
+        wait_for(&mut cx, |cx| {
+            cx.update(|cx| {
+                let snapshot = terminal.read(cx).terminal().unwrap().snapshot();
+                snapshot
+                    .rows
+                    .iter()
+                    .flatten()
+                    .any(|run| run.text.contains("ready"))
+            })
+        });
+        let shell = capture(&mut cx, handle, "dock-terminal");
+
+        // The dock is the bottom of the window: the terminal must replace the log there.
+        let bottom = |frame: &image::RgbaImage| {
+            let top = frame.height() * 3 / 4;
+            frame
+                .view(0, top, frame.width(), frame.height() - top)
+                .to_image()
+        };
+        assert_ne!(
+            bottom(&log),
+            bottom(&shell),
+            "the terminal replaces the log"
+        );
+    }
+
     pub fn run() {
         assert_conflict_screen_opens();
         assert_working_changes_lead_to_the_commit_screen();
         assert_draws_lanes(ThemeMode::Dark, "graph-dark");
         assert_draws_lanes(ThemeMode::Light, "graph-light");
+        assert_dock_shows_the_log_and_a_terminal();
         println!("render: passed (real offscreen renderer)");
     }
 }
