@@ -10,8 +10,11 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// Entries kept. Older ones are dropped first.
-const MAX_ENTRIES: usize = 500;
+/// Commands kept. Older ones are dropped first.
+const MAX_ENTRIES: usize = 50;
+/// Tests share the one log while running side by side, and each reads back what it wrote.
+/// Trimming is tested on a log of its own, with the real limit.
+const KEPT: usize = if cfg!(test) { 1_000_000 } else { MAX_ENTRIES };
 /// Lines kept per command, so that a huge diff can't fill memory.
 const MAX_LINES: usize = 1000;
 /// Characters kept per line.
@@ -48,6 +51,8 @@ pub struct Entry {
     pub repo: PathBuf,
     /// The command line as the app ran it.
     pub command: String,
+    /// What the command does, without the repository it ran in: "status --short".
+    pub title: String,
     pub started: Instant,
     pub state: State,
     pub lines: Vec<Line>,
@@ -65,6 +70,19 @@ impl Entry {
         match &self.state {
             State::Running => self.started.elapsed(),
             State::Done { took, .. } => *took,
+        }
+    }
+
+    /// A short form for a list: "running", how long it took, or why it failed.
+    pub fn brief(&self) -> String {
+        match &self.state {
+            State::Running => "running".to_owned(),
+            State::Done {
+                success: true,
+                took,
+                ..
+            } => format_duration(*took),
+            State::Done { status, .. } => status.clone(),
         }
     }
 
@@ -142,6 +160,19 @@ impl Log {
     fn clear_finished(&mut self) {
         self.entries.retain(Entry::is_running);
     }
+
+    /// Keeps the newest `max`, dropping the oldest finished ones first so that a command
+    /// still running is never the one forgotten.
+    fn trim(&mut self, max: usize) {
+        let mut extra = self.entries.len().saturating_sub(max);
+        self.entries.retain(|entry| {
+            if extra > 0 && !entry.is_running() {
+                extra -= 1;
+                return false;
+            }
+            true
+        });
+    }
 }
 
 /// A command being recorded.
@@ -152,6 +183,7 @@ pub struct Handle(u64);
 pub fn start(command: &Command) -> Handle {
     let repo = repository_of(command);
     let text = format_command(command);
+    let title = title_of(command);
     with(|log| {
         let id = log.next_id;
         log.next_id += 1;
@@ -159,15 +191,13 @@ pub fn start(command: &Command) -> Handle {
             id,
             repo,
             command: text,
+            title,
             started: Instant::now(),
             state: State::Running,
             lines: Vec::new(),
             dropped: 0,
         });
-        if log.entries.len() > MAX_ENTRIES {
-            let extra = log.entries.len() - MAX_ENTRIES;
-            log.entries.drain(..extra);
-        }
+        log.trim(KEPT);
         wake(log);
         Handle(id)
     })
@@ -242,6 +272,17 @@ pub fn format_command(command: &Command) -> String {
         .join(" ")
 }
 
+/// The command without `git -C <repo>`, which every command in the log shares.
+fn title_of(command: &Command) -> String {
+    let mut args = command.get_args().peekable();
+    if args.peek().is_some_and(|flag| *flag == "-C") {
+        args.nth(1);
+    }
+    args.map(|arg| quote(&arg.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn quote(arg: &str) -> String {
     let plain = !arg.is_empty()
         && arg
@@ -285,6 +326,15 @@ mod tests {
             format_command(&command),
             r"git -C '/my repo' commit -m 'it'\''s done' --format=%H%x00"
         );
+    }
+
+    #[test]
+    fn the_title_leaves_out_where_the_command_ran() {
+        let repo = "/log-test/title";
+        start(&command(repo, &["commit", "-m", "two words"]));
+        let entry = entry_in(repo);
+        assert_eq!(entry.title, "commit -m 'two words'");
+        assert!(entry.command.starts_with("git -C /log-test/title commit"));
     }
 
     #[test]
@@ -346,8 +396,10 @@ mod tests {
         let repo = "/log-test/summary";
         let handle = start(&command(repo, &["push"]));
         assert!(entry_in(repo).summary().starts_with("running · "));
+        assert_eq!(entry_in(repo).brief(), "running");
         handle.finish(false, "exit 1");
         assert!(entry_in(repo).summary().starts_with("exit 1 · "));
+        assert_eq!(entry_in(repo).brief(), "exit 1", "a failure says why");
     }
 
     #[test]
@@ -358,12 +410,42 @@ mod tests {
     }
 
     #[test]
+    fn only_the_last_fifty_commands_are_kept_and_a_running_one_is_never_dropped() {
+        let entry = |id: u64, state| Entry {
+            id,
+            repo: PathBuf::new(),
+            command: String::new(),
+            title: String::new(),
+            started: Instant::now(),
+            state,
+            lines: Vec::new(),
+            dropped: 0,
+        };
+        let done = || State::Done {
+            success: true,
+            status: "exit 0".into(),
+            took: Duration::ZERO,
+        };
+        let mut log = Log::default();
+        // The oldest is still running, as a slow fetch would be.
+        log.entries.push(entry(0, State::Running));
+        log.entries.extend((1..=60).map(|id| entry(id, done())));
+        log.trim(MAX_ENTRIES);
+        let ids: Vec<u64> = log.entries.iter().map(|e| e.id).collect();
+        assert_eq!(ids.len(), MAX_ENTRIES);
+        assert_eq!(ids[0], 0, "the running command stays");
+        assert_eq!(*ids.last().unwrap(), 60, "the newest stay");
+        assert_eq!(ids[1], 12, "the oldest finished ones went");
+    }
+
+    #[test]
     fn clearing_forgets_what_finished_and_keeps_what_is_running() {
         // On a log of its own: clearing the shared one would race the other tests.
         let entry = |state| Entry {
             id: 0,
             repo: PathBuf::new(),
             command: String::new(),
+            title: String::new(),
             started: Instant::now(),
             state,
             lines: Vec::new(),

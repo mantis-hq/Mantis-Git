@@ -175,11 +175,16 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   The first is always the **Log**, then one per terminal, a `+` to open another, and
   `Clear` and `Hide` at the right. Terminals start in the repository's folder and keep
   their number as others close.
-- **Log:** each git command as the app ran it, after a muted `$`, in weight 600 and Text
-  colour, and how it stands at the right in words: `running · 12s`, `exit 0 · 0.2s` in
-  Green, `exit 128 · 0.2s` in Red. Its output sits under it as it arrives, stdout in
-  Subtext 0, stderr in Overlay 2, and in Red when the command failed. It keeps to the
-  newest line unless you scroll up.
+- **Log:** a 280 px sidebar of commands beside the output of one. The sidebar lists the
+  last 50, newest first, each as its short form (`status --short`, without the
+  repository) with how long it took at the right in Overlay 2, or `running`, or in Red
+  why it failed (`exit 128`). The picked row takes the selected-row fill. Up and Down
+  move through it. Newest is picked until you pick another, and picking the newest
+  follows new commands again. The pane shows that one command as the app ran it, after a
+  muted `$`, in weight 600 and Text colour, with how it stands at the right in words:
+  `running · 12s`, `exit 0 · 0.2s` in Green, `exit 128 · 0.2s` in Red. Its output sits
+  under it as it arrives, stdout in Subtext 0, stderr in Overlay 2, and in Red when the
+  command failed. A running command keeps to its newest line unless you scroll up.
 - **Terminal:** code type on Mantle. The cursor is a Blue block with Crust text and shows
   only while the terminal has focus. Colours the shell asks for by number use Catppuccin's
   terminal mapping: black Surface 1, red, green, yellow, blue, Pink for magenta, Teal for

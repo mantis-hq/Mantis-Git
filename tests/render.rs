@@ -308,7 +308,9 @@ mod render {
         // Loading the repository logged pages of diff. A short log shows how it reads.
         gitclient_core::log::clear();
         gitclient_core::ops::run(repo.path(), &["status", "--short", "--branch"]).unwrap();
+        gitclient_core::ops::run(repo.path(), &["log", "--oneline", "-3"]).unwrap();
         assert!(gitclient_core::ops::run(repo.path(), &["rev-parse", "no-such-ref"]).is_err());
+        gitclient_core::ops::run(repo.path(), &["branch", "--list"]).unwrap();
         cx.update_window(handle, |_, window, cx| {
             workspace.update(cx, |workspace, cx| {
                 workspace
