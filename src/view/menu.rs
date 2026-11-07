@@ -183,6 +183,8 @@ impl GraphView {
             self.confirm = Some(Confirm {
                 message: confirmation.message.into(),
                 action: confirmation.action.into(),
+                weight: confirmation.weight,
+                armed: None,
                 run: Rc::new(move |this, cx| this.run_command(command.clone(), cx)),
             });
             cx.notify();

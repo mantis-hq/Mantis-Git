@@ -38,6 +38,8 @@ pub enum Command {
         name: String,
         /// Where the ref pointed, so the warning can say how to get it back.
         tip: Option<String>,
+        /// Whether deleting it loses commits that nothing else keeps.
+        at_risk: bool,
     },
     /// Several branches and tags at once.
     DeleteMany {
@@ -81,6 +83,42 @@ pub enum Command {
 pub struct Confirmation {
     pub message: String,
     pub action: &'static str,
+    pub weight: Weight,
+}
+
+/// How a confirmation is asked, by how much a mistake costs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Weight {
+    /// A band under the header, for steps that rewrite rather than remove.
+    Banner,
+    /// A small popup: Enter confirms, Escape cancels.
+    Popup,
+    /// A popup for losing work that can't be found again: Enter has to be pressed twice,
+    /// quickly.
+    DoublePress,
+}
+
+impl Weight {
+    /// The line under the question that says which keys answer it. `armed` is true once the
+    /// first of two presses has landed.
+    pub fn hint(self, action: &str, armed: bool) -> String {
+        let action = action.to_lowercase();
+        match (self, armed) {
+            (Self::DoublePress, false) => {
+                format!("Press Enter twice to {action}, or Esc to cancel.")
+            }
+            (Self::DoublePress, true) => format!("Press Enter again to {action}."),
+            _ => format!("Press Enter to {action}, or Esc to cancel."),
+        }
+    }
+}
+
+fn deletion_weight(at_risk: bool) -> Weight {
+    if at_risk {
+        Weight::DoublePress
+    } else {
+        Weight::Popup
+    }
 }
 
 impl Command {
@@ -120,18 +158,27 @@ impl Command {
             } => Some(Confirmation {
                 message: branch::rebase_warning(branch, onto),
                 action: "Rebase",
+                weight: Weight::Banner,
             }),
-            Self::Delete { kind, name, tip } => Some(Confirmation {
+            Self::Delete {
+                kind,
+                name,
+                tip,
+                at_risk,
+            } => Some(Confirmation {
                 message: branch::delete_warning(*kind, name, tip.as_deref()),
                 action: "Delete",
+                weight: deletion_weight(*at_risk),
             }),
             Self::RemoveWorktree { warning, .. } => Some(Confirmation {
                 message: warning.clone(),
                 action: "Remove",
+                weight: Weight::Popup,
             }),
             Self::DeleteMany { refs } => Some(Confirmation {
                 message: branch::delete_many_warning(refs),
                 action: "Delete",
+                weight: deletion_weight(refs.iter().any(|doomed| doomed.at_risk)),
             }),
             Self::Reset {
                 oid, hard: true, ..
@@ -143,6 +190,7 @@ impl Command {
                     short_oid(oid)
                 ),
                 action: "Discard and reset",
+                weight: Weight::Banner,
             }),
             _ => None,
         }
@@ -316,6 +364,7 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
                 label,
                 Command::Delete {
                     kind,
+                    at_risk: branch::loses_commits(refs, kind, &name),
                     name,
                     tip: tip.map(|tip| tip.to_string()),
                 },
@@ -423,6 +472,7 @@ pub fn refs_menu(refs: &Refs, targets: &[Dragged]) -> Vec<Line> {
                 kind: target.kind,
                 name: target.name.clone(),
                 tip: crate::picks::tip_of(refs, target).map(|tip| tip.to_string()),
+                at_risk: branch::loses_commits(refs, target.kind, &target.name),
             })
             .collect();
         let tags = doomed.iter().filter(|d| d.kind == RefKind::Tag).count();
@@ -891,5 +941,45 @@ mod tests {
         let command = copy("abc", "the hash");
         assert_eq!(command.copied_notice().as_deref(), Some("Copied the hash."));
         assert_eq!(command.run(Path::new(".")), Ok(None));
+    }
+
+    #[test]
+    fn deleting_asks_in_a_popup_and_only_unmerged_unpushed_work_needs_two_presses() {
+        let weight = |upstream, ahead_behind| {
+            let mut refs = refs();
+            let branch = refs
+                .branches
+                .iter_mut()
+                .find(|b| b.name == "feat/x")
+                .unwrap();
+            branch.upstream = upstream;
+            branch.ahead_behind = ahead_behind;
+            let lines = ref_menu(&refs, &target(RefKind::Branch, "feat/x"));
+            let delete = lines.last().unwrap().command().unwrap();
+            assert!(matches!(delete, Command::Delete { .. }));
+            delete.confirmation().unwrap().weight
+        };
+        // Nothing known: not shown to be merged, and no remote branch has it.
+        assert_eq!(weight(None, None), Weight::DoublePress);
+        assert_eq!(weight(Some((2, 0)), Some((2, 0))), Weight::DoublePress);
+        // Pushed, merged, or both are recoverable.
+        assert_eq!(weight(Some((0, 0)), Some((2, 0))), Weight::Popup);
+        assert_eq!(weight(None, Some((0, 3))), Weight::Popup);
+    }
+
+    #[test]
+    fn the_hint_names_the_keys() {
+        assert_eq!(
+            Weight::Popup.hint("Delete", false),
+            "Press Enter to delete, or Esc to cancel."
+        );
+        assert_eq!(
+            Weight::DoublePress.hint("Delete", false),
+            "Press Enter twice to delete, or Esc to cancel."
+        );
+        assert_eq!(
+            Weight::DoublePress.hint("Delete", true),
+            "Press Enter again to delete."
+        );
     }
 }
