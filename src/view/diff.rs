@@ -71,13 +71,27 @@ impl GraphView {
         self.diff.file.filter(|_| !self.diff.closed)
     }
 
-    /// The selected commit's details just arrived, so show its first file.
-    pub(super) fn details_loaded(&mut self, cx: &mut Context<Self>) {
+    /// The selected commit's details just arrived. The diff stays hidden until
+    /// a file is picked, so selecting a commit never opens one on its own.
+    pub(super) fn details_loaded(&mut self, _cx: &mut Context<Self>) {
         self.diff.patch = None;
         self.diff.file = None;
-        let has_files = self.selected_details().is_some_and(|d| !d.files.is_empty());
-        if has_files && !self.diff.closed {
-            self.load_file(0, cx);
+    }
+
+    /// The working changes were read again. A file already on show stays, redrawn from
+    /// the new read, so a refresh never closes what is being read.
+    pub(super) fn working_loaded(&mut self, cx: &mut Context<Self>) {
+        let on_show = self
+            .shown_file()
+            .and(self.diff.patch.as_ref())
+            .map(|p| p.path.clone());
+        let same = on_show.and_then(|path| {
+            let files = &self.shown_details()?.files;
+            files.iter().position(|file| file.path == path)
+        });
+        match same {
+            Some(index) => self.load_file(index, cx),
+            None => self.details_loaded(cx),
         }
     }
 
@@ -87,6 +101,9 @@ impl GraphView {
     }
 
     fn load_file(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.working_row_is_selected() {
+            return self.load_working_file(index, cx);
+        }
         let (Some(repo), Some(details)) = (self.workdir(), self.selected_details().cloned()) else {
             return;
         };
@@ -120,6 +137,30 @@ impl GraphView {
         );
     }
 
+    /// The working changes carry their patches already, so nothing is read.
+    fn load_working_file(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(details) = self.shown_details().cloned() else {
+            return;
+        };
+        let (Some(change), Some(file)) = (details.files.get(index), self.working_patch(index))
+        else {
+            return;
+        };
+        let shown = Shown::new(details.oid.clone(), change, &file.patch);
+        // Stay where the reader was if this is the same file coming back after a refresh.
+        let same_file = self
+            .diff
+            .patch
+            .as_ref()
+            .is_some_and(|old| old.path == shown.path);
+        self.diff.file = Some(index);
+        self.diff.patch = Some(Arc::new(shown));
+        if !same_file {
+            self.diff.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        }
+        cx.notify();
+    }
+
     fn close_diff(&mut self, cx: &mut Context<Self>) {
         self.diff.closed = true;
         cx.notify();
@@ -149,7 +190,7 @@ impl GraphView {
                         .pl_4()
                         .pr_2()
                         .gap_3()
-                        .text_size(px(13.))
+                        .text_size(px(12.))
                         .border_b_1()
                         .border_color(border)
                         .child(file_path(&shown.path, muted))
@@ -162,7 +203,7 @@ impl GraphView {
                         ),
                 )
                 .when(empty, |panel_body| {
-                    panel_body.child(div().p_4().text_sm().text_color(muted).child(
+                    panel_body.child(div().p_4().text_size(px(13.)).text_color(muted).child(
                         if shown.binary {
                             "This is a binary file, so there is no text to show."
                         } else {
@@ -211,7 +252,7 @@ fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut App) -> Vec<Div> {
                 .h_flex()
                 .h(ROW_HEIGHT)
                 .min_w_full()
-                .text_size(px(13.))
+                .text_size(px(12.))
                 .whitespace_nowrap();
             let line = match &shown.rows[index] {
                 Row::Line(line) => line,

@@ -7,6 +7,7 @@ use chrono::{Local, TimeZone};
 use gitclient_core::details::{self, CommitDetails, FileChange};
 use gitclient_core::git::{Commit, Entry, split_subject};
 use gitclient_core::text::{count, short_oid};
+use gitclient_core::working::{self, WorkingFile};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
@@ -20,12 +21,39 @@ const WIDTH: Pixels = px(380.);
 pub(super) struct State {
     /// The selected commit's details, once read.
     details: Option<Arc<CommitDetails>>,
+    /// The uncommitted changes, read in full so a file's diff needs no further git call.
+    working: Option<Working>,
 }
+
+/// What the working changes row shows: each file's patch, and the same list a commit has.
+pub(super) struct Working {
+    pub(super) files: Vec<WorkingFile>,
+    pub(super) details: Arc<CommitDetails>,
+}
+
+/// Stands in for a commit id in the details of the working changes.
+pub(super) const WORKING_ID: &str = "working";
 
 impl GraphView {
     pub(super) fn selected_details(&self) -> Option<&Arc<CommitDetails>> {
         let oid = &self.selected_commit()?.oid;
         self.inspector.details.as_ref().filter(|d| d.oid == *oid)
+    }
+
+    /// The files on show in the inspector: a commit's, or the working changes'.
+    pub(super) fn shown_details(&self) -> Option<&Arc<CommitDetails>> {
+        if self.working_row_is_selected() {
+            return self
+                .inspector
+                .working
+                .as_ref()
+                .map(|working| &working.details);
+        }
+        self.selected_details()
+    }
+
+    pub(super) fn working_patch(&self, index: usize) -> Option<&WorkingFile> {
+        self.inspector.working.as_ref()?.files.get(index)
     }
 
     fn selected_entry(&self) -> Option<&Entry> {
@@ -45,6 +73,9 @@ impl GraphView {
     /// Loads the new selection's details, keeping the old ones up until then so that
     /// moving through the list doesn't flash an empty panel.
     pub(super) fn selection_changed(&mut self, cx: &mut Context<Self>) {
+        if self.working_row_is_selected() {
+            return self.reload_working(cx);
+        }
         let (Some(repo), Some(commit)) = (self.workdir(), self.selected_commit()) else {
             self.inspector.details = None;
             return;
@@ -59,6 +90,38 @@ impl GraphView {
                 }
                 this.inspector.details = details.ok().map(Arc::new);
                 this.details_loaded(cx);
+                cx.notify();
+            },
+            cx,
+        );
+    }
+
+    /// Reads the uncommitted changes. Also run when the window is used again, because
+    /// they change under the app as files are edited.
+    pub(super) fn reload_working(&mut self, cx: &mut Context<Self>) {
+        let Some(repo) = self.workdir() else {
+            return;
+        };
+        Self::spawn_blocking(
+            move || working::read(&repo),
+            move |this, files, cx| {
+                if !this.working_row_is_selected() {
+                    return;
+                }
+                let Ok(files) = files else {
+                    this.inspector.working = None;
+                    return cx.notify();
+                };
+                let details = CommitDetails {
+                    oid: WORKING_ID.into(),
+                    body: String::new(),
+                    files: files.iter().map(WorkingFile::change).collect(),
+                };
+                this.inspector.working = Some(Working {
+                    files,
+                    details: Arc::new(details),
+                });
+                this.working_loaded(cx);
                 cx.notify();
             },
             cx,
@@ -96,23 +159,34 @@ impl GraphView {
         if self.working_row_is_selected() {
             let sentence = self.refs.working_sentence();
             let subtext = tokens(theme.is_dark()).subtext0;
+            let files = self.shown_details().cloned();
             return Some(
                 panel
                     .child(
                         div()
                             .v_flex()
+                            .size_full()
                             .p_4()
-                            .gap_3()
-                            .child(title().child("Working changes"))
-                            .child(div().text_color(subtext).child(sentence))
+                            .gap_4()
+                            .overflow_y_scrollbar()
                             .child(
-                                Button::new("review-and-commit")
-                                    .primary()
-                                    .label("Review and commit")
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.open_commit_screen(cx)),
+                                div()
+                                    .v_flex()
+                                    .gap_3()
+                                    .child(title().child("Working changes"))
+                                    .child(div().text_color(subtext).child(sentence))
+                                    .child(
+                                        Button::new("review-and-commit")
+                                            .primary()
+                                            .label("Review and commit")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.open_commit_screen(cx)
+                                            })),
                                     ),
-                            ),
+                            )
+                            .when_some(files, |panel, details| {
+                                panel.child(self.render_files(false, &details, cx))
+                            }),
                     )
                     .into_any_element(),
             );
@@ -141,7 +215,7 @@ impl GraphView {
                         .child(self.render_facts(commit, cx))
                         .child(self.render_actions(commit, cx))
                         .when_some(loaded, |panel, details| {
-                            panel.child(self.render_files(commit, details, cx))
+                            panel.child(self.render_files(commit.is_merge(), details, cx))
                         }),
                 )
                 .into_any_element(),
@@ -204,7 +278,7 @@ impl GraphView {
             div()
                 .id(("parent", index))
                 .cursor_pointer()
-                .text_size(px(13.))
+                .text_size(px(12.))
                 .text_color(link)
                 .child(short_oid(parent).to_owned())
                 .on_click(cx.listener(move |this, _, _, cx| this.select_oid(&oid, cx)))
@@ -225,7 +299,7 @@ impl GraphView {
             .child(fact(
                 "Commit",
                 div()
-                    .text_size(px(13.))
+                    .text_size(px(12.))
                     .child(SharedString::from(commit.oid.clone()))
                     .into_any_element(),
             ))
@@ -236,7 +310,7 @@ impl GraphView {
                     .gap_2()
                     .children(parents)
                     .when(commit.parents.is_empty(), |list| {
-                        list.text_size(px(13.)).text_color(muted).child("none")
+                        list.text_size(px(12.)).text_color(muted).child("none")
                     })
                     .into_any_element(),
             ))
@@ -314,7 +388,7 @@ impl GraphView {
 impl GraphView {
     fn render_files(
         &self,
-        commit: &Commit,
+        is_merge: bool,
         details: &CommitDetails,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -341,13 +415,13 @@ impl GraphView {
                         div()
                             .h_flex()
                             .gap_1()
-                            .text_xs()
+                            .text_size(px(11.))
                             .child(div().text_color(added).child(format!("+{additions}")))
                             .child(div().text_color(removed).child(format!("−{deletions}"))),
                     ),
             )
             .children(files)
-            .when(commit.is_merge() && total == 0, |list| {
+            .when(is_merge && total == 0, |list| {
                 list.child(
                     div()
                         .text_color(merge_note)
@@ -377,12 +451,18 @@ impl GraphView {
                 div()
                     .w(px(12.))
                     .flex_none()
-                    .text_xs()
+                    .text_size(px(11.))
                     .font_medium()
                     .text_color(status_color(file.status, cx))
                     .child(file.status.to_string()),
             )
             .child(file_path(&file.path, muted))
-            .child(div().flex_none().text_xs().text_color(muted).child(count))
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(px(11.))
+                    .text_color(muted)
+                    .child(count),
+            )
     }
 }

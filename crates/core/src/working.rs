@@ -1,7 +1,8 @@
 //! Uncommitted changes, and turning a chosen part of them into a commit.
 
+use crate::details::FileChange;
 use crate::ops;
-use crate::patch::{self, FilePatch};
+use crate::patch::{self, FilePatch, LineKind};
 use crate::text::count;
 use std::collections::HashSet;
 use std::path::Path;
@@ -16,6 +17,24 @@ pub struct WorkingFile {
     pub patch: FilePatch,
     /// Whether any of the file was already staged.
     pub staged: bool,
+}
+
+impl WorkingFile {
+    /// The file as the inspector lists it, the same as for a commit's files.
+    pub fn change(&self) -> FileChange {
+        let count = |kind| {
+            let lines = self.patch.hunks.iter().flat_map(|hunk| &hunk.lines);
+            lines.filter(|line| line.kind == kind).count() as u32
+        };
+        FileChange {
+            status: self.patch.status(),
+            path: self.path.as_str().into(),
+            old_path: None,
+            additions: count(LineKind::Added),
+            deletions: count(LineKind::Removed),
+            binary: self.patch.binary,
+        }
+    }
 }
 
 /// Which hunks of a file go into a commit, by index.
@@ -288,6 +307,25 @@ mod tests {
     use super::*;
     use crate::testing::Repo;
     use std::fs;
+
+    #[test]
+    fn working_files_list_like_a_commits_files() {
+        let repo = Repo::new();
+        repo.write("kept.txt", "a\nb\n");
+        repo.commit("first");
+        repo.write("kept.txt", "a\nc\nd\n");
+        repo.write("new.txt", "x\n");
+        let changes: Vec<_> = read(repo.path())
+            .unwrap()
+            .iter()
+            .map(WorkingFile::change)
+            .collect();
+        let summary: Vec<_> = changes
+            .iter()
+            .map(|c| (c.status, &*c.path, c.additions, c.deletions))
+            .collect();
+        assert_eq!(summary, [('M', "kept.txt", 2, 1), ('A', "new.txt", 1, 0)]);
+    }
 
     /// Twenty lines, so a change at each end is two separate hunks.
     fn long(top: &str, bottom: &str) -> String {
