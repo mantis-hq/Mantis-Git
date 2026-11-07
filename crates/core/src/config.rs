@@ -348,6 +348,16 @@ impl Values {
         self.get(key).is_some()
     }
 
+    /// Every value of `key`, for those that can be set more than once, in file order.
+    pub fn get_all(&self, key: &str) -> Vec<&str> {
+        let key = normalize_key(key);
+        self.entries
+            .iter()
+            .filter(|(name, _)| *name == key)
+            .map(|(_, value)| value.as_str())
+            .collect()
+    }
+
     /// Every key and value, with the key as `normalize_key` writes it.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.entries
