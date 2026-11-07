@@ -184,7 +184,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   command to bring each back. A checked-out branch and remote branches stay, and the menu
   says so.
 - Worktrees: when a repository has more than one working tree, the sidebar lists them
-  under "Worktrees", open by default, between Branches and Remotes. A row is the folder's
+  under "Worktrees", open by default, between Remotes and Tags. A row is the folder's
   name, then its branch (or `detached at <hash>`) in Overlay 2, with a dot in that
   branch's colour. The one on show is selected and semibold. Clicking another switches
   the current tab to it, so the tab strip doesn't grow. A worktree whose
@@ -249,6 +249,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   button, "Review and commit", and lists the changed files under them exactly as it does
   for a commit, so a file's diff is one click away. Diffs open on a click, never on
   their own. The list and an open diff refresh when the window is used again.
+- **Merges in the inspector:** a merge lists and diffs what it brought in over its first
+  parent, the branch it was made on, so its files match what reverting it with `-m 1` undoes.
 - **Inspector actions:** "Check out" names the branch when one is at the commit. Commands
   that add a commit say how to undo it in the band under the header.
 - **Long lists:** lists that can grow without limit, such as a commit's files, the commit

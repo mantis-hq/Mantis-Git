@@ -537,6 +537,14 @@ impl GraphView {
         self.push_tree(RefList::Branches, branches, &mut items);
         items.push(Item::Gap);
 
+        self.push_ref_section(
+            Section::Remotes,
+            "Remotes",
+            RefList::Remotes,
+            &self.refs.remotes,
+            &mut items,
+        );
+
         let trees = self.refs.worktrees.len();
         if trees >= 2 {
             let section = Section::Worktrees;
@@ -550,28 +558,13 @@ impl GraphView {
             }
         }
 
-        let sections = [
-            (
-                Section::Remotes,
-                "Remotes",
-                RefList::Remotes,
-                &self.refs.remotes,
-            ),
-            (Section::Tags, "Tags", RefList::Tags, &self.refs.tags),
-        ];
-        for (section, title, list, refs) in sections {
-            items.push(Item::Header {
-                section,
-                title,
-                count: refs.len(),
-            });
-            if self.sidebar.expanded.contains(&section) {
-                self.push_tree(list, refs.iter().map(|named| &*named.name), &mut items);
-                if section == Section::Remotes {
-                    items.extend(self.remotes_without_branches().map(Item::Remote));
-                }
-            }
-        }
+        self.push_ref_section(
+            Section::Tags,
+            "Tags",
+            RefList::Tags,
+            &self.refs.tags,
+            &mut items,
+        );
 
         let stashes = self.refs.stashes.len();
         items.push(Item::Header {
@@ -583,6 +576,28 @@ impl GraphView {
             items.extend((0..stashes).map(Item::Stash));
         }
         items
+    }
+
+    /// A header and, when open, the folder tree of the refs under it.
+    fn push_ref_section(
+        &self,
+        section: Section,
+        title: &'static str,
+        list: RefList,
+        refs: &[gitclient_core::git::NamedRef],
+        items: &mut Vec<Item>,
+    ) {
+        items.push(Item::Header {
+            section,
+            title,
+            count: refs.len(),
+        });
+        if self.sidebar.expanded.contains(&section) {
+            self.push_tree(list, refs.iter().map(|named| &*named.name), items);
+            if section == Section::Remotes {
+                items.extend(self.remotes_without_branches().map(Item::Remote));
+            }
+        }
     }
 
     /// The remotes that no remote branch shows, until the first fetch brings some.
