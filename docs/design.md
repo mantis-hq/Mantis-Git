@@ -117,15 +117,18 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     inherits its value from, and its reset button says "Inherit". A setting the installed
     git is too old for is dimmed and says which version it needs. If git can't be run, the
     page says so and offers "Try again".
-  - **Identities** are named profiles (a name, email and signing key) that are reused
+  - **Identities** are named profiles (a name, email, signing key and an optional SSH key)
+    that are reused
     wherever they are picked. The first card says who the open repository commits as and
     why, with one row of chips to change it: Automatic, then each identity. The picked chip
     has a tick, as in every choice. Below, the Default (the global name and email) is the
     first identity, and "This repository's own" appears as a chip when the repository sets
     its own. Each identity lists the rules that pick it (an SSH host, a folder or a remote
     pattern), and one identity can have many. A repository's pick wins over rules, and a
-    name set only in a repository is kept as an identity when another is picked.
-  - **SSH hosts** is read only, as OpenSSH reports it, and ties each remote to its key.
+    name set only in a repository is kept as an identity when another is picked. The SSH
+    key is a path, typed or picked from chips for the key pairs in `~/.ssh`, and makes git
+    fetch, pull and push with that key alone wherever the identity applies. There is no
+    page for SSH config: the app never reads or writes it beyond suggesting host names.
 - Dock: a 36 px Mantle bar along the bottom of the window with a 1 px Surface 0 top
   border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
   under the bar, so history stays in view. `Ctrl \`` shows and hides it, and

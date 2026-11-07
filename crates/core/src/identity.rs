@@ -135,21 +135,50 @@ fn include_key(condition: &str) -> String {
 pub struct Profile {
     pub name: String,
     pub email: String,
+    /// The key that signs commits.
     pub signing_key: String,
+    /// The SSH key file to push and pull with, as a path. Empty to leave it to ssh.
+    pub ssh_key: String,
+}
+
+const SSH_SUFFIX: &str = " -o IdentitiesOnly=yes";
+
+/// What git runs in place of `ssh` to use `key` and only `key`. Without
+/// `IdentitiesOnly`, ssh would also offer every key in the agent, and a host that
+/// accepts the first it likes could sign in as the wrong account.
+pub fn ssh_command(key: &str) -> String {
+    format!("ssh -i '{}'{SSH_SUFFIX}", key.replace('\'', r"'\''"))
+}
+
+/// The key in a command that [`ssh_command`] made. `None` for any other command, which
+/// someone wrote by hand and which is left alone.
+pub fn ssh_key_of(command: &str) -> Option<String> {
+    let inner = command
+        .trim()
+        .strip_prefix("ssh -i '")?
+        .strip_suffix(&format!("'{SSH_SUFFIX}"))?;
+    Some(inner.replace(r"'\''", "'"))
 }
 
 impl Profile {
     pub fn is_empty(&self) -> bool {
-        self.name.is_empty() && self.email.is_empty() && self.signing_key.is_empty()
+        self.name.is_empty()
+            && self.email.is_empty()
+            && self.signing_key.is_empty()
+            && self.ssh_key.is_empty()
     }
 
-    /// The `user.*` of a config, trimmed.
+    /// The `user.*` and SSH key of a config, trimmed.
     fn from_values(values: &Values) -> Profile {
         let text = |key: &str| values.get(key).unwrap_or("").trim().to_owned();
         Profile {
             name: text("user.name"),
             email: text("user.email"),
             signing_key: text("user.signingkey"),
+            ssh_key: values
+                .get("core.sshCommand")
+                .and_then(ssh_key_of)
+                .unwrap_or_default(),
         }
     }
 
@@ -158,7 +187,25 @@ impl Profile {
             name: self.name.trim().to_owned(),
             email: self.email.trim().to_owned(),
             signing_key: self.signing_key.trim().to_owned(),
+            ssh_key: self.ssh_key.trim().to_owned(),
         }
+    }
+
+    /// Writes this into `file`. An empty value removes its key. A `core.sshCommand`
+    /// someone wrote by hand stays unless a key is chosen to replace it.
+    fn write_to(&self, file: &Scope) -> Result<(), String> {
+        let profile = self.trimmed();
+        config::set(file, "user.name", &profile.name)?;
+        config::set(file, "user.email", &profile.email)?;
+        config::set(file, "user.signingkey", &profile.signing_key)?;
+        let existing = config::read(file)?;
+        let command = existing.get("core.sshCommand");
+        if !profile.ssh_key.is_empty() {
+            config::set(file, "core.sshCommand", &ssh_command(&profile.ssh_key))?;
+        } else if command.is_none_or(|command| ssh_key_of(command).is_some()) {
+            config::unset(file, "core.sshCommand")?;
+        }
+        Ok(())
     }
 
     /// "Ada <ada@example.com>", for a line of text.
@@ -401,9 +448,7 @@ pub fn save_identity(scope: &Scope, identity: &Identity) -> Result<String, Strin
     std::fs::create_dir_all(&folder)
         .map_err(|error| format!("Couldn't make {}: {error}", folder.display()))?;
     let file = Scope::File(file);
-    config::set(&file, "user.name", &profile.name)?;
-    config::set(&file, "user.email", &profile.email)?;
-    config::set(&file, "user.signingkey", &profile.signing_key)?;
+    profile.write_to(&file)?;
     config::set(&file, "gitclient.label", label)?;
     Ok(id)
 }
@@ -424,10 +469,7 @@ pub fn delete_identity(scope: &Scope, id: &str) -> Result<(), String> {
 
 /// Saves the default: the global `user.*`.
 pub fn save_default(scope: &Scope, profile: &Profile) -> Result<(), String> {
-    let profile = profile.trimmed();
-    config::set(scope, "user.name", &profile.name)?;
-    config::set(scope, "user.email", &profile.email)?;
-    config::set(scope, "user.signingkey", &profile.signing_key)
+    profile.write_to(scope)
 }
 
 /// Picks identity `id` for everything `matcher` matches, replacing any other that did.
@@ -538,6 +580,10 @@ pub fn pick(global: &Scope, repo: &Path, choice: &Choice) -> Result<(), String> 
     for key in USER_KEYS {
         config::unset(&local, key)?;
     }
+    // The key this app set goes with the name it replaces; one written by hand stays.
+    if values.get("core.sshCommand").and_then(ssh_key_of).is_some() {
+        config::unset(&local, "core.sshCommand")?;
+    }
     for path in values.get_all("include.path") {
         if id_of(path).is_some() {
             local.run(&["--unset", "include.path", &literal(path)])?;
@@ -647,7 +693,199 @@ mod tests {
             name: name.into(),
             email: email.into(),
             signing_key: String::new(),
+            ssh_key: String::new(),
         }
+    }
+
+    fn with_key(key: &str) -> Profile {
+        Profile {
+            ssh_key: key.into(),
+            ..profile("Ada Lovelace", "ada@work.example")
+        }
+    }
+
+    #[test]
+    fn an_ssh_key_becomes_a_command_that_uses_only_that_key_and_reads_back() {
+        let command = ssh_command("~/.ssh/id_work");
+        assert_eq!(command, "ssh -i '~/.ssh/id_work' -o IdentitiesOnly=yes");
+        assert_eq!(ssh_key_of(&command).as_deref(), Some("~/.ssh/id_work"));
+
+        // Spaces and quotes in a path survive the round trip.
+        for key in [
+            "/home/ada/my keys/id work",
+            "/tmp/it's/id",
+            "C:/Users/Ada/.ssh/id",
+        ] {
+            assert_eq!(ssh_key_of(&ssh_command(key)).as_deref(), Some(key), "{key}");
+        }
+        // A command written by hand is not ours to read as a key.
+        assert_eq!(ssh_key_of("ssh -i /k -F /dev/null"), None);
+        assert_eq!(ssh_key_of("plink -i key.ppk"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_command_is_valid_shell_whatever_the_path() {
+        // Git runs it through a shell, so check one does: `-V` makes ssh print its version
+        // and quit, with `-i` and the path ignored.
+        for key in [
+            "/tmp/plain",
+            "/tmp/with space/id",
+            "/tmp/it's/id",
+            "/tmp/$HOME/`x`",
+        ] {
+            let run = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!("{} -V", ssh_command(key)))
+                .output();
+            let Ok(run) = run else { return };
+            if run.stderr.is_empty() && run.stdout.is_empty() {
+                return; // no ssh here to ask
+            }
+            assert!(
+                run.status.success(),
+                "{key}: {}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+        }
+    }
+
+    #[test]
+    fn an_identity_carries_its_ssh_key_and_git_uses_it_where_the_identity_applies() {
+        let (_dir, scope) = scope();
+        let id = save_identity(
+            &scope,
+            &Identity {
+                profile: with_key("~/.ssh/id_work"),
+                ..work()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            book(&scope).unwrap().identity(&id).unwrap().profile.ssh_key,
+            "~/.ssh/id_work"
+        );
+        add_rule(&scope, &id, &Match::Host("work".into())).unwrap();
+
+        let by_rule = repo(&scope, Some("git@work:team/app.git"));
+        let command = |repo: &TempDir| ask(repo.path(), &scope, &["config", "core.sshCommand"]);
+        assert_eq!(command(&by_rule), ssh_command("~/.ssh/id_work"));
+        let elsewhere = repo(&scope, Some("git@home:me/app.git"));
+        assert_eq!(command(&elsewhere), "", "only where the identity applies");
+
+        // A pin brings the key too, and picking another identity takes it away again.
+        pick(&scope, elsewhere.path(), &Choice::Identity(id)).unwrap();
+        assert_eq!(command(&elsewhere), ssh_command("~/.ssh/id_work"));
+        pick(&scope, elsewhere.path(), &Choice::Automatic).unwrap();
+        assert_eq!(command(&elsewhere), "");
+    }
+
+    #[test]
+    fn changing_or_clearing_the_key_edits_the_identity_everywhere() {
+        let (_dir, scope) = scope();
+        let id = save_identity(&scope, &work()).unwrap();
+        let pinned = repo(&scope, None);
+        pick(&scope, pinned.path(), &Choice::Identity(id.clone())).unwrap();
+        let command = || ask(pinned.path(), &scope, &["config", "core.sshCommand"]);
+        assert_eq!(command(), "", "no key yet");
+
+        let with = |key: &str| Identity {
+            id: id.clone(),
+            profile: with_key(key),
+            ..work()
+        };
+        save_identity(&scope, &with("~/.ssh/one")).unwrap();
+        assert_eq!(command(), ssh_command("~/.ssh/one"));
+        save_identity(&scope, &with("~/.ssh/two")).unwrap();
+        assert_eq!(command(), ssh_command("~/.ssh/two"));
+        save_identity(&scope, &with("")).unwrap();
+        assert_eq!(command(), "", "clearing it removes the command");
+    }
+
+    #[test]
+    fn a_command_someone_wrote_by_hand_is_left_alone() {
+        let (dir, scope) = scope();
+        let id = save_identity(&scope, &work()).unwrap();
+        let file = Scope::File(
+            dir.path()
+                .join("identities")
+                .join(format!("{id}.gitconfig")),
+        );
+        config::set(&file, "core.sshCommand", "ssh -F /my/config").unwrap();
+
+        // Saving the identity with no key chosen doesn't clobber it, and it isn't a key.
+        save_identity(
+            &scope,
+            &Identity {
+                id: id.clone(),
+                ..work()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            config::read(&file).unwrap().get("core.sshCommand"),
+            Some("ssh -F /my/config")
+        );
+        assert_eq!(
+            book(&scope).unwrap().identity(&id).unwrap().profile.ssh_key,
+            ""
+        );
+
+        // Choosing a key is a decision to replace it.
+        save_identity(
+            &scope,
+            &Identity {
+                id,
+                profile: with_key("~/.ssh/id_work"),
+                ..work()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            config::read(&file).unwrap().get("core.sshCommand"),
+            Some(ssh_command("~/.ssh/id_work").as_str())
+        );
+    }
+
+    #[test]
+    fn a_repository_own_key_is_kept_with_its_name_and_a_hand_written_command_stays() {
+        let (_dir, scope) = scope();
+        let other = save_identity(&scope, &work()).unwrap();
+        let repo = repo(&scope, None);
+        ask(
+            repo.path(),
+            &scope,
+            &["config", "user.email", "local@example.com"],
+        );
+        ask(
+            repo.path(),
+            &scope,
+            &["config", "core.sshCommand", &ssh_command("~/.ssh/local")],
+        );
+        let state = repo_state(repo.path(), &book(&scope).unwrap()).unwrap();
+        assert_eq!(state.own.unwrap().ssh_key, "~/.ssh/local");
+
+        pick(&scope, repo.path(), &Choice::Identity(other)).unwrap();
+        let kept = book(&scope).unwrap();
+        let kept = kept
+            .identities
+            .iter()
+            .find(|i| i.profile.email == "local@example.com")
+            .expect("kept as an identity");
+        assert_eq!(kept.profile.ssh_key, "~/.ssh/local");
+        assert_eq!(ask(repo.path(), &scope, &["config", "core.sshCommand"]), "");
+
+        // A command the user wrote by hand in the repository is theirs, and stays.
+        ask(
+            repo.path(),
+            &scope,
+            &["config", "core.sshCommand", "ssh -F /mine"],
+        );
+        pick(&scope, repo.path(), &Choice::Automatic).unwrap();
+        assert_eq!(
+            ask(repo.path(), &scope, &["config", "core.sshCommand"]),
+            "ssh -F /mine"
+        );
     }
 
     fn work() -> Identity {

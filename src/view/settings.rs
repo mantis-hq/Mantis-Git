@@ -10,7 +10,7 @@ use super::repository_name;
 use crate::theme::{selected_row, tokens};
 use gitclient_core::config::{self, Kind, Scope, Setting, Sources, Values, Version};
 use gitclient_core::identity::{self, Book, Choice, Identity, Match, Profile, RepoState};
-use gitclient_core::ssh::{self, Host, RemoteHost};
+use gitclient_core::ssh;
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::*;
@@ -90,17 +90,15 @@ pub fn should_quit(cx: &App) -> bool {
 enum Page {
     GitConfig,
     Identities,
-    Ssh,
 }
 
 impl Page {
-    const ALL: [Page; 3] = [Page::GitConfig, Page::Identities, Page::Ssh];
+    const ALL: [Page; 2] = [Page::GitConfig, Page::Identities];
 
     fn name(self) -> &'static str {
         match self {
             Page::GitConfig => "Git config",
             Page::Identities => "Identities",
-            Page::Ssh => "SSH hosts",
         }
     }
 }
@@ -173,26 +171,22 @@ fn snapshot(base: Scope, active: Scope, repo: Option<PathBuf>) -> Snapshot {
     }
 }
 
-/// What `ssh` says about the hosts that matter here.
+/// Names to pick from instead of typing: SSH hosts, and the keys in `~/.ssh`.
 #[derive(Default)]
-struct SshInfo {
-    hosts: Vec<Host>,
-    remotes: Vec<RemoteHost>,
-    /// Why nothing could be looked up, such as OpenSSH being missing.
-    problem: Option<String>,
+struct Suggestions {
+    hosts: Vec<String>,
+    /// As written in a config, such as `~/.ssh/id_work`.
+    keys: Vec<String>,
 }
 
-fn read_ssh(repo: Option<PathBuf>) -> SshInfo {
-    let mut info = SshInfo::default();
-    match ssh::resolve_all(&ssh::host_names(repo.as_deref())) {
-        Ok(hosts) => info.hosts = hosts,
-        Err(message) => info.problem = Some(message),
+fn read_suggestions(repo: Option<PathBuf>) -> Suggestions {
+    Suggestions {
+        hosts: ssh::host_names(repo.as_deref()),
+        keys: ssh::keys()
+            .iter()
+            .map(|key| ssh::display_key(key))
+            .collect(),
     }
-    info.remotes = repo
-        .as_deref()
-        .and_then(|repo| ssh::remotes(repo).ok())
-        .unwrap_or_default();
-    info
 }
 
 struct TextField {
@@ -215,11 +209,19 @@ struct IdentityRow {
     name: Entity<InputState>,
     email: Entity<InputState>,
     key: Entity<InputState>,
+    ssh_key: Entity<InputState>,
     /// What a new rule for this identity matches on.
     rule: Entity<InputState>,
     rule_kind: NewKind,
     adding_rule: bool,
     _events: Vec<Subscription>,
+}
+
+/// Where a picked SSH key goes.
+#[derive(Clone)]
+enum KeyTarget {
+    Identity(String),
+    New,
 }
 
 /// Names a row's inputs in `dirty`, which says whether the user typed in them.
@@ -240,7 +242,7 @@ pub struct Settings {
     load_error: Option<String>,
     book: Book,
     repo_state: Option<Result<RepoState, String>>,
-    ssh: Option<SshInfo>,
+    suggestions: Option<Suggestions>,
     fields: Vec<TextField>,
     aliases: Vec<AliasRow>,
     identity_rows: Vec<IdentityRow>,
@@ -250,6 +252,7 @@ pub struct Settings {
     new_identity_name: Entity<InputState>,
     new_identity_email: Entity<InputState>,
     new_identity_key: Entity<InputState>,
+    new_identity_ssh: Entity<InputState>,
     feedback: Feedback,
     /// Inputs the user has typed in since they were last saved or filled in.
     dirty: std::collections::HashSet<String>,
@@ -305,6 +308,7 @@ impl Settings {
         let new_identity_name = field("Name", "", window, cx);
         let new_identity_email = field("Email", "", window, cx);
         let new_identity_key = field("Signing key (optional)", "", window, cx);
+        let new_identity_ssh = field("~/.ssh/id_work", "", window, cx);
         let mut new_inputs = Vec::new();
         for input in [&new_name, &new_command] {
             new_inputs.push(cx.subscribe_in(
@@ -323,6 +327,7 @@ impl Settings {
             &new_identity_name,
             &new_identity_email,
             &new_identity_key,
+            &new_identity_ssh,
         ] {
             new_inputs.push(cx.subscribe_in(
                 input,
@@ -347,7 +352,7 @@ impl Settings {
             load_error: None,
             book: Book::default(),
             repo_state: None,
-            ssh: None,
+            suggestions: None,
             fields,
             aliases: Vec::new(),
             identity_rows: Vec::new(),
@@ -357,12 +362,13 @@ impl Settings {
             new_identity_name,
             new_identity_email,
             new_identity_key,
+            new_identity_ssh,
             feedback: Feedback::None,
             dirty: Default::default(),
             _new_inputs: new_inputs,
         };
         this.load(window, cx);
-        this.load_ssh(window, cx);
+        this.load_suggestions(window, cx);
         this
     }
 
@@ -376,7 +382,7 @@ impl Settings {
 
     /// Whether everything the pages show has been read.
     pub fn is_loaded(&self) -> bool {
-        self.values.is_some() && self.ssh.is_some()
+        self.values.is_some() && self.suggestions.is_some()
     }
 
     /// The config the Git config page edits.
@@ -403,7 +409,7 @@ impl Settings {
         }
         self.feedback = Feedback::None;
         self.load(window, cx);
-        self.load_ssh(window, cx);
+        self.load_suggestions(window, cx);
     }
 
     fn set_target(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
@@ -440,12 +446,12 @@ impl Settings {
         );
     }
 
-    fn load_ssh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn load_suggestions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let repo = self.repo.clone();
         Self::blocking(
-            move || read_ssh(repo),
+            move || read_suggestions(repo),
             |this, info, _, cx| {
-                this.ssh = Some(info);
+                this.suggestions = Some(info);
                 cx.notify();
             },
             window,
@@ -565,15 +571,17 @@ impl Settings {
                 sync(&row.name, profile.name.clone(), typed_in, window, cx);
                 sync(&row.email, profile.email.clone(), typed_in, window, cx);
                 sync(&row.key, profile.signing_key.clone(), typed_in, window, cx);
+                sync(&row.ssh_key, profile.ssh_key.clone(), typed_in, window, cx);
                 continue;
             }
             let label_input = field("What to call it", label, window, cx);
             let name = field("Name", &profile.name, window, cx);
             let email = field("Email", &profile.email, window, cx);
             let key = field("Signing key (optional)", &profile.signing_key, window, cx);
+            let ssh_key = field("~/.ssh/id_work", &profile.ssh_key, window, cx);
             let rule = field(NewKind::Host.placeholder(), "", window, cx);
             let mut events = Vec::new();
-            for input in [&label_input, &name, &email, &key] {
+            for input in [&label_input, &name, &email, &key, &ssh_key] {
                 let id = id.clone();
                 events.push(cx.subscribe_in(
                     input,
@@ -603,6 +611,7 @@ impl Settings {
                 name,
                 email,
                 key,
+                ssh_key,
                 rule,
                 rule_kind: NewKind::Host,
                 adding_rule: false,
@@ -732,6 +741,7 @@ impl Settings {
             name: row.name.read(cx).value().trim().to_owned(),
             email: row.email.read(cx).value().trim().to_owned(),
             signing_key: row.key.read(cx).value().trim().to_owned(),
+            ssh_key: row.ssh_key.read(cx).value().trim().to_owned(),
         };
         let label = row.label.read(cx).value().trim().to_owned();
         match id {
@@ -766,6 +776,7 @@ impl Settings {
                 name: self.new_identity_name.read(cx).value().trim().to_owned(),
                 email: self.new_identity_email.read(cx).value().trim().to_owned(),
                 signing_key: self.new_identity_key.read(cx).value().trim().to_owned(),
+                ssh_key: self.new_identity_ssh.read(cx).value().trim().to_owned(),
             },
         };
         let saved = format!("Added the identity {}.", identity.label);
@@ -778,6 +789,7 @@ impl Settings {
                     &this.new_identity_name,
                     &this.new_identity_email,
                     &this.new_identity_key,
+                    &this.new_identity_ssh,
                 ] {
                     input.update(cx, |input, cx| input.set_value("", window, cx));
                 }
@@ -801,6 +813,38 @@ impl Settings {
             window,
             cx,
         );
+    }
+
+    /// Puts `key` in an identity's SSH key, or takes it out if it already is that. Picking
+    /// is a decision, so for a saved identity it is saved at once.
+    fn pick_key(
+        &mut self,
+        target: &KeyTarget,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = match target {
+            KeyTarget::Identity(id) => self
+                .identity_rows
+                .iter()
+                .find(|row| row.id.as_deref() == Some(id))
+                .map(|row| row.ssh_key.clone()),
+            KeyTarget::New => Some(self.new_identity_ssh.clone()),
+        };
+        let Some(input) = input else {
+            return;
+        };
+        let next = if input.read(cx).value().trim() == key {
+            String::new()
+        } else {
+            key.to_owned()
+        };
+        input.update(cx, |input, cx| input.set_value(next, window, cx));
+        match target {
+            KeyTarget::Identity(id) => self.commit_identity(Some(id.clone()), window, cx),
+            KeyTarget::New => cx.notify(),
+        }
     }
 
     fn show_rule_form(&mut self, id: &str, shown: bool, cx: &mut Context<Self>) {
@@ -926,7 +970,6 @@ impl Settings {
                         "Identities are kept next to your global git config and save as you make them."
                             .to_owned()
                     }
-                    Page::Ssh => "What ssh will do for each host. Read only.".to_owned(),
                 },
                 tokens(theme.is_dark()).subtext0,
             ),
@@ -1555,6 +1598,7 @@ impl Settings {
                 .child(shown("Name", &profile.name))
                 .child(shown("Email", &profile.email))
                 .child(shown("Signing key", &profile.signing_key))
+                .child(shown("SSH key", &profile.ssh_key))
         } else {
             div()
                 .h_flex()
@@ -1573,9 +1617,65 @@ impl Settings {
         match id {
             None => card.into_any_element(),
             Some(id) => card
+                .child(self.render_ssh_key(
+                    KeyTarget::Identity(id.clone()),
+                    index,
+                    &row.ssh_key,
+                    cx,
+                ))
                 .child(self.render_rules(index, row, &id, cx))
                 .into_any_element(),
         }
+    }
+
+    /// The SSH key an identity pushes and pulls with: typed as a path, or picked from the
+    /// keys found in `~/.ssh`.
+    fn render_ssh_key(
+        &self,
+        target: KeyTarget,
+        slot: usize,
+        input: &Entity<InputState>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let current = input.read(cx).value().trim().to_owned();
+        let keys = self
+            .suggestions
+            .as_ref()
+            .map(|suggestions| suggestions.keys.clone())
+            .unwrap_or_default();
+        let chips: Vec<AnyElement> = keys
+            .into_iter()
+            .enumerate()
+            .map(|(position, key)| {
+                let name = key.rsplit('/').next().unwrap_or(&key).to_owned();
+                let on = key == current;
+                let target = target.clone();
+                chip(("ssh-key", slot * 100 + position), &name, on, cx)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.pick_key(&target, &key, window, cx)
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        div()
+            .v_flex()
+            .gap_1()
+            .child(section_label(muted).child("SSH key (optional)"))
+            .child(Input::new(input))
+            .when(!chips.is_empty(), |area| {
+                area.child(div().flex().flex_wrap().gap_1().children(chips))
+            })
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .line_height(px(18.))
+                    .text_color(muted)
+                    .child(
+                        "Fetch, pull and push use this key, and only this one, wherever the identity applies.",
+                    ),
+            )
+            .into_any_element()
     }
 
     /// Where an identity is picked automatically, and a way to add to that.
@@ -1677,26 +1777,21 @@ impl Settings {
                     .into_any_element()
                 })
                 .collect();
-        let known: Vec<AnyElement> = match (row.rule_kind, &self.ssh) {
+        let known: Vec<AnyElement> = match (row.rule_kind, &self.suggestions) {
             (NewKind::Host, Some(info)) => info
                 .hosts
                 .iter()
-                .filter(|host| !rules.contains(&Match::Host(host.alias.clone())))
+                .filter(|host| !rules.contains(&Match::Host((*host).clone())))
                 .enumerate()
                 .map(|(position, host)| {
-                    let pick = host.alias.clone();
+                    let pick = host.clone();
                     let input = row.rule.clone();
-                    chip(
-                        ("rule-host", index * 100 + position),
-                        &host.alias,
-                        false,
-                        cx,
-                    )
-                    .on_click(cx.listener(move |_, _, window, cx| {
-                        let pick = pick.clone();
-                        input.update(cx, |input, cx| input.set_value(pick, window, cx));
-                    }))
-                    .into_any_element()
+                    chip(("rule-host", index * 100 + position), host, false, cx)
+                        .on_click(cx.listener(move |_, _, window, cx| {
+                            let pick = pick.clone();
+                            input.update(cx, |input, cx| input.set_value(pick, window, cx));
+                        }))
+                        .into_any_element()
                 })
                 .collect(),
             _ => Vec::new(),
@@ -1768,6 +1863,7 @@ impl Settings {
                 &self.new_identity_name,
                 &self.new_identity_email,
                 &self.new_identity_key,
+                &self.new_identity_ssh,
             ]
             .iter()
             .any(|input| !input.read(cx).value().trim().is_empty());
@@ -1788,6 +1884,12 @@ impl Settings {
                             .child(labelled("Email", &self.new_identity_email))
                             .child(labelled("Signing key", &self.new_identity_key)),
                     )
+                    .child(self.render_ssh_key(
+                        KeyTarget::New,
+                        usize::MAX / 200,
+                        &self.new_identity_ssh,
+                        cx,
+                    ))
                     .child(
                         div().h_flex().justify_end().child(
                             Button::new("add-identity")
@@ -1807,178 +1909,6 @@ impl Settings {
             cx,
         )
     }
-
-    fn render_ssh(&self, cx: &mut Context<Self>) -> AnyElement {
-        let muted = cx.theme().muted_foreground;
-        let danger = cx.theme().danger;
-        let page = div()
-            .v_flex()
-            .w_full()
-            .max_w(PAGE_WIDTH)
-            .gap_6()
-            .child(
-                div()
-                    .h_flex()
-                    .gap_4()
-                    .items_start()
-                    .child(
-                        div().flex_1().min_w_0().child(self.page_head(
-                            "SSH hosts",
-                            "What ssh does for each host, as the installed OpenSSH reports it. Edit your ssh config to change it.",
-                            cx,
-                        )),
-                    )
-                    .children(ssh::config_file().filter(|file| file.exists()).map(|file| {
-                        Button::new("show-ssh-config")
-                            .ghost()
-                            .label("Show ssh config")
-                            .tooltip(file.display().to_string())
-                            .on_click(move |_, _, cx| cx.reveal_path(&file))
-                    })),
-            );
-        let Some(info) = &self.ssh else {
-            return page
-                .child(
-                    div()
-                        .text_size(px(14.))
-                        .text_color(muted)
-                        .child("Asking ssh…"),
-                )
-                .into_any_element();
-        };
-        let mut page = page;
-        if let Some(problem) = &info.problem {
-            page = page.child(
-                div()
-                    .text_size(px(14.))
-                    .line_height(px(20.))
-                    .text_color(danger)
-                    .child(problem.clone()),
-            );
-        }
-
-        let host_line = |host: &Host| {
-            let keys = if host.keys.is_empty() {
-                "no key".to_owned()
-            } else if host.default_keys {
-                "OpenSSH's default keys".to_owned()
-            } else {
-                format!("key {}", host.key_names().join(", "))
-            };
-            format!("{} · {keys}", host.login())
-        };
-
-        if self.repo.is_some() {
-            let rows: Vec<AnyElement> = if info.remotes.is_empty() {
-                vec![
-                    div()
-                        .px_4()
-                        .py_3()
-                        .text_size(px(13.))
-                        .text_color(muted)
-                        .child("This repository has no remotes.")
-                        .into_any_element(),
-                ]
-            } else {
-                info.remotes
-                    .iter()
-                    .map(|remote| {
-                        let detail = match &remote.alias {
-                            None => "Not SSH, so no key is involved.".to_owned(),
-                            Some(alias) => info
-                                .hosts
-                                .iter()
-                                .find(|host| host.alias == *alias)
-                                .map_or_else(
-                                    || format!("Host {alias} couldn't be looked up."),
-                                    |host| format!("Host {alias} → {}", host_line(host)),
-                                ),
-                        };
-                        div()
-                            .v_flex()
-                            .px_4()
-                            .py_3()
-                            .gap_0p5()
-                            .child(
-                                div()
-                                    .h_flex()
-                                    .gap_3()
-                                    .text_size(px(14.))
-                                    .child(div().flex_none().child(remote.remote.clone()))
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_color(muted)
-                                            .child(remote.url.clone()),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .line_height(px(18.))
-                                    .text_color(muted)
-                                    .child(detail),
-                            )
-                            .into_any_element()
-                    })
-                    .collect()
-            };
-            page = page.child(self.render_group("Used by this repository", rows, cx));
-        }
-
-        let rows: Vec<AnyElement> = if info.hosts.is_empty() {
-            vec![
-                div()
-                    .px_4()
-                    .py_3()
-                    .text_size(px(13.))
-                    .text_color(muted)
-                    .child("No hosts have a block in your ssh config.")
-                    .into_any_element(),
-            ]
-        } else {
-            info.hosts
-                .iter()
-                .map(|host| {
-                    let matcher = Match::Host(host.alias.clone());
-                    let identity = self
-                        .book
-                        .rules
-                        .iter()
-                        .find(|rule| rule.matcher == matcher)
-                        .and_then(|rule| self.book.identity(&rule.identity));
-                    div()
-                        .v_flex()
-                        .px_4()
-                        .py_3()
-                        .gap_0p5()
-                        .child(div().text_size(px(14.)).child(host.alias.clone()))
-                        .child(
-                            div()
-                                .text_size(px(13.))
-                                .line_height(px(18.))
-                                .text_color(muted)
-                                .child(host_line(host)),
-                        )
-                        .children(identity.map(|identity| {
-                            div()
-                                .text_size(px(13.))
-                                .line_height(px(18.))
-                                .text_color(muted)
-                                .child(format!(
-                                    "Commits as {}, {}",
-                                    identity.label,
-                                    identity.profile.display()
-                                ))
-                        }))
-                        .into_any_element()
-                })
-                .collect()
-        };
-        page.child(self.render_group("Hosts", rows, cx))
-            .into_any_element()
-    }
 }
 
 impl Render for Settings {
@@ -1988,7 +1918,6 @@ impl Render for Settings {
         let page = match self.page {
             Page::GitConfig => self.render_git_config(cx),
             Page::Identities => self.render_identities(cx),
-            Page::Ssh => self.render_ssh(cx),
         };
         div()
             .v_flex()
@@ -2334,6 +2263,61 @@ mod tests {
         let values = config::read(&scope).unwrap();
         assert_eq!(values.get("user.email"), Some("p@example.com"));
         assert_eq!(values.get("user.name"), Some("Pretext"));
+    }
+
+    #[gpui_kit::test]
+    fn an_identity_gets_an_ssh_key_by_typing_or_picking_and_loses_it_by_picking_again(
+        cx: &mut TestAppContext,
+    ) {
+        let (dir, scope) = file_scope();
+        let (view, mut cx) = open(None, scope.clone(), cx);
+
+        // The add form carries a key.
+        view.update_in(&mut cx, |view, window, cx| {
+            view.new_identity_ssh.update(cx, |input, cx| {
+                input.set_value("~/.ssh/id_work", window, cx)
+            });
+        });
+        type_identity(&view, &mut cx, "Work", "Ada", "ada@work.example");
+        let key = |scope: &Scope| {
+            identity::book(scope)
+                .unwrap()
+                .identity("work")
+                .map(|identity| identity.profile.ssh_key.clone())
+        };
+        assert_eq!(key(&scope).as_deref(), Some("~/.ssh/id_work"));
+        let file = dir.path().join("identities/work.gitconfig");
+        let written = config::read(&Scope::File(file)).unwrap();
+        assert_eq!(
+            written.get("core.sshCommand"),
+            Some("ssh -i '~/.ssh/id_work' -o IdentitiesOnly=yes")
+        );
+        view.read_with(&cx, |view, cx| {
+            assert_eq!(
+                view.new_identity_ssh.read(cx).value().as_ref(),
+                "",
+                "form empties"
+            );
+            assert_eq!(
+                view.identity_rows[1].ssh_key.read(cx).value().as_ref(),
+                "~/.ssh/id_work"
+            );
+        });
+
+        // Picking a key from the list saves it at once.
+        let target = super::KeyTarget::Identity("work".into());
+        view.update_in(&mut cx, |view, window, cx| {
+            view.pick_key(&target, "~/.ssh/id_other", window, cx);
+        });
+        settle(&mut cx);
+        assert_eq!(key(&scope).as_deref(), Some("~/.ssh/id_other"));
+
+        // Picking the same one again clears it.
+        view.update_in(&mut cx, |view, window, cx| {
+            view.pick_key(&target, "~/.ssh/id_other", window, cx);
+        });
+        settle(&mut cx);
+        assert_eq!(key(&scope).as_deref(), Some(""));
     }
 
     #[gpui_kit::test]

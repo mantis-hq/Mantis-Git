@@ -392,6 +392,7 @@ mod render {
             name: name.into(),
             email: email.into(),
             signing_key: String::new(),
+            ssh_key: String::new(),
         };
         config::set(&scope, "user.name", "Pretext").unwrap();
         let mut identity_named = |label: &str, profile: Profile| {
@@ -402,7 +403,13 @@ mod render {
             };
             identity::save_identity(&scope, &identity).unwrap()
         };
-        let work = identity_named("Work", profile("Ada Lovelace", "ada@work.example"));
+        let work = identity_named(
+            "Work",
+            Profile {
+                ssh_key: "~/.ssh/id_work".into(),
+                ..profile("Ada Lovelace", "ada@work.example")
+            },
+        );
         let home = identity_named("Home", profile("Ada", "ada@home.example"));
         identity::add_rule(&scope, &work, &Match::Host("github-work".into())).unwrap();
         identity::add_rule(&scope, &work, &Match::Folder("~/work/".into())).unwrap();
@@ -436,7 +443,7 @@ mod render {
             cx.run_until_parked();
             std::thread::sleep(Duration::from_millis(10));
         }
-        for (index, name) in ["git-config", "identities", "ssh"].into_iter().enumerate() {
+        for (index, name) in ["git-config", "identities"].into_iter().enumerate() {
             cx.update_window(handle, |_, _, cx| {
                 view.update(cx, |view, cx| view.show_page(index, cx));
             })
