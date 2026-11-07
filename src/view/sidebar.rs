@@ -1,18 +1,21 @@
 //! The branch sidebar. Clicking a branch spotlights its history in the graph.
 
-use super::GraphView;
 use super::menu::wire_ref;
 use super::parts::{TEXT_CHIP, TEXT_SMALL};
 use super::parts::{panel_row, section_label};
+use super::{GraphView, SwitchWorktree};
 use crate::theme::{lane_color, tokens};
 use gitclient_core::branch::Dragged;
 use gitclient_core::git::{NamedRef, RefKind};
+use gitclient_core::picks::{Click, Picks, tip_of};
 use gitclient_core::spotlight::Spotlight;
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
 const WIDTH: Pixels = px(300.);
@@ -21,6 +24,7 @@ pub(super) const WIDE_WINDOW: Pixels = px(1500.);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Section {
+    Worktrees,
     Remotes,
     Tags,
     Stashes,
@@ -30,9 +34,10 @@ enum Section {
 struct Leaf<'a> {
     kind: RefKind,
     name: &'a str,
-    tip: Arc<str>,
     color: Hsla,
     detail: String,
+    /// How it stands against its remote branch, such as `↑1 ↓2`.
+    sync: String,
     strong: bool,
 }
 
@@ -42,9 +47,11 @@ struct RefRow<'a> {
     /// What to call it in the list, which leaves out the folders it is in.
     name: &'a str,
     target: Dragged,
-    tip: Arc<str>,
+    /// Every ref row shown in this list, which a shift-click runs along.
+    visible: Rc<[Dragged]>,
     color: Hsla,
     detail: String,
+    sync: String,
     on: bool,
     strong: bool,
     depth: usize,
@@ -58,9 +65,21 @@ pub(super) struct State {
     /// The width the user dragged the panel to.
     pub(super) width: Option<f32>,
     pub(super) spotlight: Option<Arc<Spotlight>>,
+    /// The refs picked in the list, which `spotlight` is worked out from.
+    pub(super) picks: Picks,
     expanded: Vec<Section>,
     /// Folders the user closed, as `<list>/<path>`. Folders start open.
     closed_folders: Vec<String>,
+}
+
+impl State {
+    pub(super) fn new() -> Self {
+        Self {
+            // Worktrees are few and each is a place to go, so they start shown.
+            expanded: vec![Section::Worktrees],
+            ..Self::default()
+        }
+    }
 }
 
 /// One visible row of a ref list that groups `feat/x` under a `feat` folder.
@@ -184,32 +203,66 @@ impl GraphView {
         self.sidebar.open.unwrap_or(self.sidebar.window_is_wide)
     }
 
+    /// Switches to another working tree, which the window's tabs take care of.
+    fn switch_worktree(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        cx.emit(SwitchWorktree(path));
+    }
+
     pub(super) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar.open = Some(!self.sidebar_is_open());
         cx.notify();
     }
 
-    /// Fades everything outside a branch's history, or turns that off again.
-    pub(super) fn spotlight(&mut self, tip: Arc<str>, cx: &mut Context<Self>) {
-        let same = self
+    /// A click on a branch, tag or remote branch. Plain picks it alone, `Ctrl` adds or
+    /// removes it and `Shift` picks everything down from the last one. The graph fades
+    /// everything outside the picked histories.
+    pub(super) fn pick(
+        &mut self,
+        target: &Dragged,
+        modifiers: Modifiers,
+        visible: &[Dragged],
+        cx: &mut Context<Self>,
+    ) {
+        let click = if modifiers.shift {
+            Click::Range
+        } else if modifiers.secondary(cx) {
+            Click::Add
+        } else {
+            Click::Plain
+        };
+        self.sidebar.picks.click(target, click, visible);
+        self.update_spotlight();
+        let tip = self
             .sidebar
-            .spotlight
-            .as_ref()
-            .is_some_and(|s| s.tip == tip);
-        self.sidebar.spotlight =
-            (!same).then(|| Arc::new(Spotlight::new(tip.clone(), &self.entries)));
-        if !same && let Some(row) = self.row_of(&tip) {
+            .picks
+            .contains(target)
+            .then(|| tip_of(&self.refs, target));
+        if let Some(Some(tip)) = tip
+            && let Some(row) = self.row_of(&tip)
+        {
             self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
         }
         cx.notify();
     }
 
-    /// History changed, so the same branch's lit commits need working out again.
+    /// Lights what the picked refs point at now.
+    fn update_spotlight(&mut self) {
+        let tips = self.sidebar.picks.tips(&self.refs);
+        self.sidebar.spotlight =
+            (!tips.is_empty()).then(|| Arc::new(Spotlight::new(tips, &self.entries)));
+    }
+
+    /// Lets go of every pick, as "Show all" does.
+    fn clear_picks(&mut self, cx: &mut Context<Self>) {
+        self.sidebar.picks.clear();
+        self.sidebar.spotlight = None;
+        cx.notify();
+    }
+
+    /// Refs or history changed, so the picks and their lit commits need working out again.
     pub(super) fn refresh_spotlight(&mut self) {
-        if let Some(spot) = &self.sidebar.spotlight {
-            let spot = Spotlight::new(spot.tip.clone(), &self.entries);
-            self.sidebar.spotlight = Some(Arc::new(spot));
-        }
+        self.sidebar.picks.retain_existing(&self.refs);
+        self.update_spotlight();
     }
 
     fn toggle_folder(&mut self, key: String, cx: &mut Context<Self>) {
@@ -273,11 +326,20 @@ impl GraphView {
         leaves: &[Leaf],
         cx: &mut Context<Self>,
     ) -> Vec<Stateful<Div>> {
-        let spotlit = self.sidebar.spotlight.clone();
         let rows = tree_rows(leaves.iter().map(|l| l.name), |path| {
             let key = format!("{list}/{path}");
             self.sidebar.closed_folders.contains(&key)
         });
+        let visible: Rc<[Dragged]> = rows
+            .iter()
+            .filter_map(|row| match row {
+                TreeRow::Ref { index, .. } => Some(Dragged {
+                    kind: leaves[*index].kind,
+                    name: leaves[*index].name.to_owned(),
+                }),
+                TreeRow::Folder(_) => None,
+            })
+            .collect();
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
             match row {
@@ -290,18 +352,20 @@ impl GraphView {
                     depth,
                 } => {
                     let leaf = &leaves[index];
-                    let on = spotlit.as_ref().is_some_and(|s| s.tip == leaf.tip);
+                    let target = Dragged {
+                        kind: leaf.kind,
+                        name: leaf.name.to_owned(),
+                    };
+                    let on = self.sidebar.picks.contains(&target);
                     out.push(self.render_ref_row(
                         RefRow {
                             id: (list, index).into(),
                             name: &label,
-                            target: Dragged {
-                                kind: leaf.kind,
-                                name: leaf.name.to_owned(),
-                            },
-                            tip: leaf.tip.clone(),
+                            target,
+                            visible: visible.clone(),
                             color: leaf.color,
                             detail: leaf.detail.clone(),
+                            sync: leaf.sync.clone(),
                             on,
                             strong: leaf.strong,
                             depth,
@@ -357,13 +421,14 @@ impl GraphView {
             .map(|branch| Leaf {
                 kind: RefKind::Branch,
                 name: &branch.name,
-                tip: branch.tip.clone(),
                 color: lane_color(branch.color, is_dark),
                 detail: branch.delta(default_branch),
+                sync: branch.remote_delta(),
                 strong: branch.is_head,
             })
             .collect();
         let branches = self.render_tree("branches", &leaves, cx);
+        let worktrees = self.render_worktrees(cx);
         let remotes = self.render_section(Section::Remotes, "Remotes", &self.refs.remotes, cx);
         let tags = self.render_section(Section::Tags, "Tags", &self.refs.tags, cx);
         let stashes = self.render_stashes(cx);
@@ -400,7 +465,6 @@ impl GraphView {
                                                 .child("Branches"),
                                         )
                                         .when(spotlit.is_some(), |heading| {
-                                            let tip = spotlit.as_ref().map(|s| s.tip.clone());
                                             heading.child(
                                                 div()
                                                     .id("show-all")
@@ -409,13 +473,9 @@ impl GraphView {
                                                     .font_medium()
                                                     .text_color(link)
                                                     .child("Show all")
-                                                    .on_click(cx.listener(
-                                                        move |this, _, _, cx| {
-                                                            if let Some(tip) = tip.clone() {
-                                                                this.spotlight(tip, cx);
-                                                            }
-                                                        },
-                                                    )),
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.clear_picks(cx)
+                                                    })),
                                             )
                                         }),
                                 )
@@ -425,6 +485,7 @@ impl GraphView {
                             div()
                                 .v_flex()
                                 .gap(px(2.))
+                                .child(worktrees)
                                 .child(remotes)
                                 .child(tags)
                                 .child(stashes),
@@ -439,9 +500,10 @@ impl GraphView {
             id,
             name,
             target,
-            tip,
+            visible,
             color,
             detail,
+            sync,
             on,
             strong,
             depth,
@@ -456,7 +518,13 @@ impl GraphView {
         let row = panel_row(id, on, cx)
             .h(px(30.))
             .pl(indent(depth))
-            .on_click(cx.listener(move |this, _, _, cx| this.spotlight(tip.clone(), cx)));
+            .on_click({
+                let target = target.clone();
+                cx.listener(move |this, event: &ClickEvent, _, cx| {
+                    this.pick(&target, event.modifiers(), &visible, cx);
+                    this.open_on_double_click(&target, event, cx);
+                })
+            });
         wire_ref(row, target, color, cx)
             .child(div().size(px(8.)).flex_none().rounded_full().bg(color))
             .child(
@@ -475,6 +543,15 @@ impl GraphView {
                     .text_color(muted)
                     .child(detail),
             )
+            .when(!sync.is_empty(), |row| {
+                row.child(
+                    div()
+                        .flex_none()
+                        .text_size(TEXT_CHIP)
+                        .text_color(muted)
+                        .child(sync),
+                )
+            })
     }
 
     fn render_section(
@@ -497,12 +574,12 @@ impl GraphView {
                         _ => RefKind::Remote,
                     },
                     name: &named.name,
-                    tip: named.tip.clone(),
                     color: match section {
                         Section::Tags => warning,
                         _ => lane_color(named.color, is_dark),
                     },
                     detail: String::new(),
+                    sync: String::new(),
                     strong: false,
                 })
                 .collect();
@@ -510,6 +587,79 @@ impl GraphView {
         } else {
             Vec::new()
         };
+        div().v_flex().gap(px(2.)).child(header).children(rows)
+    }
+
+    /// The repository's working trees, when it has more than the one. Picking another
+    /// opens it, in the tab already on it or a new one.
+    fn render_worktrees(&self, cx: &mut Context<Self>) -> Div {
+        let trees = &self.refs.worktrees;
+        if trees.len() < 2 {
+            return div();
+        }
+        let open = self.sidebar.expanded.contains(&Section::Worktrees);
+        let header = self.render_section_header(Section::Worktrees, "Worktrees", trees.len(), cx);
+        let is_dark = cx.theme().is_dark();
+        let theme = cx.theme();
+        let (muted, text, strong) = (
+            theme.muted_foreground,
+            theme.secondary_foreground,
+            theme.foreground,
+        );
+        let rows = trees
+            .iter()
+            .enumerate()
+            .filter(|_| open)
+            .map(|(index, tree)| {
+                let color = match &tree.branch {
+                    Some(branch) => lane_color(self.refs.branch_color(branch), is_dark),
+                    None => muted,
+                };
+                let unavailable = tree.unavailable();
+                let path = tree.path.clone();
+                let mut detail = tree.detail();
+                if tree.locked {
+                    detail.push_str(" · locked");
+                }
+                let menu_path = tree.path.clone();
+                let row =
+                    panel_row(("worktree", index), tree.is_current, cx)
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                this.open_worktree_menu(&menu_path, event.position, cx);
+                            }),
+                        )
+                        .h(px(30.))
+                        .pl(indent(0))
+                        .when(unavailable.is_some(), |row| {
+                            row.opacity(0.5).cursor_default()
+                        })
+                        .when(!tree.is_current && unavailable.is_none(), |row| {
+                            row.on_click(cx.listener(move |this, _, _, cx| {
+                                this.switch_worktree(path.clone(), cx)
+                            }))
+                        });
+                row.child(div().size(px(8.)).flex_none().rounded_full().bg(color))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(if tree.is_current { strong } else { text })
+                            .when(tree.is_current, |name| name.font_semibold())
+                            .child(tree.label()),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(TEXT_CHIP)
+                            .text_color(muted)
+                            .child(unavailable.map_or(detail, str::to_owned)),
+                    )
+            });
         div().v_flex().gap(px(2.)).child(header).children(rows)
     }
 

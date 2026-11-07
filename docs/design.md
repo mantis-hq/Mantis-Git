@@ -171,6 +171,24 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Your branch line is blue down to where it forks. Shared history below that takes
   `main`'s colour.
 - Clicking a branch spotlights it: everything outside its history fades to about 28%.
+  `Ctrl`-click adds or removes branches, `Shift`-click picks the range down from the last
+  one, and the graph lights all of their histories. Right-clicking one of several picked
+  refs opens a menu for all of them ("Delete 3 branches"), which asks first and lists the
+  command to bring each back. A checked-out branch and remote branches stay, and the menu
+  says so.
+- Worktrees: when a repository has more than one working tree, the sidebar lists them
+  under "Worktrees", open by default, between Branches and Remotes. A row is the folder's
+  name, then its branch (or `detached at <hash>`) in Overlay 2, with a dot in that
+  branch's colour. The one on show is selected and semibold. Clicking another switches
+  the current tab to it, so the tab strip doesn't grow. A worktree whose
+  folder is gone is dimmed and says so.
+  Right-clicking one opens the usual menu: "Switch to <name>", "Open <name> in a new tab",
+  "Copy path", and in red "Remove worktree <name>", which asks first and gives the
+  `git worktree add` that brings it back. The main worktree, the one on show and a locked
+  one stay, and the menu says why. Git refuses to remove one with uncommitted changes,
+  and the app never forces it. With one working tree the section isn't drawn.
+- A branch row ends with its count against the default branch (`+2 −1`), then against
+  the remote branch it tracks (`↑1 ↓2`: to push, to pull). Level or untracked shows nothing.
 
 ## Components
 
@@ -187,6 +205,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   ("Merge feat/x into main", "Rebase main onto feat/x"). A line that can't be used stays,
   in Overlay 2, and says why. Only lines that remove something are red, and they ask
   first, saying how to undo. `Up`/`Down` move, `Enter` chooses, `Esc` closes.
+- **Double-click:** double-clicking a branch, in the sidebar or on a chip, checks it out. A
+  remote branch gets a local copy that follows it. The checked-out branch does nothing.
 - **Drag and drop:** branches and tags drag from the sidebar and from the refs column,
   and drop on local branches, which tint with 14% Blue. Dropping never acts: it opens a
   menu of what fits how the two histories relate (fast-forward, merge, rebase).

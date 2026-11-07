@@ -2,12 +2,13 @@
 //! branch on another, asks here for the lines of a menu. Each line carries the command it
 //! runs, so the interface only draws lines and hands the chosen command back to be run.
 
-use crate::branch::{self, Dragged, DropAction, Relation};
+use crate::branch::{self, Doomed, Dragged, DropAction, Relation};
 use crate::conflict;
 use crate::details;
 use crate::git::{Commit, RefKind, Refs};
 use crate::text::{count, short_oid};
-use std::path::Path;
+use crate::worktree;
+use std::path::{Path, PathBuf};
 
 /// What a menu line does when chosen.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -38,6 +39,10 @@ pub enum Command {
         /// Where the ref pointed, so the warning can say how to get it back.
         tip: Option<String>,
     },
+    /// Several branches and tags at once.
+    DeleteMany {
+        refs: Vec<Doomed>,
+    },
     /// Oldest first, which is the order they're applied in.
     CherryPick {
         oids: Vec<String>,
@@ -50,6 +55,19 @@ pub enum Command {
     Reset {
         oid: String,
         hard: bool,
+    },
+    /// Handled by the interface, which owns the tabs: shows the worktree in this tab.
+    SwitchWorktree {
+        path: PathBuf,
+    },
+    /// Handled by the interface, which owns the tabs.
+    OpenWorktreeInTab {
+        path: PathBuf,
+    },
+    RemoveWorktree {
+        path: PathBuf,
+        /// What removing it does and how to bring it back, worked out when the menu opened.
+        warning: String,
     },
     /// Handled by the interface, which owns the clipboard.
     Copy {
@@ -81,10 +99,12 @@ impl Command {
             }
             | Self::Rebase { .. } => "Rebasing",
             Self::Drop { .. } => "Merging",
-            Self::Delete { .. } => "Deleting",
+            Self::Delete { .. } | Self::DeleteMany { .. } => "Deleting",
             Self::CherryPick { .. } => "Cherry-picking",
             Self::Revert { .. } => "Reverting",
             Self::Reset { .. } => "Resetting",
+            Self::SwitchWorktree { .. } | Self::OpenWorktreeInTab { .. } => "Switching",
+            Self::RemoveWorktree { .. } => "Removing the worktree",
             Self::Copy { .. } => "Copying",
         }
     }
@@ -103,6 +123,14 @@ impl Command {
             }),
             Self::Delete { kind, name, tip } => Some(Confirmation {
                 message: branch::delete_warning(*kind, name, tip.as_deref()),
+                action: "Delete",
+            }),
+            Self::RemoveWorktree { warning, .. } => Some(Confirmation {
+                message: warning.clone(),
+                action: "Remove",
+            }),
+            Self::DeleteMany { refs } => Some(Confirmation {
+                message: branch::delete_many_warning(refs),
                 action: "Delete",
             }),
             Self::Reset {
@@ -146,6 +174,7 @@ impl Command {
                 RefKind::Tag => branch::delete_tag(repo, name),
                 _ => branch::delete_branch(repo, name),
             },
+            Self::DeleteMany { refs } => branch::delete_many(repo, refs),
             Self::CherryPick { oids } => match oids.as_slice() {
                 [oid] => details::cherry_pick(repo, oid),
                 _ => details::cherry_pick_many(repo, oids),
@@ -155,7 +184,10 @@ impl Command {
                 _ => details::revert_many(repo, oids),
             },
             Self::Reset { oid, hard } => details::reset(repo, oid, *hard),
-            Self::Copy { .. } => Ok(None),
+            Self::RemoveWorktree { path, .. } => worktree::remove(repo, path),
+            Self::SwitchWorktree { .. } | Self::OpenWorktreeInTab { .. } | Self::Copy { .. } => {
+                Ok(None)
+            }
         }
     }
 }
@@ -290,6 +322,118 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
             )
             .danger(),
         );
+    }
+    lines
+}
+
+/// Whether a ref can be deleted from the menu: a local branch that isn't checked out, or
+/// a tag. A remote branch is somebody else's to remove.
+fn why_not_deletable(refs: &Refs, target: &Dragged) -> Option<String> {
+    let name = &target.name;
+    match target.kind {
+        RefKind::Tag => None,
+        RefKind::Branch if refs.head_branch.as_deref() == Some(name.as_str()) => {
+            Some(format!("{name} is checked out, so it stays"))
+        }
+        RefKind::Branch => None,
+        _ => Some(format!("{name} is a remote branch, so it stays")),
+    }
+}
+
+/// The menu for a working tree in the sidebar.
+pub fn worktree_menu(refs: &Refs, path: &Path) -> Vec<Line> {
+    let Some(tree) = refs.worktrees.iter().find(|tree| tree.path == path) else {
+        return Vec::new();
+    };
+    let name = tree.label();
+    let mut lines = vec![Line::Heading(name.clone())];
+    let (switch, new_tab) = if tree.is_current {
+        (
+            Line::unavailable(format!("{name} is the one on show")),
+            Line::unavailable("Already open here"),
+        )
+    } else if let Some(reason) = tree.unavailable() {
+        (
+            Line::unavailable(format!("Can't switch to {name}: {}", reason.to_lowercase())),
+            Line::unavailable("Can't open it in a new tab"),
+        )
+    } else {
+        let path = tree.path.clone();
+        (
+            Line::item(
+                format!("Switch to {name}"),
+                Command::SwitchWorktree { path: path.clone() },
+            ),
+            Line::item(
+                format!("Open {name} in a new tab"),
+                Command::OpenWorktreeInTab { path },
+            ),
+        )
+    };
+    lines.push(switch);
+    lines.push(new_tab);
+    lines.push(Line::Separator);
+    lines.push(Line::item(
+        "Copy path",
+        copy(&tree.path.to_string_lossy(), "the path"),
+    ));
+    lines.push(Line::Separator);
+    lines.push(if tree.is_main {
+        Line::unavailable(format!("{name} holds the repository, so it stays"))
+    } else if tree.is_current {
+        Line::unavailable(format!("{name} is on show, so it stays"))
+    } else if tree.locked {
+        Line::unavailable(format!("{name} is locked, so it stays"))
+    } else {
+        Line::item(
+            format!("Remove worktree {name}"),
+            Command::RemoveWorktree {
+                path: tree.path.clone(),
+                warning: worktree::remove_warning(tree),
+            },
+        )
+        .danger()
+    });
+    lines
+}
+
+/// The menu for several picked branches and tags. What it can do to many at once is
+/// copy their names and delete them.
+pub fn refs_menu(refs: &Refs, targets: &[Dragged]) -> Vec<Line> {
+    let mut lines = vec![Line::Heading(format!("{} selected", targets.len()))];
+    let names: Vec<&str> = targets.iter().map(|t| t.name.as_str()).collect();
+    lines.push(Line::item(
+        "Copy names",
+        copy(&names.join("\n"), "the names"),
+    ));
+
+    let (deletable, kept): (Vec<&Dragged>, Vec<&Dragged>) = targets
+        .iter()
+        .partition(|target| why_not_deletable(refs, target).is_none());
+    lines.push(Line::Separator);
+    for target in &kept {
+        if let Some(reason) = why_not_deletable(refs, target) {
+            lines.push(Line::unavailable(reason));
+        }
+    }
+    if !deletable.is_empty() {
+        let doomed: Vec<Doomed> = deletable
+            .iter()
+            .map(|target| Doomed {
+                kind: target.kind,
+                name: target.name.clone(),
+                tip: crate::picks::tip_of(refs, target).map(|tip| tip.to_string()),
+            })
+            .collect();
+        let tags = doomed.iter().filter(|d| d.kind == RefKind::Tag).count();
+        let label = match (tags, doomed.len()) {
+            (0, 1) => "Delete 1 branch".to_owned(),
+            (0, n) => format!("Delete {n} branches"),
+            (t, n) if t == n && n == 1 => "Delete 1 tag".to_owned(),
+            (t, n) if t == n => format!("Delete {n} tags"),
+            (_, n) => format!("Delete {n} branches and tags"),
+        };
+        lines.push(Line::item(label, Command::DeleteMany { refs: doomed }).danger());
     }
     lines
 }
@@ -465,6 +609,7 @@ mod tests {
             color: LaneColor::default(),
             is_head,
             ahead_behind: None,
+            upstream: None,
         };
         let mut refs = Refs::default();
         refs.head = Some("aaaaaaaa".into());
@@ -479,6 +624,47 @@ mod tests {
             color: LaneColor::default(),
         }];
         refs
+    }
+
+    #[test]
+    fn a_worktree_menu_switches_copies_and_removes_only_what_may_go() {
+        let mut refs = refs();
+        refs.worktrees = crate::worktree::parse(
+            "worktree /code/app\nHEAD aaaaaaaa\nbranch refs/heads/main\n\n\
+             worktree /code/app-x\nHEAD bbbbbbbb\nbranch refs/heads/feat/x\n\n\
+             worktree /code/app-l\nHEAD bbbbbbbb\ndetached\nlocked\n",
+        );
+        refs.worktrees[0].is_current = true;
+
+        let linked = worktree_menu(&refs, Path::new("/code/app-x"));
+        assert_eq!(
+            labels(&linked),
+            [
+                "Switch to app-x",
+                "Open app-x in a new tab",
+                "Copy path",
+                "Remove worktree app-x",
+            ]
+        );
+        let remove = linked.last().and_then(Line::command).unwrap();
+        assert!(
+            remove
+                .confirmation()
+                .unwrap()
+                .message
+                .contains("git worktree add")
+        );
+
+        let current = worktree_menu(&refs, Path::new("/code/app"));
+        assert!(current.iter().all(|line| {
+            line.command()
+                .is_none_or(|c| matches!(c, Command::Copy { .. }))
+        }));
+        assert!(labels(&current).contains(&"app holds the repository, so it stays"));
+
+        let locked = worktree_menu(&refs, Path::new("/code/app-l"));
+        assert!(labels(&locked).contains(&"app-l is locked, so it stays"));
+        assert!(worktree_menu(&refs, Path::new("/nowhere")).is_empty());
     }
 
     fn labels(lines: &[Line]) -> Vec<&str> {
@@ -496,6 +682,50 @@ mod tests {
             kind,
             name: name.into(),
         }
+    }
+
+    #[test]
+    fn several_picks_can_be_deleted_but_not_the_checked_out_one() {
+        let picks = [
+            target(RefKind::Branch, "main"),
+            target(RefKind::Branch, "feat/x"),
+            target(RefKind::Tag, "v1.0.0"),
+        ];
+        let lines = refs_menu(&refs(), &picks);
+        assert_eq!(
+            labels(&lines),
+            [
+                "Copy names",
+                "main is checked out, so it stays",
+                "Delete 2 branches and tags"
+            ]
+        );
+        let command = lines.last().unwrap().command().unwrap();
+        let Command::DeleteMany { refs } = command else {
+            panic!("expected a bulk delete");
+        };
+        assert_eq!(refs.len(), 2);
+        assert!(
+            command
+                .confirmation()
+                .unwrap()
+                .message
+                .contains("feat/x, v1.0.0")
+        );
+    }
+
+    #[test]
+    fn only_a_checked_out_branch_leaves_nothing_to_delete() {
+        let picks = [
+            target(RefKind::Branch, "main"),
+            target(RefKind::Remote, "origin/x"),
+        ];
+        let lines = refs_menu(&refs(), &picks);
+        assert!(
+            lines
+                .iter()
+                .all(|l| !matches!(l.command(), Some(Command::DeleteMany { .. })))
+        );
     }
 
     #[test]

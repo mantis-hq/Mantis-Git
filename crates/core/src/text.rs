@@ -10,6 +10,16 @@ pub fn count(number: impl Display, noun: &str) -> String {
 }
 
 /// A commit's hash, short enough to read.
+/// `↑2 ↓1`: commits to push and commits to pull. Empty when both are zero.
+pub fn ahead_behind(ahead: u32, behind: u32) -> String {
+    match (ahead, behind) {
+        (0, 0) => String::new(),
+        (ahead, 0) => format!("↑{ahead}"),
+        (0, behind) => format!("↓{behind}"),
+        (ahead, behind) => format!("↑{ahead} ↓{behind}"),
+    }
+}
+
 pub fn short_oid(oid: &str) -> &str {
     &oid[..oid.len().min(7)]
 }
@@ -42,5 +52,18 @@ mod tests {
     fn paths_split_after_their_last_folder() {
         assert_eq!(split_path("src/view/app.rs"), ("src/view/", "app.rs"));
         assert_eq!(split_path("app.rs"), ("", "app.rs"));
+    }
+}
+
+#[cfg(test)]
+mod ahead_behind_tests {
+    use super::ahead_behind;
+
+    #[test]
+    fn only_the_sides_with_commits_show() {
+        assert_eq!(ahead_behind(0, 0), "");
+        assert_eq!(ahead_behind(2, 0), "↑2");
+        assert_eq!(ahead_behind(0, 3), "↓3");
+        assert_eq!(ahead_behind(2, 3), "↑2 ↓3");
     }
 }

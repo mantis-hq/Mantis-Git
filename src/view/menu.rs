@@ -2,9 +2,9 @@
 //! that is chosen. What a menu offers, and what each line does, is decided in
 //! `gitclient_core::menu`.
 
-use super::GraphView;
 use super::notice::{Confirm, Notice};
 use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
+use super::{GraphView, OpenWorktreeInTab, SwitchWorktree};
 use crate::theme::selected_row;
 use gitclient_core::branch::{self, Dragged, Relation};
 use gitclient_core::git::RefKind;
@@ -12,6 +12,7 @@ use gitclient_core::menu::{self, Command, Line};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::path::Path;
 use std::rc::Rc;
 
 const MENU_WIDTH: Pixels = px(300.);
@@ -168,7 +169,11 @@ impl GraphView {
     /// Closes the menu and does what the chosen line says, asking first when it must.
     fn choose(&mut self, command: Command, cx: &mut Context<Self>) {
         self.menu = None;
-        if let Some(text) = copied_text(&command) {
+        if let Command::SwitchWorktree { path } = &command {
+            cx.emit(SwitchWorktree(path.clone()));
+        } else if let Command::OpenWorktreeInTab { path } = &command {
+            cx.emit(OpenWorktreeInTab(path.clone()));
+        } else if let Some(text) = copied_text(&command) {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
             self.notice = command
                 .copied_notice()
@@ -186,6 +191,28 @@ impl GraphView {
         }
     }
 
+    /// A double-click on a branch switches to it. The checked-out branch has nowhere to go.
+    pub(super) fn open_on_double_click(
+        &mut self,
+        target: &Dragged,
+        event: &ClickEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let switchable = matches!(target.kind, RefKind::Branch | RefKind::Remote)
+            && !(target.kind == RefKind::Branch
+                && self.refs.head_branch.as_deref() == Some(target.name.as_str()));
+        if event.click_count() < 2 || !switchable || self.busy.is_some() {
+            return;
+        }
+        self.run_command(
+            Command::CheckOutRef {
+                kind: target.kind,
+                name: target.name.clone(),
+            },
+            cx,
+        );
+    }
+
     fn run_command(&mut self, command: Command, cx: &mut Context<Self>) {
         let label = command.progress();
         self.run_operation(label, move |repo| command.run(repo), cx);
@@ -197,7 +224,23 @@ impl GraphView {
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) {
-        let lines = menu::ref_menu(&self.refs, &target);
+        // A right-click on one of several picked refs acts on all of them.
+        let picks = self.sidebar.picks.items();
+        let lines = if picks.len() > 1 && picks.contains(&target) {
+            menu::refs_menu(&self.refs, picks)
+        } else {
+            menu::ref_menu(&self.refs, &target)
+        };
+        self.show_menu(position, lines, cx);
+    }
+
+    pub(super) fn open_worktree_menu(
+        &mut self,
+        path: &Path,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let lines = menu::worktree_menu(&self.refs, path);
         self.show_menu(position, lines, cx);
     }
 

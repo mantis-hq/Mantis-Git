@@ -8,6 +8,7 @@ use crate::ops::{self, Process, git, stderr_message};
 use crate::status::{self, RepoStatus};
 use crate::text::count;
 use crate::working::{self, Version};
+use crate::worktree::{self, Worktree};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -132,9 +133,21 @@ pub struct Branch {
     pub is_head: bool,
     /// Commits this has that the default branch doesn't, and the other way around.
     pub ahead_behind: Option<(u32, u32)>,
+    /// Commits this has that its remote branch doesn't, and the other way around. `None`
+    /// when it tracks nothing, or the remote branch is gone.
+    pub upstream: Option<(u32, u32)>,
 }
 
 impl Branch {
+    /// How the branch stands against the remote it tracks: `↑2 ↓1`, or nothing when level
+    /// or untracked.
+    pub fn remote_delta(&self) -> String {
+        match self.upstream {
+            Some((ahead, behind)) => crate::text::ahead_behind(ahead, behind),
+            None => String::new(),
+        }
+    }
+
     /// How the branch stands against the default branch, in a few characters.
     pub fn delta(&self, default_branch: Option<&str>) -> String {
         match self.ahead_behind {
@@ -170,6 +183,8 @@ pub struct Refs {
     pub tags: Vec<NamedRef>,
     /// Stash subjects, newest first.
     pub stashes: Vec<String>,
+    /// The repository's working trees, main one first. Empty when git can't say.
+    pub worktrees: Vec<Worktree>,
     /// How to lay out the graph for this repository.
     pub plan: Plan,
     /// The top of the working tree, or the repository itself when it is bare.
@@ -346,10 +361,13 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
     let workdir = toplevel.map(|path| PathBuf::from(path.trim_end()));
 
     let status = status::read(repo);
+    let workdir = workdir.unwrap_or_else(|| repo.to_owned());
+    let worktrees = worktree::list(repo, &workdir);
 
     let mut refs = Refs {
-        workdir: workdir.or_else(|| Some(repo.to_owned())),
-        fingerprint: format!("{listing}\0{head_ref:?}\0{head:?}\0{status:?}"),
+        fingerprint: format!("{listing}\0{head_ref:?}\0{head:?}\0{status:?}\0{worktrees:?}"),
+        workdir: Some(workdir),
+        worktrees,
         status,
         ..Refs::default()
     };
@@ -423,6 +441,7 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
         .as_deref()
         .map(|default| read_ahead_behind(repo, &found, default))
         .unwrap_or_default();
+    let upstream = read_upstream(repo);
     for &(kind, name, commit, _) in &found {
         let tip: Arc<str> = commit.into();
         let color = color_of(kind, name);
@@ -433,6 +452,7 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
                 color,
                 is_head: head_branch == Some(name),
                 ahead_behind: ahead_behind.get(name).copied(),
+                upstream: upstream.get(name).copied(),
             }),
             RefKind::Remote => refs.remotes.push(NamedRef {
                 name: name.to_owned(),
@@ -567,6 +587,40 @@ fn read_ahead_behind(
             Some((name.to_owned(), (ahead.parse().ok()?, behind.parse().ok()?)))
         })
         .collect()
+}
+
+/// How each local branch stands against the remote branch it tracks, in one git call.
+/// Branches that track nothing, or whose remote branch is gone, are left out.
+fn read_upstream(repo: &Path) -> HashMap<String, (u32, u32)> {
+    let format = "--format=%(refname:short)%00%(upstream)%00%(upstream:track)";
+    let listing = ops::run(repo, &["for-each-ref", format, "refs/heads"]).unwrap_or_default();
+    listing
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\0');
+            let (name, upstream, track) = (parts.next()?, parts.next()?, parts.next()?);
+            (!upstream.is_empty()).then_some(())?;
+            Some((name.to_owned(), parse_track(track)?))
+        })
+        .collect()
+}
+
+/// Reads `[ahead 2, behind 1]`, which is empty when level and `[gone]` when the remote
+/// branch is.
+fn parse_track(track: &str) -> Option<(u32, u32)> {
+    let track = track.trim().trim_start_matches('[').trim_end_matches(']');
+    if track == "gone" {
+        return None;
+    }
+    let (mut ahead, mut behind) = (0, 0);
+    for part in track.split(',') {
+        match part.trim().split_once(' ') {
+            Some(("ahead", n)) => ahead = n.parse().ok()?,
+            Some(("behind", n)) => behind = n.parse().ok()?,
+            _ => {}
+        }
+    }
+    Some((ahead, behind))
 }
 
 /// Where HEAD's first-parent line joins `base`. This can't be `git merge-base`: after
@@ -717,6 +771,15 @@ mod tests {
             .iter()
             .map(|r| (r.kind, r.name.clone()))
             .collect()
+    }
+
+    #[test]
+    fn track_text_reads_as_counts() {
+        assert_eq!(parse_track(""), Some((0, 0)));
+        assert_eq!(parse_track("[ahead 2]"), Some((2, 0)));
+        assert_eq!(parse_track("[behind 1]"), Some((0, 1)));
+        assert_eq!(parse_track("[ahead 2, behind 1]"), Some((2, 1)));
+        assert_eq!(parse_track("[gone]"), None);
     }
 
     #[test]

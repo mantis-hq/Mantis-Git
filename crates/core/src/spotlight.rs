@@ -1,4 +1,5 @@
-//! Works out what stays lit when one branch is spotlighted.
+//! Works out what stays lit when branches are spotlighted. One click picks a branch, and
+//! picking more adds to it.
 
 use crate::git::Entry;
 use std::collections::HashMap;
@@ -7,8 +8,9 @@ use std::sync::Arc;
 /// Which parts of the graph belong to a branch's history.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Spotlight {
-    /// The commit each branch or tag points at, which identifies what's spotlighted.
-    pub tip: Arc<str>,
+    /// The commit each spotlighted branch or tag points at, which identifies what's
+    /// spotlighted. Never empty.
+    tips: Vec<Arc<str>>,
     /// By row: whether its commit is in the history.
     commits: Vec<bool>,
     /// By row: the columns entering the top of the row that lead to the history. Rows
@@ -19,7 +21,7 @@ pub struct Spotlight {
 impl Spotlight {
     /// Walks the list once. Children always come before parents, so a commit is known to
     /// be in the history by the time the list reaches it.
-    pub fn new(tip: Arc<str>, entries: &[Entry]) -> Self {
+    pub fn new(tips: Vec<Arc<str>>, entries: &[Entry]) -> Self {
         let rows: HashMap<&str, usize> = entries
             .iter()
             .enumerate()
@@ -27,8 +29,10 @@ impl Spotlight {
             .collect();
 
         let mut commits = vec![false; entries.len()];
-        if let Some(&index) = rows.get(&*tip) {
-            commits[index] = true;
+        for tip in &tips {
+            if let Some(&index) = rows.get(&**tip) {
+                commits[index] = true;
+            }
         }
         for index in 0..entries.len() {
             if commits[index] {
@@ -61,10 +65,14 @@ impl Spotlight {
         }
 
         Self {
-            tip,
+            tips,
             commits,
             columns,
         }
+    }
+
+    pub fn tips(&self) -> &[Arc<str>] {
+        &self.tips
     }
 
     pub fn commit_is_lit(&self, row: usize) -> bool {
@@ -114,7 +122,7 @@ mod tests {
             ("base", &["root"]),
             ("root", &[]),
         ]);
-        let spot = Spotlight::new("mine".into(), &list);
+        let spot = Spotlight::new(vec!["mine".into()], &list);
         assert!(spot.commit_is_lit(0));
         assert!(!spot.commit_is_lit(1));
         assert!(spot.commit_is_lit(2) && spot.commit_is_lit(3));
@@ -128,10 +136,10 @@ mod tests {
             ("right", &["base"]),
             ("base", &[]),
         ]);
-        let spot = Spotlight::new("merge".into(), &list);
+        let spot = Spotlight::new(vec!["merge".into()], &list);
         assert!((0..4).all(|row| spot.commit_is_lit(row)));
 
-        let spot = Spotlight::new("right".into(), &list);
+        let spot = Spotlight::new(vec!["right".into()], &list);
         assert!(!spot.commit_is_lit(0) && !spot.commit_is_lit(1));
         assert!(spot.commit_is_lit(2) && spot.commit_is_lit(3));
     }
@@ -145,7 +153,7 @@ mod tests {
             ("base", &[]),
         ]);
         // `other` sits in column 1 and third's line runs beside mine's.
-        let spot = Spotlight::new("mine".into(), &list);
+        let spot = Spotlight::new(vec!["mine".into()], &list);
         assert!(spot.column_is_lit(1, 0), "mine's line beside `other`");
         assert!(!spot.column_is_lit(1, 1), "nothing of mine in column 1");
         assert!(spot.column_is_lit(3, 0), "mine's line arrives at base");
@@ -153,15 +161,29 @@ mod tests {
     }
 
     #[test]
+    fn several_branches_light_the_union_of_their_histories() {
+        let list = entries(&[
+            ("mine", &["base"]),
+            ("other", &["base"]),
+            ("third", &["root"]),
+            ("base", &["root"]),
+            ("root", &[]),
+        ]);
+        let spot = Spotlight::new(vec!["mine".into(), "third".into()], &list);
+        assert!(spot.commit_is_lit(0) && !spot.commit_is_lit(1));
+        assert!(spot.commit_is_lit(2) && spot.commit_is_lit(3) && spot.commit_is_lit(4));
+    }
+
+    #[test]
     fn a_tip_outside_the_list_lights_nothing() {
         let list = entries(&[("a", &[])]);
-        assert!(!Spotlight::new("gone".into(), &list).commit_is_lit(0));
+        assert!(!Spotlight::new(vec!["gone".into()], &list).commit_is_lit(0));
     }
 
     #[test]
     fn unchanged_rows_share_their_column_list() {
         let list = entries(&[("a", &["b"]), ("b", &["c"]), ("c", &["d"]), ("d", &[])]);
-        let spot = Spotlight::new("a".into(), &list);
+        let spot = Spotlight::new(vec!["a".into()], &list);
         assert!(Arc::ptr_eq(&spot.columns[1], &spot.columns[2]));
     }
 }
