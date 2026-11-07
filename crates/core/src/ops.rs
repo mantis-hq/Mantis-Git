@@ -8,10 +8,15 @@ use std::process::{Command, Stdio};
 
 /// A git command for `repo`, with the environment every call needs.
 pub(crate) fn git(repo: &Path) -> Command {
+    let mut command = git_anywhere();
+    command.arg("-C").arg(repo);
+    command
+}
+
+/// A git command that belongs to no repository, such as one about the user's own config.
+pub(crate) fn git_anywhere() -> Command {
     let mut command = Command::new("git");
     command
-        .arg("-C")
-        .arg(repo)
         // Launched from inside a git hook these would point at some other repository.
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")

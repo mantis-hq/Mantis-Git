@@ -56,6 +56,15 @@ impl GraphView {
             .when_some(action.filter(|_| has_repo), |bar, action| {
                 bar.child(self.render_action(action, cx))
             })
+            .child(
+                Button::new("settings")
+                    .ghost()
+                    .label("Settings")
+                    .tooltip("Edit your git config (Ctrl ,)")
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(super::OpenSettings.boxed_clone(), cx)
+                    }),
+            )
     }
 
     fn render_sentence(&self, cx: &mut Context<Self>) -> impl IntoElement {

@@ -15,7 +15,13 @@ fn main() {
         theme::init(cx);
         view::bind_keys(cx);
 
-        cx.on_window_closed(|cx, _| cx.quit()).detach();
+        // Settings is an add-on to the main window, so closing it alone keeps the app open.
+        cx.on_window_closed(|cx, _| {
+            if view::should_quit(cx) {
+                cx.quit()
+            }
+        })
+        .detach();
 
         let options = WindowOptions {
             titlebar: Some(TitlebarOptions {

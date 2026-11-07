@@ -1,7 +1,7 @@
 //! The task screen for writing a commit: choose hunks, say what they do.
 
 use super::parts::{
-    LineStyle, expand_tabs, file_path, header_bar, header_divider, line_style, panel_row,
+    LineStyle, checkbox, expand_tabs, file_path, header_bar, header_divider, line_style, panel_row,
     section_label, status_color,
 };
 use super::{GraphView, Notice, Screen};
@@ -607,27 +607,4 @@ fn render_hunk_lines(hunk: &Hunk, cx: &App) -> Div {
                     .child(format!("{hidden} more lines in this change")),
             )
         })
-}
-
-/// A 16 px box, with a tick or a dash so its state doesn't rest on colour alone.
-fn checkbox(id: impl Into<ElementId>, on: bool, partly: bool, cx: &App) -> Stateful<Div> {
-    let theme = cx.theme();
-    let (primary, on_primary) = (theme.primary, theme.primary_foreground);
-    let idle = tokens(theme.is_dark()).overlay1;
-    let filled = on || partly;
-    div()
-        .id(id)
-        .h_flex()
-        .justify_center()
-        .size(px(16.))
-        .flex_none()
-        .rounded(px(4.))
-        .cursor_pointer()
-        .text_size(px(11.))
-        .font_semibold()
-        .text_color(on_primary)
-        .when(filled, |tick| tick.bg(primary))
-        .when(!filled, |tick| tick.border(px(1.5)).border_color(idle))
-        .when(on, |tick| tick.child("✓"))
-        .when(partly, |tick| tick.child("–"))
 }

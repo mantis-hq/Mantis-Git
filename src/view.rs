@@ -9,9 +9,11 @@ mod inspector;
 mod notice;
 mod parts;
 mod rows;
+mod settings;
 mod sidebar;
 mod workspace;
 
+pub use settings::{OpenSettings, should_quit};
 pub use workspace::Workspace;
 
 use gitclient_core::git::{self, Entry, LoadEvent, Refs};
@@ -45,6 +47,7 @@ actions!(
 
 pub fn bind_keys(cx: &mut App) {
     workspace::bind_workspace_keys(cx);
+    settings::bind_keys(cx);
     // KeyBinding::new has no OS to resolve a `secondary-` modifier against, and panics.
     let (refresh, sidebar) = if cfg!(target_os = "macos") {
         ("cmd-r", "cmd-b")

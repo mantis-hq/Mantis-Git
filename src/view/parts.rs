@@ -110,3 +110,31 @@ pub(super) fn line_style(kind: LineKind, cx: &App) -> LineStyle {
 pub(super) fn expand_tabs(line: &str) -> String {
     line.replace('\t', TAB)
 }
+
+/// A 16 px box, with a tick or a dash so its state doesn't rest on colour alone.
+pub(super) fn checkbox(
+    id: impl Into<ElementId>,
+    on: bool,
+    partly: bool,
+    cx: &App,
+) -> Stateful<Div> {
+    let theme = cx.theme();
+    let (primary, on_primary) = (theme.primary, theme.primary_foreground);
+    let idle = tokens(theme.is_dark()).overlay1;
+    let filled = on || partly;
+    div()
+        .id(id)
+        .h_flex()
+        .justify_center()
+        .size(px(16.))
+        .flex_none()
+        .rounded(px(4.))
+        .cursor_pointer()
+        .text_size(px(11.))
+        .font_semibold()
+        .text_color(on_primary)
+        .when(filled, |tick| tick.bg(primary))
+        .when(!filled, |tick| tick.border(px(1.5)).border_color(idle))
+        .when(on, |tick| tick.child("✓"))
+        .when(partly, |tick| tick.child("–"))
+}
