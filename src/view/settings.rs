@@ -5,7 +5,9 @@
 //! There is no Save button. Toggles and choices apply when clicked, text applies when you
 //! press Enter or leave the field, and the header says what happened.
 
-use super::parts::{checkbox, header_bar, panel_row, section_label, title};
+use super::parts::{
+    Edge, checkbox, fit, grip, header_bar, on_resize, panel_row, section_label, title,
+};
 use super::repository_name;
 use crate::theme::{selected_row, tokens};
 use gitclient_core::config::{self, Kind, Scope, Setting, Sources, Values, Version};
@@ -234,6 +236,8 @@ pub struct Settings {
     base: Scope,
     repo: Option<PathBuf>,
     page: Page,
+    /// The width the user dragged the side panel to.
+    sidebar_width: Option<f32>,
     target: Target,
     git: Option<Result<Version, String>>,
     /// What the file being edited holds. `None` until it has been read.
@@ -345,6 +349,7 @@ impl Settings {
             base,
             repo,
             page: Page::GitConfig,
+            sidebar_width: None,
             target: Target::Everywhere,
             git: None,
             values: None,
@@ -1003,7 +1008,7 @@ impl Settings {
         });
         div()
             .v_flex()
-            .w(SIDEBAR_WIDTH)
+            .w(self.sidebar_width.map_or(SIDEBAR_WIDTH, px))
             .flex_none()
             .p_2()
             .gap_1()
@@ -1919,28 +1924,32 @@ impl Render for Settings {
             Page::GitConfig => self.render_git_config(cx),
             Page::Identities => self.render_identities(cx),
         };
+        let body = div()
+            .h_flex()
+            .flex_1()
+            .min_h_0()
+            .items_stretch()
+            .child(self.render_sidebar(cx))
+            .child(grip(Edge::Settings, true, cx))
+            .child(
+                div()
+                    .id("settings-page")
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_y_scroll()
+                    .child(div().h_flex().justify_center().p_6().child(page)),
+            );
+        let body = on_resize(body, Edge::Settings, cx, |this, pointer, bounds| {
+            let max = f32::from(bounds.size.width) - 400.;
+            this.sidebar_width = Some(fit(pointer.x - bounds.left(), 160., max));
+        });
         div()
             .v_flex()
             .size_full()
             .bg(background)
             .text_color(text)
             .child(self.render_header(cx))
-            .child(
-                div()
-                    .h_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .items_stretch()
-                    .child(self.render_sidebar(cx))
-                    .child(
-                        div()
-                            .id("settings-page")
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_y_scroll()
-                            .child(div().h_flex().justify_center().p_6().child(page)),
-                    ),
-            )
+            .child(body)
     }
 }
 

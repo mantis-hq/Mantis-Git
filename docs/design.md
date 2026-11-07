@@ -140,6 +140,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide. Rows have no
   column headings or hash: the refs column, the graph, the subject, then author and a short time
   ("12m", "3h", "Tue", "Oct 30"). The full hash belongs to the inspector.
+- Resizing: every panel edge drags, so a panel can be made smaller or bigger. These are
+  the sidebar, inspector, diff, dock and its log list, the commit screen's file list and
+  form, the conflict steps, and the settings side panel. The pointer shows a resize cursor
+  over a 4 px strip on the edge, which tints 50% Blue. A panel stops at a minimum, and at
+  the point where the main area would be under 320 px. Sizes last until the window closes.
 - Radii: 4 px for chips and checkboxes, 6 px for buttons and inputs, 8 px for cards.
 - Separate regions with Surface 0 borders and surface changes. No drop shadows, no
   coloured side stripes on cards, no emoji.

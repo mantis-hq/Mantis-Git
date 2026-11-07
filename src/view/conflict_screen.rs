@@ -1,7 +1,7 @@
 //! The task screen for a paused rebase, cherry-pick, revert or merge.
 
 use super::notice::Confirm;
-use super::parts::{expand_tabs, header_bar, section_label, title};
+use super::parts::{Edge, expand_tabs, fit, grip, header_bar, on_resize, section_label, title};
 use super::{GraphView, Notice, Screen};
 use crate::theme::{lane_color, tokens};
 use gitclient_core::conflict::{self, Decision, Progress, Side, Step, StepState};
@@ -21,6 +21,8 @@ pub(super) struct State {
     progress: Option<Arc<Progress>>,
     /// The decision on show.
     decision: usize,
+    /// The width the user dragged the steps panel to.
+    steps_width: Option<f32>,
     /// The result chosen for each decision so far.
     answers: Vec<Option<String>>,
     picked: Vec<Option<Side>>,
@@ -247,7 +249,12 @@ impl GraphView {
             .items_stretch()
             .flex_1()
             .min_h_0()
-            .child(self.render_steps(&shown, finished.is_some(), cx));
+            .child(self.render_steps(&shown, finished.is_some(), cx))
+            .child(grip(Edge::Steps, true, cx));
+        let body = on_resize(body, Edge::Steps, cx, |this, pointer, bounds| {
+            let max = f32::from(bounds.size.width) - 360.;
+            this.conflict.steps_width = Some(fit(pointer.x - bounds.left(), 240., max));
+        });
         let body = match decision.filter(|_| finished.is_none()) {
             Some(decision) => body.child(self.render_decision(&shown, &decision, cx)),
             None => body.child(div().flex_1()),
@@ -364,7 +371,7 @@ impl GraphView {
 
         div()
             .v_flex()
-            .w(STEPS_WIDTH)
+            .w(self.conflict.steps_width.map_or(STEPS_WIDTH, px))
             .flex_none()
             .p_4()
             .gap_3()

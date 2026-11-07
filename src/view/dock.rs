@@ -5,7 +5,7 @@
 //! Closed, the dock is a thin bar that still says which command is running, so a slow
 //! command is never a silent wait.
 
-use super::parts;
+use super::parts::{self, Edge, fit, grip, on_resize};
 use super::terminal::{ROW_HEIGHT, TerminalPane};
 use crate::theme::tokens;
 use gitclient_core::log::{self, Entry, State, Stream};
@@ -44,6 +44,11 @@ struct TerminalTab {
 
 pub struct Dock {
     open: bool,
+    /// What the user dragged the body's height and the log's list width to.
+    height: Option<f32>,
+    log_width: Option<f32>,
+    /// The window's height as last drawn, so a drag can leave history in view.
+    window_height: f32,
     /// 0 is the log, then one per terminal.
     active: usize,
     terminals: Vec<TerminalTab>,
@@ -85,6 +90,9 @@ impl Dock {
         });
         Self {
             open: false,
+            height: None,
+            log_width: None,
+            window_height: 0.,
             active: 0,
             terminals: Vec::new(),
             terminals_opened: 0,
@@ -343,7 +351,7 @@ impl Dock {
         let sidebar = div()
             .relative()
             .v_flex()
-            .w(px(SIDEBAR_WIDTH))
+            .w(px(self.log_width.unwrap_or(SIDEBAR_WIDTH)))
             // A row of columns centres them, and a column with no height shows nothing.
             .h_full()
             .flex_none()
@@ -387,13 +395,18 @@ impl Dock {
                     .scrollbar(&self.output_scroll, ScrollbarAxis::Vertical),
             );
 
-        div()
+        let row = div()
             .h_flex()
             .flex_1()
             .min_h_0()
             .child(sidebar)
-            .child(output)
-            .into_any_element()
+            .child(grip(Edge::Log, true, cx))
+            .child(output);
+        on_resize(row, Edge::Log, cx, |this, pointer, bounds| {
+            let max = f32::from(bounds.size.width) - 240.;
+            this.log_width = Some(fit(pointer.x - bounds.left(), 160., max));
+        })
+        .into_any_element()
     }
 
     /// The sidebar's rows, newest first.
@@ -580,7 +593,11 @@ impl Render for Dock {
         let theme = cx.theme();
         let (panel, border) = (theme.title_bar, theme.border);
         // The dock never takes more than 40% of the window, so history stays in view.
-        let height = (window.viewport_size().height * 0.4).clamp(px(160.), px(420.));
+        self.window_height = f32::from(window.viewport_size().height);
+        let height = self.height.map_or_else(
+            || (window.viewport_size().height * 0.4).clamp(px(160.), px(420.)),
+            px,
+        );
 
         let body = self.open.then(|| {
             let terminal = self.active_terminal().cloned();
@@ -610,14 +627,21 @@ impl Render for Dock {
                 .child(content)
         });
 
-        div()
+        let open = self.open;
+        let dock = div()
             .v_flex()
             .flex_none()
             .w_full()
             .bg(panel)
             .border_t_1()
             .border_color(border)
+            .when(open, |dock| dock.child(grip(Edge::Dock, false, cx)))
             .child(self.render_bar(cx))
-            .children(body)
+            .children(body);
+        on_resize(dock, Edge::Dock, cx, |this, pointer, bounds| {
+            // The body sits under the bar, so the pointer sets where the bar's top is.
+            let height = bounds.bottom() - pointer.y - px(BAR_HEIGHT);
+            this.height = Some(fit(height, 120., this.window_height - 240.));
+        })
     }
 }

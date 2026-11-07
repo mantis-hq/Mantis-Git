@@ -484,6 +484,7 @@ impl GraphView {
         let sidebar = self.render_sidebar(cx);
         let inspector = self.render_inspector(cx);
         let diff = self.render_diff(cx);
+        let (has_sidebar, has_inspector) = (sidebar.is_some(), inspector.is_some());
         let main = div()
             .v_flex()
             .flex_1()
@@ -507,17 +508,54 @@ impl GraphView {
                     )
                     .vertical_scrollbar(&self.scroll),
             )
+            .when(diff.is_some(), |main| {
+                main.child(parts::grip(parts::Edge::Diff, false, cx))
+            })
             .children(diff);
+        // The graph keeps at least this much, so no edge can be dragged over it.
+        const GRAPH_MIN: f32 = 320.;
+        let main = parts::on_resize(main, parts::Edge::Diff, cx, |this, pointer, bounds| {
+            let height = bounds.bottom() - pointer.y;
+            this.diff.height = Some(parts::fit(
+                height,
+                180.,
+                f32::from(bounds.size.height) - 120.,
+            ));
+        });
 
-        div()
+        let row = div()
             .h_flex()
             .items_stretch()
             .flex_1()
             .min_h_0()
             .children(sidebar)
+            .when(has_sidebar, |row| {
+                row.child(parts::grip(parts::Edge::Sidebar, true, cx))
+            })
             .child(main)
-            .children(inspector)
-            .into_any_element()
+            .when(has_inspector, |row| {
+                row.child(parts::grip(parts::Edge::Inspector, true, cx))
+            })
+            .children(inspector);
+        let row = parts::on_resize(row, parts::Edge::Sidebar, cx, |this, pointer, bounds| {
+            let other = this.inspector.width.unwrap_or(380.);
+            let width = pointer.x - bounds.left();
+            this.sidebar.width = Some(parts::fit(
+                width,
+                200.,
+                f32::from(bounds.size.width) - other - GRAPH_MIN,
+            ));
+        });
+        parts::on_resize(row, parts::Edge::Inspector, cx, |this, pointer, bounds| {
+            let other = this.sidebar.width.unwrap_or(300.);
+            let width = bounds.right() - pointer.x;
+            this.inspector.width = Some(parts::fit(
+                width,
+                240.,
+                f32::from(bounds.size.width) - other - GRAPH_MIN,
+            ));
+        })
+        .into_any_element()
     }
 }
 
@@ -800,6 +838,45 @@ mod tests {
         // The second row, below the 52px header.
         cx.simulate_click(point(px(300.), px(52. + 32. + 16.)), Modifiers::none());
         assert_eq!(view.read_with(&cx, |view, _| view.selected()), Some(1));
+    }
+
+    #[gpui_kit::test]
+    fn dragging_the_inspector_edge_resizes_it_within_limits(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_view(cx);
+        load(&view, &["a", "b", "c"], &mut cx);
+        cx.run_until_parked();
+        let width = cx.update(|window, _| f32::from(window.viewport_size().width));
+        let width_of = |cx: &VisualTestContext| view.read_with(cx, |view, _| view.inspector.width);
+        assert_eq!(width_of(&cx), None);
+
+        let edge = point(px(width - 380.), px(300.));
+        cx.simulate_mouse_down(edge, gpui_kit::MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(
+            point(edge.x - px(60.), edge.y),
+            gpui_kit::MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.simulate_mouse_move(
+            point(edge.x - px(100.), edge.y),
+            gpui_kit::MouseButton::Left,
+            Modifiers::none(),
+        );
+        let dragged = width_of(&cx).expect("the drag set a width");
+        assert!((dragged - 480.).abs() < 2., "got {dragged}");
+
+        // Far to the left it stops, so the graph keeps room.
+        cx.simulate_mouse_move(
+            point(px(0.), edge.y),
+            gpui_kit::MouseButton::Left,
+            Modifiers::none(),
+        );
+        let widest = width_of(&cx).unwrap();
+        assert!(widest < width - 300., "got {widest}");
+        cx.simulate_mouse_up(
+            point(px(0.), edge.y),
+            gpui_kit::MouseButton::Left,
+            Modifiers::none(),
+        );
     }
 
     #[gpui_kit::test]

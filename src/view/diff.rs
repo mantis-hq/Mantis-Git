@@ -24,6 +24,8 @@ pub(super) struct State {
     /// Closing stays closed until a file is picked, however the selection moves.
     closed: bool,
     patch: Option<Arc<Shown>>,
+    /// The height the user dragged the panel to.
+    pub(super) height: Option<f32>,
     scroll: UniformListScrollHandle,
 }
 
@@ -177,7 +179,8 @@ impl GraphView {
             div()
                 .v_flex()
                 .flex_none()
-                .h(relative(0.38))
+                .when_some(self.diff.height, |panel, height| panel.h(px(height)))
+                .when(self.diff.height.is_none(), |panel| panel.h(relative(0.38)))
                 .min_h(px(180.))
                 .bg(panel)
                 .border_t_1()

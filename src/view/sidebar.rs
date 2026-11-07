@@ -54,6 +54,8 @@ pub(super) struct State {
     pub(super) window_is_wide: bool,
     /// What the user chose, which outranks the window's width.
     open: Option<bool>,
+    /// The width the user dragged the panel to.
+    pub(super) width: Option<f32>,
     pub(super) spotlight: Option<Arc<Spotlight>>,
     expanded: Vec<Section>,
     /// Folders the user closed, as `<list>/<path>`. Folders start open.
@@ -363,7 +365,7 @@ impl GraphView {
 
         Some(
             div()
-                .w(WIDTH)
+                .w(self.sidebar.width.map_or(WIDTH, px))
                 .flex_none()
                 .bg(panel)
                 .border_r_1()
