@@ -1,63 +1,25 @@
-//! Uncommitted changes, and turning a chosen part of them into a commit.
+//! Uncommitted changes: what is staged, what is not, and turning the staged part into a
+//! commit.
 
 use crate::details::FileChange;
 use crate::ops;
 use crate::patch::{self, DiffView, FilePatch, LineKind};
 use crate::text::count;
-use std::collections::HashSet;
 use std::path::Path;
 
-/// New files larger than this are committed whole without showing their text.
+/// New files larger than this are staged whole without showing their text.
 const MAX_SHOWN_FILE: u64 = 1 << 20;
 
-/// One file with uncommitted changes, staged or not.
+/// One file with uncommitted changes on one side of the index.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkingFile {
     pub path: String,
     pub patch: FilePatch,
-    /// Whether any of the file was already staged.
-    pub staged: bool,
-    /// Whether any of the file's changes are still out of the index.
-    pub unstaged: bool,
-}
-
-/// How much of a file is in the index.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stage {
-    Staged,
-    Partly,
-    Unstaged,
-}
-
-impl Stage {
-    /// The word the inspector shows beside a file.
-    pub fn word(self) -> &'static str {
-        match self {
-            Self::Staged => "staged",
-            Self::Partly => "partly staged",
-            Self::Unstaged => "",
-        }
-    }
-
-    /// What the file's button does: a staged file is taken out, anything else goes in.
-    pub fn button(self) -> &'static str {
-        match self {
-            Self::Staged => "Unstage",
-            Self::Partly => "Stage rest",
-            Self::Unstaged => "Stage",
-        }
-    }
+    /// Git doesn't know the file yet, so its patch is all additions whatever the view.
+    pub untracked: bool,
 }
 
 impl WorkingFile {
-    pub fn stage(&self) -> Stage {
-        match (self.staged, self.unstaged) {
-            (true, false) => Stage::Staged,
-            (true, true) => Stage::Partly,
-            _ => Stage::Unstaged,
-        }
-    }
-
     /// The file as the inspector lists it, the same as for a commit's files.
     pub fn change(&self) -> FileChange {
         let count = |kind| {
@@ -73,176 +35,139 @@ impl WorkingFile {
             binary: self.patch.binary,
         }
     }
-}
 
-/// Which hunks of a file go into a commit, by index.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Included {
-    pub file: WorkingFile,
-    pub hunks: Vec<usize>,
-}
-
-impl Included {
-    /// Whether all of the file goes in, which also covers what has no hunks to choose:
-    /// binary files and mode changes.
-    fn is_whole(&self) -> bool {
-        self.hunks.len() == self.file.patch.hunks.len()
+    /// Whether single hunks of this file can be moved in and out of the index. A file that
+    /// is added or removed whole, or has no text, only moves as a whole.
+    pub fn has_movable_hunks(&self) -> bool {
+        !self.untracked && !self.patch.binary && self.patch.status() == 'M'
     }
 }
 
-/// Which hunks are ticked for the next commit.
+/// Which half of the changes a list holds. A file changed both in and out of the index is
+/// in both, each with its own patch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+    /// Changes in the working tree that the index doesn't have.
+    Unstaged,
+    /// Changes in the index that HEAD doesn't have: what the next commit holds.
+    Staged,
+}
+
+impl Side {
+    pub fn heading(self) -> &'static str {
+        match self {
+            Self::Unstaged => "Unstaged",
+            Self::Staged => "Staged",
+        }
+    }
+
+    /// What a list says when it has no files.
+    pub fn empty(self) -> &'static str {
+        match self {
+            Self::Unstaged => "Nothing left to stage.",
+            Self::Staged => "Nothing staged yet. Tick a file to put it in the next commit.",
+        }
+    }
+
+    /// What ticking a file or folder here does, naming it.
+    pub fn action(self, name: &str) -> String {
+        match self {
+            Self::Unstaged => format!("Stage {name}"),
+            Self::Staged => format!("Unstage {name}"),
+        }
+    }
+
+    /// The word on a hunk's header for whether it goes in the next commit.
+    pub fn hunk_note(self) -> &'static str {
+        match self {
+            Self::Unstaged => "left out",
+            Self::Staged => "in this commit",
+        }
+    }
+
+    /// Whether ticking moves things out of the index.
+    pub fn unstages(self) -> bool {
+        self == Self::Staged
+    }
+}
+
+/// Every changed file, by where its changes are.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Selection {
-    /// By file, then by hunk. A file without hunks has one entry.
-    ticks: Vec<Vec<bool>>,
+pub struct Changes {
+    pub unstaged: Vec<WorkingFile>,
+    pub staged: Vec<WorkingFile>,
 }
 
-impl Selection {
-    /// The starting ticks. If anything was staged, that choice carries over by file.
-    pub fn starting(files: &[WorkingFile]) -> Self {
-        let any_staged = files.iter().any(|file| file.staged);
-        let ticks = files
-            .iter()
-            .map(|file| vec![!any_staged || file.staged; file.patch.hunks.len().max(1)])
-            .collect();
-        Self { ticks }
-    }
-
-    /// How many ticks a file has.
-    pub fn hunks(&self, file: usize) -> usize {
-        self.ticks[file].len()
-    }
-
-    pub fn is_on(&self, file: usize, hunk: usize) -> bool {
-        self.ticks[file][hunk]
-    }
-
-    /// Whether a file is ticked all the way, and whether it's ticked only partly.
-    pub fn file_state(&self, file: usize) -> (bool, bool) {
-        let hunks = &self.ticks[file];
-        let on = hunks.iter().filter(|on| **on).count();
-        (on == hunks.len(), on > 0 && on < hunks.len())
-    }
-
-    /// Whether every file in `files` is ticked all the way, and whether some tick is on
-    /// without that, for a folder's box.
-    pub fn files_state(&self, files: &[usize]) -> (bool, bool) {
-        let ticks = files.iter().flat_map(|file| &self.ticks[*file]);
-        let (on, all) = ticks.fold((0, 0), |(on, all), tick| (on + usize::from(*tick), all + 1));
-        (all > 0 && on == all, on > 0 && on < all)
-    }
-
-    /// Ticks every file in `files`, unless all were ticked already, and then clears them.
-    pub fn toggle_files(&mut self, files: &[usize]) {
-        let all_on = self.files_state(files).0;
-        for file in files {
-            self.ticks[*file].fill(!all_on);
+impl Changes {
+    pub fn side(&self, side: Side) -> &[WorkingFile] {
+        match side {
+            Side::Unstaged => &self.unstaged,
+            Side::Staged => &self.staged,
         }
     }
 
-    /// Ticking a file turns all of its hunks on, unless all were on already.
-    pub fn toggle_file(&mut self, file: usize) {
-        let hunks = &mut self.ticks[file];
-        let all_on = hunks.iter().all(|on| *on);
-        hunks.fill(!all_on);
+    /// A file by its place in the two lists end to end, unstaged first.
+    pub fn file(&self, index: usize) -> Option<(Side, &WorkingFile)> {
+        match self.unstaged.get(index) {
+            Some(file) => Some((Side::Unstaged, file)),
+            None => self
+                .staged
+                .get(index.checked_sub(self.unstaged.len())?)
+                .map(|file| (Side::Staged, file)),
+        }
     }
 
-    pub fn toggle_hunk(&mut self, file: usize, hunk: usize) {
-        let tick = &mut self.ticks[file][hunk];
-        *tick = !*tick;
+    /// The two lists end to end.
+    pub fn all(&self) -> impl Iterator<Item = &WorkingFile> {
+        self.unstaged.iter().chain(&self.staged)
     }
+}
 
-    /// Turns the ticks into what [`commit`] wants.
-    pub fn included(&self, files: &[WorkingFile]) -> Vec<Included> {
-        files
-            .iter()
-            .zip(&self.ticks)
-            .filter(|(_, hunks)| hunks.iter().any(|on| *on))
-            .map(|(file, hunks)| Included {
-                file: file.clone(),
-                hunks: (0..file.patch.hunks.len())
-                    .filter(|&hunk| hunks[hunk])
-                    .collect(),
+/// Reads what is staged and what is not, each against what it differs from.
+pub fn read(repo: &Path) -> Result<Changes, String> {
+    let read_side = |command: &[&str]| -> Result<Vec<WorkingFile>, String> {
+        let diff = ops::run(repo, &patch::diff_args(command))?;
+        Ok(patch::parse(&diff)
+            .into_iter()
+            .map(|patch| WorkingFile {
+                path: patch.path.clone(),
+                patch,
+                untracked: false,
             })
-            .collect()
-    }
-
-    /// Says how the commit stands, in plain words.
-    pub fn sentence(&self) -> String {
-        let going_in = self
-            .ticks
-            .iter()
-            .filter(|hunks| hunks.iter().any(|on| *on))
-            .count();
-        let left_out: usize = self
-            .ticks
-            .iter()
-            .map(|hunks| hunks.iter().filter(|on| !**on).count())
-            .sum();
-        let files = count(self.ticks.len(), "file");
-        if going_in == 0 {
-            format!("{files} changed, nothing ticked yet")
-        } else {
-            let left_out = count(left_out, "change");
-            format!("{going_in} of {files} going in, {left_out} left out")
-        }
-    }
-}
-
-/// Reads every changed file against HEAD, whether staged, unstaged or untracked.
-pub fn read(repo: &Path) -> Result<Vec<WorkingFile>, String> {
-    // Before the first commit there's no HEAD to compare with, only an empty tree.
-    let base = if ops::resolves(repo, "HEAD") {
-        "HEAD".to_owned()
-    } else {
-        ops::run_with_input(repo, &["mktree"], b"")?
-            .trim()
-            .to_owned()
+            .collect())
     };
-    let diff = ops::run(repo, &patch::diff_args(&["diff", &base, "--no-renames"]))?;
-    let names = ops::run(repo, &["diff", "--cached", "--name-only", "-z", &base])?;
-    let staged: HashSet<&str> = names.split('\0').collect();
-    let loose = ops::run(repo, &["diff", "--name-only", "-z", "--no-renames"])?;
-    let unstaged: HashSet<&str> = loose.split('\0').collect();
-
-    let mut files: Vec<WorkingFile> = patch::parse(&diff)
-        .into_iter()
-        .map(|patch| WorkingFile {
-            staged: staged.contains(patch.path.as_str()),
-            unstaged: unstaged.contains(patch.path.as_str()),
-            path: patch.path.clone(),
-            patch,
-        })
-        .collect();
+    // Before the first commit `--cached` compares with an empty tree.
+    let mut staged = read_side(&["diff", "--cached", "--no-renames"])?;
+    let mut unstaged = read_side(&["diff", "--no-renames"])?;
 
     let untracked = ops::run(repo, &["ls-files", "--others", "--exclude-standard", "-z"])?;
     for path in untracked.split('\0').filter(|path| !path.is_empty()) {
-        files.push(WorkingFile {
+        unstaged.push(WorkingFile {
             path: path.to_owned(),
             patch: read_new_file(repo, path),
-            staged: false,
-            unstaged: true,
+            untracked: true,
         });
     }
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(files)
+    staged.sort_by(|a, b| a.path.cmp(&b.path));
+    unstaged.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(Changes { unstaged, staged })
 }
 
 /// One file as it is drawn, in the chosen [`DiffView`]. What [`read`] found is the plain
-/// view, so that is used as it is, and so is a file git doesn't know yet, which is all
-/// additions whatever the view.
-pub fn file_diff(repo: &Path, file: &WorkingFile, view: DiffView) -> Result<FilePatch, String> {
-    if view.is_default() || file.patch.status() == 'A' && !file.staged {
+/// view, so that is used as it is, and so is a file git doesn't know yet.
+pub fn file_diff(
+    repo: &Path,
+    file: &WorkingFile,
+    side: Side,
+    view: DiffView,
+) -> Result<FilePatch, String> {
+    if view.is_default() || file.untracked {
         return Ok(file.patch.clone());
     }
-    let base = if ops::resolves(repo, "HEAD") {
-        "HEAD".to_owned()
-    } else {
-        ops::run_with_input(repo, &["mktree"], b"")?
-            .trim()
-            .to_owned()
-    };
-    let command = ["diff", &base, "--no-renames"];
+    let mut command = vec!["diff", "--no-renames"];
+    if side == Side::Staged {
+        command.push("--cached");
+    }
     let mut args = patch::diff_args(&command);
     args.extend(view.args());
     args.extend(["--", &file.path]);
@@ -272,27 +197,24 @@ pub fn unstage_files(repo: &Path, paths: &[String]) -> Result<(), String> {
     ops::run(repo, &args).map(drop)
 }
 
-/// Which of these files a click on "Stage all" and "Unstage all" would move.
-pub fn to_stage(files: &[WorkingFile]) -> Vec<String> {
-    let wanted = files.iter().filter(|file| file.stage() != Stage::Staged);
-    wanted.map(|file| file.path.clone()).collect()
+/// Moves one hunk of a file into the index, or out of it. The hunk is by position in the
+/// plain patch [`read`] gave, so read again after each move.
+pub fn move_hunk(repo: &Path, file: &WorkingFile, hunk: usize, side: Side) -> Result<(), String> {
+    if hunk >= file.patch.hunks.len() {
+        return Err("That change is gone; the list has been refreshed.".to_owned());
+    }
+    let patch = file.patch.with_hunks([hunk]);
+    let mut args = vec!["apply", "--cached", "--whitespace=nowarn"];
+    if side.unstages() {
+        args.push("--reverse");
+    }
+    ops::run_with_input(repo, &args, patch.as_bytes()).map(drop)
 }
 
-/// "Stage all 3 files", or nothing when everything is in the index already.
-pub fn stage_all_label(files: &[WorkingFile]) -> Option<String> {
-    let moving = to_stage(files).len();
-    (moving > 0).then(|| format!("Stage all {}", count(moving, "file")))
-}
-
-/// "Unstage all 2 files", or nothing when the index holds none of them.
-pub fn unstage_all_label(files: &[WorkingFile]) -> Option<String> {
-    let moving = to_unstage(files).len();
-    (moving > 0).then(|| format!("Unstage all {}", count(moving, "file")))
-}
-
-pub fn to_unstage(files: &[WorkingFile]) -> Vec<String> {
-    let staged = files.iter().filter(|file| file.staged);
-    staged.map(|file| file.path.clone()).collect()
+/// Commits what is staged, through git's own commit so hooks and signing run.
+pub fn commit(repo: &Path, message: &str) -> Result<String, String> {
+    ops::run_with_input(repo, &["commit", "-q", "-F", "-"], message.as_bytes())?;
+    ops::run(repo, &["rev-parse", "HEAD"]).map(|oid| oid.trim().to_owned())
 }
 
 /// Shows an untracked file as all additions. `git diff --no-index` exits non-zero when it
@@ -318,48 +240,27 @@ fn read_new_file(repo: &Path, path: &str) -> FilePatch {
     patch
 }
 
-/// Commits exactly the chosen hunks, through git's own commit so hooks and signing run.
-/// If that fails, what was staged before is put back.
-pub fn commit(repo: &Path, included: &[Included], message: &str) -> Result<String, String> {
-    let saved = ops::run(repo, &["write-tree"])
-        .map_err(|error| format!("Couldn't save what's staged: {error}"))?;
-    let saved = saved.trim();
-
-    let result = stage(repo, included)
-        .and_then(|()| ops::run_with_input(repo, &["commit", "-q", "-F", "-"], message.as_bytes()));
-    if result.is_err() {
-        let _ = ops::run(repo, &["read-tree", saved]);
-    }
-    result?;
-    ops::run(repo, &["rev-parse", "HEAD"]).map(|oid| oid.trim().to_owned())
-}
-
-/// Makes the index exactly HEAD plus the chosen changes.
-fn stage(repo: &Path, included: &[Included]) -> Result<(), String> {
-    if ops::resolves(repo, "HEAD") {
-        ops::run(repo, &["reset", "-q"])?;
-    } else {
-        ops::run(repo, &["read-tree", "--empty"])?;
-    }
-    for part in included {
-        if part.is_whole() {
-            let args = ["--literal-pathspecs", "add", "-A", "--", &part.file.path];
-            ops::run(repo, &args)?;
-        } else {
-            let patch = part.file.patch.with_hunks(part.hunks.iter().copied());
-            let args = ["apply", "--cached", "--whitespace=nowarn"];
-            ops::run_with_input(repo, &args, patch.as_bytes())?;
-        }
-    }
-    Ok(())
-}
-
 /// The kinds of change the commit form offers, in its order.
 pub const COMMIT_TYPES: [&str; 7] = ["feat", "fix", "docs", "refactor", "test", "chore", "ci"];
 
-/// Whether a commit has what it needs to be written.
-pub fn can_commit(included: &[Included], subject: &str) -> bool {
-    !included.is_empty() && !subject.trim().is_empty()
+/// Whether a commit has what it needs to be written: something staged, and a subject.
+pub fn can_commit(staged: usize, subject: &str) -> bool {
+    staged > 0 && !subject.trim().is_empty()
+}
+
+/// What the commit button says it will do.
+pub fn commit_label(staged: usize) -> String {
+    match staged {
+        0 => "Stage a file to commit".to_owned(),
+        files => format!("Commit {}", count(files, "file")),
+    }
+}
+
+/// What to tell the user once a commit landed, with how to take it back.
+pub fn committed_notice(line: &str) -> String {
+    format!(
+        "Committed “{line}”. `git reset --soft HEAD~1` undoes it and keeps your changes staged."
+    )
 }
 
 /// Whether a kind of change can be marked as breaking.
@@ -433,18 +334,18 @@ mod tests {
     use crate::testing::Repo;
     use std::fs;
 
-    #[test]
-    fn a_folder_ticks_all_its_files_and_shows_partly_ticked() {
-        let mut selection = Selection {
-            ticks: vec![vec![true, true], vec![false], vec![true]],
-        };
-        assert_eq!(selection.files_state(&[0, 1]), (false, true));
-        assert_eq!(selection.files_state(&[0, 2]), (true, false));
-        assert_eq!(selection.files_state(&[]), (false, false));
-        selection.toggle_files(&[0, 1]);
-        assert_eq!(selection.files_state(&[0, 1]), (true, false));
-        selection.toggle_files(&[0, 1]);
-        assert_eq!(selection.files_state(&[0, 1]), (false, false));
+    fn file<'a>(files: &'a [WorkingFile], path: &str) -> &'a WorkingFile {
+        files.iter().find(|file| file.path == path).unwrap()
+    }
+
+    fn names(files: &[WorkingFile]) -> Vec<&str> {
+        files.iter().map(|file| file.path.as_str()).collect()
+    }
+
+    /// Twenty lines, so a change at each end is two separate hunks.
+    fn long(top: &str, bottom: &str) -> String {
+        let middle: String = (0..18).map(|n| format!("line {n}\n")).collect();
+        format!("{top}\n{middle}{bottom}\n")
     }
 
     #[test]
@@ -454,52 +355,51 @@ mod tests {
         repo.commit("first");
         repo.write("kept.txt", "a\nc\nd\n");
         repo.write("new.txt", "x\n");
-        let changes: Vec<_> = read(repo.path())
-            .unwrap()
+        let changes = read(repo.path()).unwrap();
+        let summary: Vec<_> = changes
+            .unstaged
             .iter()
             .map(WorkingFile::change)
+            .map(|c| (c.status, c.path.to_string(), c.additions, c.deletions))
             .collect();
-        let summary: Vec<_> = changes
-            .iter()
-            .map(|c| (c.status, &*c.path, c.additions, c.deletions))
-            .collect();
-        assert_eq!(summary, [('M', "kept.txt", 2, 1), ('A', "new.txt", 1, 0)]);
-    }
-
-    /// Twenty lines, so a change at each end is two separate hunks.
-    fn long(top: &str, bottom: &str) -> String {
-        let middle: String = (0..18).map(|n| format!("line {n}\n")).collect();
-        format!("{top}\n{middle}{bottom}\n")
-    }
-
-    fn all(file: &WorkingFile) -> Included {
-        Included {
-            file: file.clone(),
-            hunks: (0..file.patch.hunks.len()).collect(),
-        }
-    }
-
-    fn file<'a>(files: &'a [WorkingFile], path: &str) -> &'a WorkingFile {
-        files.iter().find(|file| file.path == path).unwrap()
+        assert_eq!(
+            summary,
+            [
+                ('M', "kept.txt".to_owned(), 2, 1),
+                ('A', "new.txt".to_owned(), 1, 0)
+            ]
+        );
+        assert!(changes.staged.is_empty());
     }
 
     #[test]
-    fn staged_unstaged_and_untracked_changes_are_all_read() {
+    fn staged_and_unstaged_changes_are_read_apart() {
         let repo = Repo::new();
         repo.write("staged", "a\n");
         repo.write("unstaged", "a\n");
+        repo.write("both", "a\n");
         repo.commit("base");
         repo.write("staged", "b\n");
         repo.git(&["add", "staged"]);
         repo.write("unstaged", "b\n");
+        repo.write("both", "b\n");
+        repo.git(&["add", "both"]);
+        repo.write("both", "c\n");
         repo.write("dir/new file", "hello\n");
 
-        let files = read(repo.path()).unwrap();
-        assert_eq!(files.len(), 3);
-        assert!(file(&files, "staged").staged);
-        assert!(!file(&files, "unstaged").staged);
-        let new = file(&files, "dir/new file");
-        assert_eq!(new.patch.hunks[0].lines.len(), 1, "shown as additions");
+        let changes = read(repo.path()).unwrap();
+        assert_eq!(names(&changes.staged), ["both", "staged"]);
+        assert_eq!(
+            names(&changes.unstaged),
+            ["both", "dir/new file", "unstaged"]
+        );
+        assert!(file(&changes.unstaged, "dir/new file").untracked);
+        // The same file has a different patch on each side.
+        assert_eq!(changes.staged[0].change().additions, 1);
+        assert_eq!(changes.unstaged[0].change().deletions, 1);
+        assert_eq!(changes.file(0).map(|(side, _)| side), Some(Side::Unstaged));
+        assert_eq!(changes.file(3).map(|(side, _)| side), Some(Side::Staged));
+        assert!(changes.file(5).is_none());
     }
 
     #[test]
@@ -508,73 +408,51 @@ mod tests {
         repo.write(".gitignore", "secret\n");
         repo.commit("base");
         repo.write("secret", "x\n");
-        assert_eq!(read(repo.path()).unwrap(), []);
+        assert_eq!(read(repo.path()).unwrap(), Changes::default());
     }
 
     #[test]
-    fn one_hunk_of_two_commits_and_the_other_stays_in_the_working_tree() {
+    fn staging_and_unstaging_move_files_in_and_out_of_the_index() {
         let repo = Repo::new();
-        repo.write("file", &long("top", "bottom"));
+        repo.write("a", "1\n");
+        repo.write("b", "1\n");
         repo.commit("base");
-        repo.write("file", &long("new top", "new bottom"));
+        repo.write("a", "2\n");
+        repo.write("b", "2\n");
+        repo.write("new file", "x\n");
 
-        let files = read(repo.path()).unwrap();
-        assert_eq!(files[0].patch.hunks.len(), 2);
-        let part = Included {
-            file: files[0].clone(),
-            hunks: vec![1],
-        };
-        commit(repo.path(), &[part], "bottom only\n").unwrap();
+        let both: Vec<String> = ["a", "new file"].map(String::from).into();
+        stage_files(repo.path(), &both).unwrap();
+        let changes = read(repo.path()).unwrap();
+        assert_eq!(names(&changes.staged), ["a", "new file"]);
+        assert_eq!(names(&changes.unstaged), ["b"]);
 
-        assert_eq!(
-            repo.git(&["show", "HEAD:file"]),
-            long("top", "new bottom").trim()
-        );
-        assert_eq!(repo.read("file"), long("new top", "new bottom"));
-        let left = read(repo.path()).unwrap();
-        assert_eq!(
-            left[0].patch.hunks.len(),
-            1,
-            "the other hunk is still changed"
-        );
+        unstage_files(repo.path(), &both).unwrap();
+        assert_eq!(repo.git(&["diff", "--cached", "--name-only"]), "");
+        assert_eq!(repo.read("a"), "2\n", "the file itself is untouched");
     }
 
     #[test]
-    fn a_new_file_a_deletion_and_a_binary_file_commit_whole() {
+    fn staging_a_deletion_and_unstaging_it() {
         let repo = Repo::new();
         repo.write("gone", "bye\n");
-        fs::write(repo.path().join("blob"), [0u8, 1]).unwrap();
         repo.commit("base");
-
         fs::remove_file(repo.path().join("gone")).unwrap();
-        fs::write(repo.path().join("blob"), [0u8, 2]).unwrap();
-        repo.write("new", "hello\n");
-
-        let files = read(repo.path()).unwrap();
-        assert!(file(&files, "blob").patch.binary);
-        let parts: Vec<_> = files.iter().map(all).collect();
-        commit(repo.path(), &parts, "all three\n").unwrap();
-
-        assert_eq!(read(repo.path()).unwrap(), []);
-        assert_eq!(repo.git(&["show", "HEAD:new"]), "hello");
-        assert!(repo.git(&["ls-files"]).lines().all(|name| name != "gone"));
+        stage_files(repo.path(), &["gone".to_owned()]).unwrap();
+        assert_eq!(read(repo.path()).unwrap().staged[0].patch.status(), 'D');
+        unstage_files(repo.path(), &["gone".to_owned()]).unwrap();
+        assert_eq!(read(repo.path()).unwrap().unstaged[0].patch.status(), 'D');
     }
 
     #[test]
-    fn files_left_out_stay_changed_and_unstaged() {
+    fn unstaging_works_before_the_first_commit() {
         let repo = Repo::new();
-        repo.write("in", "a\n");
-        repo.write("out", "a\n");
-        repo.commit("base");
-        repo.write("in", "b\n");
-        repo.write("out", "b\n");
-        repo.git(&["add", "out"]);
-
-        let files = read(repo.path()).unwrap();
-        commit(repo.path(), &[all(file(&files, "in"))], "just one\n").unwrap();
-
-        assert_eq!(repo.git(&["show", "HEAD:out"]), "a");
-        assert_eq!(repo.read("out"), "b\n");
+        repo.write("first", "hello\n");
+        stage_files(repo.path(), &["first".to_owned()]).unwrap();
+        assert_eq!(repo.git(&["ls-files"]), "first");
+        assert_eq!(names(&read(repo.path()).unwrap().staged), ["first"]);
+        unstage_files(repo.path(), &["first".to_owned()]).unwrap();
+        assert_eq!(repo.git(&["ls-files"]), "");
     }
 
     // Windows doesn't allow `*` in file names.
@@ -584,18 +462,73 @@ mod tests {
         let repo = Repo::new();
         repo.write("a*", "new\n");
         repo.write("abc", "other\n");
-        let files = read(repo.path()).unwrap();
-        commit(repo.path(), &[all(file(&files, "a*"))], "one\n").unwrap();
+        stage_files(repo.path(), &["a*".to_owned()]).unwrap();
         assert_eq!(repo.git(&["ls-files"]), "a*");
+    }
+
+    #[test]
+    fn one_hunk_moves_in_and_out_of_the_index_alone() {
+        let repo = Repo::new();
+        repo.write("file", &long("top", "bottom"));
+        repo.commit("base");
+        repo.write("file", &long("new top", "new bottom"));
+
+        let changes = read(repo.path()).unwrap();
+        let both = &changes.unstaged[0];
+        assert_eq!(both.patch.hunks.len(), 2);
+        assert!(both.has_movable_hunks());
+        move_hunk(repo.path(), both, 1, Side::Unstaged).unwrap();
+
+        let changes = read(repo.path()).unwrap();
+        assert_eq!(changes.staged[0].patch.hunks.len(), 1);
+        assert_eq!(changes.unstaged[0].patch.hunks.len(), 1);
+        assert_eq!(
+            repo.git(&["show", ":file"]),
+            long("top", "new bottom").trim()
+        );
+        assert_eq!(repo.read("file"), long("new top", "new bottom"));
+
+        move_hunk(repo.path(), &changes.staged[0], 0, Side::Staged).unwrap();
+        let changes = read(repo.path()).unwrap();
+        assert!(changes.staged.is_empty());
+        assert_eq!(changes.unstaged[0].patch.hunks.len(), 2);
+    }
+
+    #[test]
+    fn whole_files_have_no_hunks_to_move() {
+        let repo = Repo::new();
+        repo.write("gone", "bye\n");
+        repo.commit("base");
+        fs::remove_file(repo.path().join("gone")).unwrap();
+        repo.write("new", "hello\n");
+        let changes = read(repo.path()).unwrap();
+        assert!(!file(&changes.unstaged, "gone").has_movable_hunks());
+        assert!(!file(&changes.unstaged, "new").has_movable_hunks());
+    }
+
+    #[test]
+    fn a_commit_holds_exactly_what_is_staged() {
+        let repo = Repo::new();
+        repo.write("in", "a\n");
+        repo.write("out", "a\n");
+        repo.commit("base");
+        repo.write("in", "b\n");
+        repo.write("out", "b\n");
+        stage_files(repo.path(), &["in".to_owned()]).unwrap();
+
+        commit(repo.path(), "just one\n").unwrap();
+        assert_eq!(repo.git(&["show", "HEAD:in"]), "b");
+        assert_eq!(repo.git(&["show", "HEAD:out"]), "a");
+        assert_eq!(repo.read("out"), "b\n");
+        assert_eq!(names(&read(repo.path()).unwrap().unstaged), ["out"]);
     }
 
     #[test]
     fn a_first_commit_works_with_no_head() {
         let repo = Repo::new();
         repo.write("first", "hello\n");
-        let files = read(repo.path()).unwrap();
-        assert_eq!(files.len(), 1);
-        commit(repo.path(), &[all(&files[0])], "first\n").unwrap();
+        stage_files(repo.path(), &["first".to_owned()]).unwrap();
+        commit(repo.path(), "first\n").unwrap();
         assert_eq!(repo.git(&["log", "--format=%s"]), "first");
     }
 
@@ -603,11 +536,9 @@ mod tests {
     fn a_failing_hook_keeps_what_was_staged() {
         let repo = Repo::new();
         repo.write("a", "1\n");
-        repo.write("b", "1\n");
         repo.commit("base");
         repo.write("a", "2\n");
-        repo.write("b", "2\n");
-        repo.git(&["add", "b"]);
+        stage_files(repo.path(), &["a".to_owned()]).unwrap();
 
         let hook = repo.path().join(".git/hooks/pre-commit");
         fs::create_dir_all(hook.parent().unwrap()).unwrap();
@@ -618,11 +549,73 @@ mod tests {
             fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        let files = read(repo.path()).unwrap();
-        let error = commit(repo.path(), &[all(file(&files, "a"))], "nope\n").unwrap_err();
+        let error = commit(repo.path(), "nope\n").unwrap_err();
         assert!(error.contains("lint failed"), "{error}");
         assert_eq!(repo.git(&["log", "--format=%s"]), "base");
-        assert_eq!(repo.git(&["diff", "--cached", "--name-only"]), "b");
+        assert_eq!(repo.git(&["diff", "--cached", "--name-only"]), "a");
+    }
+
+    #[test]
+    fn a_working_diff_can_show_the_whole_file_and_skip_white_space() {
+        let repo = Repo::new();
+        repo.write("file", &long("top", "bottom"));
+        repo.commit("base");
+        repo.write("file", &long("top  ", "new bottom"));
+        let changes = read(repo.path()).unwrap();
+        let file = &changes.unstaged[0];
+        let lines = |patch: &FilePatch| patch.hunks.iter().map(|h| h.lines.len()).sum::<usize>();
+
+        let plain = file_diff(repo.path(), file, Side::Unstaged, DiffView::default()).unwrap();
+        assert_eq!(plain.hunks.len(), 2);
+
+        let whole = DiffView {
+            whole_file: true,
+            ..DiffView::default()
+        };
+        let whole = file_diff(repo.path(), file, Side::Unstaged, whole).unwrap();
+        assert_eq!(whole.hunks.len(), 1);
+        assert_eq!(
+            lines(&whole),
+            22,
+            "every line of the file, plus the one removed"
+        );
+
+        let quiet = DiffView {
+            ignore_whitespace: true,
+            ..DiffView::default()
+        };
+        let quiet = file_diff(repo.path(), file, Side::Unstaged, quiet).unwrap();
+        assert_eq!(quiet.hunks.len(), 1, "the trailing spaces no longer count");
+    }
+
+    #[test]
+    fn the_staged_side_is_drawn_from_the_index() {
+        let repo = Repo::new();
+        repo.write("file", "a b\n");
+        repo.commit("base");
+        repo.write("file", "a  b\n");
+        stage_files(repo.path(), &["file".to_owned()]).unwrap();
+        let changes = read(repo.path()).unwrap();
+        let quiet = DiffView {
+            ignore_whitespace: true,
+            ..DiffView::default()
+        };
+        let patch = file_diff(repo.path(), &changes.staged[0], Side::Staged, quiet).unwrap();
+        assert!(patch.hunks.is_empty());
+        assert_eq!(patch.path, "file");
+    }
+
+    #[test]
+    fn words_name_the_side_and_the_result() {
+        assert_eq!(Side::Unstaged.action("a.rs"), "Stage a.rs");
+        assert_eq!(Side::Staged.action("a.rs"), "Unstage a.rs");
+        assert_eq!(Side::Staged.hunk_note(), "in this commit");
+        assert_eq!(commit_label(0), "Stage a file to commit");
+        assert_eq!(commit_label(2), "Commit 2 files");
+        assert!(can_commit(1, "add it"));
+        assert!(!can_commit(1, "  "));
+        assert!(!can_commit(0, "add it"));
+        assert!(committed_notice("fix: x").contains("git reset --soft HEAD~1"));
     }
 
     #[test]
@@ -661,188 +654,5 @@ mod tests {
         let stable = Version(1, 2, 3);
         assert_eq!(bump("feat", true, stable), Bump::Major(Version(2, 0, 0)));
         assert_eq!(bump("feat", false, stable), Bump::Minor(Version(1, 3, 0)));
-    }
-
-    const TWO_HUNKS: &str = "\
-diff --git a/x b/x
---- a/x
-+++ b/x
-@@ -1 +1 @@
--a
-+b
-@@ -9 +9 @@
--c
-+d
-";
-
-    fn changed(path: &str, staged: bool) -> WorkingFile {
-        let mut patch = patch::parse(TWO_HUNKS).remove(0);
-        patch.path = path.to_owned();
-        WorkingFile {
-            path: path.to_owned(),
-            patch,
-            staged,
-            unstaged: true,
-        }
-    }
-
-    #[test]
-    fn everything_starts_ticked_when_nothing_is_staged() {
-        let selection = Selection::starting(&[changed("a", false), changed("b", false)]);
-        assert_eq!(selection.file_state(0), (true, false));
-        assert_eq!(selection.file_state(1), (true, false));
-    }
-
-    #[test]
-    fn staged_files_carry_over_as_the_starting_choice() {
-        let selection = Selection::starting(&[changed("a", true), changed("b", false)]);
-        assert_eq!(selection.file_state(0), (true, false));
-        assert_eq!(selection.file_state(1), (false, false));
-    }
-
-    #[test]
-    fn a_file_with_no_hunks_still_gets_one_tick() {
-        let mut binary = changed("a", false);
-        binary.patch.hunks.clear();
-        let selection = Selection::starting(&[binary]);
-        assert_eq!(selection.hunks(0), 1);
-        assert!(selection.is_on(0, 0));
-    }
-
-    #[test]
-    fn ticking_a_partly_ticked_file_turns_it_all_on() {
-        let mut selection = Selection::starting(&[changed("a", false)]);
-        selection.toggle_hunk(0, 1);
-        assert_eq!(selection.file_state(0), (false, true));
-        selection.toggle_file(0);
-        assert_eq!(selection.file_state(0), (true, false));
-        selection.toggle_file(0);
-        assert_eq!(selection.file_state(0), (false, false));
-    }
-
-    #[test]
-    fn only_ticked_hunks_are_chosen() {
-        let files = [changed("a", false), changed("b", false)];
-        let mut selection = Selection::starting(&files);
-        selection.toggle_hunk(0, 0);
-        selection.toggle_file(1);
-        let parts = selection.included(&files);
-        assert_eq!(parts.len(), 1);
-        assert_eq!(parts[0].hunks, [1]);
-    }
-
-    #[test]
-    fn the_sentence_counts_what_goes_in_and_what_stays_out() {
-        let files = [changed("a", false), changed("b", false)];
-        let mut selection = Selection::starting(&files);
-        selection.toggle_file(1);
-        selection.toggle_hunk(0, 0);
-        assert_eq!(
-            selection.sentence(),
-            "1 of 2 files going in, 3 changes left out"
-        );
-        selection.toggle_hunk(0, 1);
-        assert_eq!(selection.sentence(), "2 files changed, nothing ticked yet");
-    }
-
-    #[test]
-    fn a_commit_needs_something_ticked_and_a_subject() {
-        let files = [changed("a", false)];
-        let included = Selection::starting(&files).included(&files);
-        assert!(can_commit(&included, "add it"));
-        assert!(!can_commit(&included, "  "));
-        assert!(!can_commit(&[], "add it"));
-    }
-
-    #[test]
-    fn staging_and_unstaging_move_files_in_and_out_of_the_index() {
-        let repo = Repo::new();
-        repo.write("a", "1\n");
-        repo.write("b", "1\n");
-        repo.commit("base");
-        repo.write("a", "2\n");
-        repo.write("b", "2\n");
-        repo.write("new file", "x\n");
-
-        let all: Vec<String> = ["a", "new file"].map(String::from).into();
-        stage_files(repo.path(), &all).unwrap();
-        let files = read(repo.path()).unwrap();
-        assert_eq!(file(&files, "a").stage(), Stage::Staged);
-        assert_eq!(file(&files, "new file").stage(), Stage::Staged);
-        assert_eq!(file(&files, "b").stage(), Stage::Unstaged);
-        assert_eq!(to_stage(&files), ["b"]);
-        assert_eq!(stage_all_label(&files).as_deref(), Some("Stage all 1 file"));
-        assert_eq!(
-            unstage_all_label(&files).as_deref(),
-            Some("Unstage all 2 files")
-        );
-
-        // A second edit leaves the file partly staged.
-        repo.write("a", "3\n");
-        let files = read(repo.path()).unwrap();
-        assert_eq!(file(&files, "a").stage(), Stage::Partly);
-        assert_eq!(to_unstage(&files), ["a", "new file"]);
-
-        unstage_files(repo.path(), &all).unwrap();
-        assert_eq!(repo.git(&["diff", "--cached", "--name-only"]), "");
-        assert_eq!(repo.read("a"), "3\n", "the file itself is untouched");
-    }
-
-    #[test]
-    fn unstaging_works_before_the_first_commit() {
-        let repo = Repo::new();
-        repo.write("first", "hello\n");
-        stage_files(repo.path(), &["first".to_owned()]).unwrap();
-        assert_eq!(repo.git(&["ls-files"]), "first");
-        unstage_files(repo.path(), &["first".to_owned()]).unwrap();
-        assert_eq!(repo.git(&["ls-files"]), "");
-    }
-
-    #[test]
-    fn a_working_diff_can_show_the_whole_file_and_skip_white_space() {
-        let repo = Repo::new();
-        repo.write("file", &long("top", "bottom"));
-        repo.commit("base");
-        repo.write("file", &long("top  ", "new bottom"));
-        let files = read(repo.path()).unwrap();
-        let lines = |patch: &FilePatch| patch.hunks.iter().map(|h| h.lines.len()).sum::<usize>();
-
-        let plain = file_diff(repo.path(), &files[0], DiffView::default()).unwrap();
-        assert_eq!(plain.hunks.len(), 2);
-
-        let whole = DiffView {
-            whole_file: true,
-            ..DiffView::default()
-        };
-        let whole = file_diff(repo.path(), &files[0], whole).unwrap();
-        assert_eq!(whole.hunks.len(), 1);
-        assert_eq!(
-            lines(&whole),
-            22,
-            "every line of the file, plus the one removed"
-        );
-
-        let quiet = DiffView {
-            ignore_whitespace: true,
-            ..DiffView::default()
-        };
-        let quiet = file_diff(repo.path(), &files[0], quiet).unwrap();
-        assert_eq!(quiet.hunks.len(), 1, "the trailing spaces no longer count");
-    }
-
-    #[test]
-    fn a_file_with_only_white_space_changes_has_no_lines_when_they_are_hidden() {
-        let repo = Repo::new();
-        repo.write("file", "a b\n");
-        repo.commit("base");
-        repo.write("file", "a  b\n");
-        let files = read(repo.path()).unwrap();
-        let quiet = DiffView {
-            ignore_whitespace: true,
-            ..DiffView::default()
-        };
-        let patch = file_diff(repo.path(), &files[0], quiet).unwrap();
-        assert!(patch.hunks.is_empty());
-        assert_eq!(patch.path, "file");
     }
 }

@@ -9,6 +9,7 @@ use crate::theme::selected_row;
 use gitclient_core::branch::{self, Dragged, Relation};
 use gitclient_core::git::RefKind;
 use gitclient_core::menu::{self, Command, Line};
+use gitclient_core::working::Side;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -184,6 +185,10 @@ impl GraphView {
             self.begin_new_branch(start.clone(), label.clone(), cx);
         } else if let Command::EditRemote { name } = &command {
             self.open_remote_form(Some(name.clone()), cx);
+        } else if let Command::ShowFile { index } = &command {
+            self.show_file(*index, cx);
+        } else if let Command::StageFiles { paths, unstage } = &command {
+            self.stage_paths(paths.clone(), *unstage, cx);
         } else if let Some(text) = copied_text(&command) {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
             self.notice = command
@@ -245,6 +250,39 @@ impl GraphView {
             menu::ref_menu(&self.refs, &target)
         };
         self.show_menu(position, lines, cx);
+    }
+
+    /// The menu for a file in the inspector. `index` is its place in the details shown.
+    pub(super) fn open_file_menu(
+        &mut self,
+        index: usize,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self
+            .shown_details()
+            .and_then(|details| details.files.get(index))
+            .map(|file| file.path.to_string())
+        else {
+            return;
+        };
+        let side = self
+            .working_row_is_selected()
+            .then(|| self.working_file(index).map(|(side, _)| side))
+            .flatten();
+        self.show_menu(position, menu::file_menu(&path, index, side), cx);
+    }
+
+    /// The menu for a folder of the inspector's tree, acting on the files under it.
+    pub(super) fn open_folder_menu(
+        &mut self,
+        path: &str,
+        files: Vec<String>,
+        side: Option<Side>,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_menu(position, menu::folder_menu(path, files, side), cx);
     }
 
     pub(super) fn open_worktree_menu(

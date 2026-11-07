@@ -1,8 +1,10 @@
 //! The panel beside the graph that shows the selected commit.
 
 use super::parts::{TEXT_CHIP, TEXT_SMALL};
-use super::parts::{chip, file_path, loading, panel_row, section_label, status_color, title};
-use super::{GraphView, Status};
+use super::parts::{
+    checkbox, chip, file_path, loading, panel_row, section_label, status_color, title,
+};
+use super::{GraphView, Notice, Status};
 use crate::theme::tokens;
 use chrono::{Local, TimeZone};
 use gitclient_core::details::{self, CommitDetails, FileChange};
@@ -10,7 +12,7 @@ use gitclient_core::git::{Commit, Entry, split_subject};
 use gitclient_core::ops::Cancel;
 use gitclient_core::text::{count, short_oid};
 use gitclient_core::tree::{self, FileView, TreeRow};
-use gitclient_core::working::{self, WorkingFile};
+use gitclient_core::working::{self, Changes, Side, WorkingFile};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
@@ -32,19 +34,26 @@ pub(super) struct State {
     working: Option<Working>,
     /// The width the user dragged the panel to.
     pub(super) width: Option<f32>,
-    /// Scroll of the file list, which draws only the rows in view so that a commit with
-    /// thousands of files costs no more than one with a few.
-    pub(super) files_scroll: UniformListScrollHandle,
-    /// The folders the user closed in the tree.
+    /// Scroll of the file list (the unstaged one, for the working changes), which draws
+    /// only the rows in view so that a commit with thousands of files costs no more than
+    /// one with a few.
+    files_scroll: UniformListScrollHandle,
+    staged_scroll: UniformListScrollHandle,
+    /// The folders the user closed in the tree, for each of the two lists.
     closed_folders: HashSet<String>,
+    closed_staged: HashSet<String>,
+    /// Set while files are moving in or out of the index, so that a second click waits
+    /// instead of racing the first for git's lock.
+    pub(super) staging: bool,
     /// The read of the selected commit's details, while it runs. Selecting something else
     /// sets it, so that git stops work nobody will look at.
     loading: Option<Cancel>,
 }
 
-/// What the working changes row shows: each file's patch, and the same list a commit has.
+/// What the working changes row shows: what is staged and what is not, and the same list
+/// a commit has, with the unstaged files first and the staged ones after.
 pub(super) struct Working {
-    pub(super) files: Vec<WorkingFile>,
+    pub(super) changes: Changes,
     pub(super) details: Arc<CommitDetails>,
 }
 
@@ -69,16 +78,39 @@ impl GraphView {
         self.selected_details()
     }
 
-    /// The files of the working changes, in the order the inspector lists them.
-    fn working_files(&self) -> &[WorkingFile] {
+    pub(super) fn working_changes(&self) -> Option<&Changes> {
         self.inspector
             .working
             .as_ref()
-            .map_or(&[], |working| &working.files)
+            .map(|working| &working.changes)
     }
 
-    pub(super) fn working_patch(&self, index: usize) -> Option<&WorkingFile> {
-        self.inspector.working.as_ref()?.files.get(index)
+    /// A working file by its place in the two lists end to end, with the list it is in.
+    pub(super) fn working_file(&self, index: usize) -> Option<(Side, &WorkingFile)> {
+        self.working_changes()?.file(index)
+    }
+
+    /// Where a file of one side sits in the two lists end to end.
+    pub(super) fn working_position(&self, side: Side, path: &str) -> Option<usize> {
+        let changes = self.working_changes()?;
+        let at = changes
+            .side(side)
+            .iter()
+            .position(|file| file.path == path)?;
+        Some(match side {
+            Side::Unstaged => at,
+            Side::Staged => changes.unstaged.len() + at,
+        })
+    }
+
+    pub(super) fn staged_count(&self) -> usize {
+        self.working_changes()
+            .map_or(0, |changes| changes.staged.len())
+    }
+
+    pub(super) fn reset_file_scrolls(&mut self) {
+        self.inspector.files_scroll = UniformListScrollHandle::new();
+        self.inspector.staged_scroll = UniformListScrollHandle::new();
     }
 
     fn selected_entry(&self) -> Option<&Entry> {
@@ -165,21 +197,21 @@ impl GraphView {
         };
         Self::spawn_blocking(
             move || working::read(&repo),
-            move |this, files, cx| {
+            move |this, changes, cx| {
                 if !this.working_row_is_selected() {
                     return;
                 }
-                let Ok(files) = files else {
+                let Ok(changes) = changes else {
                     this.inspector.working = None;
                     return cx.notify();
                 };
                 let details = CommitDetails {
                     oid: WORKING_ID.into(),
                     body: String::new(),
-                    files: files.iter().map(WorkingFile::change).collect(),
+                    files: changes.all().map(WorkingFile::change).collect(),
                 };
                 this.inspector.working = Some(Working {
-                    files,
+                    changes,
                     details: Arc::new(details),
                 });
                 this.working_loaded(cx);
@@ -220,6 +252,7 @@ impl GraphView {
         if self.working_row_is_selected() {
             let sentence = self.refs.working_sentence();
             let subtext = tokens(theme.is_dark()).subtext0;
+            let border = theme.border;
             let files = self.shown_details().cloned();
             return Some(
                 panel
@@ -228,27 +261,37 @@ impl GraphView {
                             .v_flex()
                             .size_full()
                             .p_4()
-                            .gap_4()
+                            .gap_3()
                             .child(
                                 div()
                                     .v_flex()
                                     .flex_none()
-                                    .gap_3()
-                                    .child(title().child("Working changes"))
-                                    .child(div().text_color(subtext).child(sentence))
+                                    .gap_2()
                                     .child(
-                                        Button::new("review-and-commit")
-                                            .primary()
-                                            .label("Review and commit")
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.open_commit_screen(cx)
-                                            })),
+                                        div()
+                                            .h_flex()
+                                            .justify_between()
+                                            .child(title().child("Working changes"))
+                                            .child(self.render_view_chips(cx)),
                                     )
-                                    .child(self.render_stage_all(cx)),
+                                    .child(div().text_color(subtext).child(sentence)),
                             )
                             .when_some(files, |panel, details| {
-                                panel.child(self.render_files(false, &details, cx))
-                            }),
+                                panel
+                                    .child(self.render_working_list(Side::Unstaged, &details, cx))
+                                    .child(self.render_working_list(Side::Staged, &details, cx))
+                            })
+                            .child(
+                                // Capped, so that a short window keeps some of its lists.
+                                div()
+                                    .flex_none()
+                                    .max_h(relative(0.55))
+                                    .pt_3()
+                                    .border_t_1()
+                                    .border_color(border)
+                                    .overflow_y_scrollbar()
+                                    .child(self.render_commit_form(cx)),
+                            ),
                     )
                     .into_any_element(),
             );
@@ -285,7 +328,7 @@ impl GraphView {
                                 .child(self.render_actions(commit, cx)),
                         )
                         .when_some(loaded, |panel, details| {
-                            panel.child(self.render_files(commit.is_merge(), details, cx))
+                            panel.child(self.render_commit_files(commit.is_merge(), details, cx))
                         })
                         .when(
                             loaded.is_none() && self.inspector.loading.is_some(),
@@ -298,72 +341,6 @@ impl GraphView {
                                 ))
                             },
                         ),
-                )
-                .into_any_element(),
-        )
-    }
-
-    /// Quiet buttons that move every file at once, each only while it has something to do.
-    fn render_stage_all(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let files = self.working_files();
-        let busy = self.busy.is_some();
-        let button = |id: &'static str, label: String, paths: Vec<String>, unstage: bool| {
-            Button::new(id)
-                .ghost()
-                .small()
-                .label(label)
-                .disabled(busy)
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.stage_paths(paths.clone(), unstage, cx)),
-                )
-        };
-        div()
-            .h_flex()
-            .gap_1()
-            .when_some(working::stage_all_label(files), |row, label| {
-                row.child(button("stage-all", label, working::to_stage(files), false))
-            })
-            .when_some(working::unstage_all_label(files), |row, label| {
-                row.child(button(
-                    "unstage-all",
-                    label,
-                    working::to_unstage(files),
-                    true,
-                ))
-            })
-    }
-
-    /// The button at the end of a working file's row, and the word for how much of the
-    /// file is staged. Absent for a commit's files.
-    fn stage_controls(&self, index: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let file = self
-            .working_files()
-            .get(index)
-            .filter(|_| self.working_row_is_selected())?;
-        let (stage, path) = (file.stage(), file.path.clone());
-        let (muted, success) = (cx.theme().muted_foreground, cx.theme().success);
-        let staged = stage == working::Stage::Staged;
-        Some(
-            div()
-                .h_flex()
-                .flex_none()
-                .gap_1()
-                .child(
-                    div()
-                        .text_size(TEXT_CHIP)
-                        .text_color(if staged { success } else { muted })
-                        .child(stage.word()),
-                )
-                .child(
-                    Button::new(("stage-file", index))
-                        .ghost()
-                        .xsmall()
-                        .label(stage.button())
-                        .disabled(self.busy.is_some())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.stage_paths(vec![path.clone()], staged, cx);
-                        })),
                 )
                 .into_any_element(),
         )
@@ -532,8 +509,136 @@ impl GraphView {
     }
 }
 
+/// One list of files the inspector can draw.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pane {
+    /// A commit's files.
+    Commit,
+    /// Working changes the index doesn't have.
+    Unstaged,
+    /// Working changes in the index: what the next commit holds.
+    Staged,
+}
+
+impl Pane {
+    fn of(side: Side) -> Self {
+        match side {
+            Side::Unstaged => Self::Unstaged,
+            Side::Staged => Self::Staged,
+        }
+    }
+
+    /// The list of working changes this is, if it is one.
+    fn side(self) -> Option<Side> {
+        match self {
+            Self::Commit => None,
+            Self::Unstaged => Some(Side::Unstaged),
+            Self::Staged => Some(Side::Staged),
+        }
+    }
+
+    /// Ids that keep one list's rows, boxes and animations apart from the others'.
+    fn list_id(self) -> &'static str {
+        match self {
+            Self::Commit => "inspector-files",
+            Self::Unstaged => "inspector-unstaged",
+            Self::Staged => "inspector-staged",
+        }
+    }
+
+    fn row_id(self) -> &'static str {
+        match self {
+            Self::Commit => "file",
+            Self::Unstaged => "unstaged-file",
+            Self::Staged => "staged-file",
+        }
+    }
+
+    fn tree_id(self) -> &'static str {
+        match self {
+            Self::Commit => "tree-row",
+            Self::Unstaged => "unstaged-tree-row",
+            Self::Staged => "staged-tree-row",
+        }
+    }
+
+    fn tick_id(self, folder: bool) -> &'static str {
+        match (self, folder) {
+            (Self::Staged, false) => "tick-staged-file",
+            (Self::Staged, true) => "tick-staged-folder",
+            (_, false) => "tick-unstaged-file",
+            (_, true) => "tick-unstaged-folder",
+        }
+    }
+}
+
 impl GraphView {
-    fn render_files(
+    /// Puts files into the index, or takes them out, then reads the changes again so the
+    /// lists show where they stand.
+    pub(super) fn stage_paths(
+        &mut self,
+        paths: Vec<String>,
+        unstage: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo) = self.workdir() else {
+            return;
+        };
+        if paths.is_empty() || self.inspector.staging {
+            return;
+        }
+        self.inspector.staging = true;
+        Self::spawn_blocking(
+            move || {
+                if unstage {
+                    working::unstage_files(&repo, &paths)
+                } else {
+                    working::stage_files(&repo, &paths)
+                }
+            },
+            move |this, result, cx| {
+                this.inspector.staging = false;
+                if let Err(message) = result {
+                    this.notice = Some(Notice::Error(message.into()));
+                }
+                this.reload_working(cx);
+                cx.notify();
+            },
+            cx,
+        );
+    }
+
+    fn closed_folders_mut(&mut self, pane: Pane) -> &mut HashSet<String> {
+        match pane {
+            Pane::Staged => &mut self.inspector.closed_staged,
+            _ => &mut self.inspector.closed_folders,
+        }
+    }
+
+    fn scroll_of(&self, pane: Pane) -> UniformListScrollHandle {
+        match pane {
+            Pane::Staged => self.inspector.staged_scroll.clone(),
+            _ => self.inspector.files_scroll.clone(),
+        }
+    }
+
+    /// The Tree and List chips, which every list in the inspector shares.
+    fn render_view_chips(&self, cx: &mut Context<Self>) -> Div {
+        div().h_flex().children(FileView::ALL.map(|view| {
+            chip(
+                ("inspector-files-view", view as usize),
+                view.label(),
+                view == self.commit.files_view,
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.set_files_view(view, cx);
+            }))
+        }))
+    }
+
+    /// A commit's files, under a line that counts them.
+    fn render_commit_files(
         &self,
         is_merge: bool,
         details: &Arc<CommitDetails>,
@@ -544,15 +649,6 @@ impl GraphView {
         let total = details.files.len();
         let (additions, deletions) = details.totals();
         let merge_note = tokens(cx.theme().is_dark()).subtext0;
-        let listed = details.clone();
-        let tree_view = self.commit.files_view == FileView::Tree;
-        let rows: Arc<Vec<TreeRow>> = Arc::new(if tree_view {
-            let paths: Vec<&str> = details.files.iter().map(|file| &*file.path).collect();
-            tree::rows(&paths, &self.inspector.closed_folders)
-        } else {
-            Vec::new()
-        });
-        let listed_rows = if tree_view { rows.len() } else { total };
 
         div()
             .v_flex()
@@ -583,49 +679,9 @@ impl GraphView {
                             .child(div().text_color(added).child(format!("+{additions}")))
                             .child(div().text_color(removed).child(format!("−{deletions}"))),
                     )
-                    .child(div().h_flex().children(FileView::ALL.map(|view| {
-                        chip(
-                            ("inspector-files-view", view as usize),
-                            view.label(),
-                            view == self.commit.files_view,
-                            cx,
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_files_view(view, cx);
-                        }))
-                    }))),
+                    .child(self.render_view_chips(cx)),
             )
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .child(
-                        uniform_list(
-                            "inspector-files",
-                            listed_rows,
-                            cx.processor(move |this, range: Range<usize>, _, cx| {
-                                if tree_view {
-                                    return range
-                                        .filter_map(|at| rows.get(at).map(|row| (at, row)))
-                                        .map(|(at, row)| {
-                                            this.render_details_tree_row(at, row, &listed, cx)
-                                        })
-                                        .collect::<Vec<_>>();
-                                }
-                                range
-                                    .filter_map(|index| {
-                                        let file = listed.files.get(index)?;
-                                        Some(this.render_file(index, file, cx))
-                                    })
-                                    .collect::<Vec<_>>()
-                            }),
-                        )
-                        .track_scroll(&self.inspector.files_scroll)
-                        .size_full(),
-                    )
-                    .scrollbar(&self.inspector.files_scroll, ScrollbarAxis::Vertical),
-            )
+            .child(self.render_file_pane(Pane::Commit, details, cx))
             .when(is_merge && total == 0, |list| {
                 list.child(
                     div()
@@ -636,10 +692,155 @@ impl GraphView {
             })
     }
 
+    /// One of the two lists of working changes. Its box stages everything in it, or
+    /// unstages everything, and a list with nothing in it says so.
+    fn render_working_list(
+        &self,
+        side: Side,
+        details: &Arc<CommitDetails>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let pane = Pane::of(side);
+        let muted = cx.theme().muted_foreground;
+        let paths: Vec<String> = self.working_changes().map_or_else(Vec::new, |changes| {
+            changes.side(side).iter().map(|f| f.path.clone()).collect()
+        });
+        let empty = paths.is_empty();
+        let unstage = side.unstages();
+        let heading = if empty {
+            side.heading().to_owned()
+        } else {
+            format!("{} · {}", side.heading(), count(paths.len(), "file"))
+        };
+
+        div()
+            .v_flex()
+            .min_h_0()
+            .gap(px(2.))
+            .mx(px(-8.))
+            .when(empty, |list| list.flex_none())
+            .when(!empty, |list| list.flex_1())
+            .child(
+                section_label(muted)
+                    .h_flex()
+                    .h(px(24.))
+                    .px_2()
+                    .gap_2()
+                    .when(!empty, |header| {
+                        header.child(
+                            checkbox(("tick-all", side as usize), unstage, false, cx).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.stage_paths(paths.clone(), unstage, cx)
+                                }),
+                            ),
+                        )
+                    })
+                    .child(div().flex_1().min_w_0().truncate().child(heading)),
+            )
+            .when(empty, |list| {
+                list.child(div().px_2().text_color(muted).child(side.empty()))
+            })
+            .when(!empty, |list| {
+                list.child(self.render_file_pane(pane, details, cx))
+            })
+    }
+
+    /// The rows of one list, in the chosen way of listing, drawing only those in view.
+    fn render_file_pane(
+        &self,
+        pane: Pane,
+        details: &Arc<CommitDetails>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let unstaged = self
+            .working_changes()
+            .map_or(0, |changes| changes.unstaged.len());
+        let total = details.files.len();
+        let range = match pane {
+            Pane::Commit => 0..total,
+            Pane::Unstaged => 0..unstaged.min(total),
+            Pane::Staged => unstaged.min(total)..total,
+        };
+        let offset = range.start;
+        let tree_view = self.commit.files_view == FileView::Tree;
+        let closed = match pane {
+            Pane::Staged => &self.inspector.closed_staged,
+            _ => &self.inspector.closed_folders,
+        };
+        let rows: Arc<Vec<TreeRow>> = Arc::new(if tree_view {
+            let paths: Vec<&str> = details.files[range.clone()]
+                .iter()
+                .map(|file| &*file.path)
+                .collect();
+            tree::rows(&paths, closed)
+        } else {
+            Vec::new()
+        });
+        let listed_rows = if tree_view { rows.len() } else { range.len() };
+        let listed = details.clone();
+        let scroll = self.scroll_of(pane);
+
+        div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .child(
+                uniform_list(
+                    pane.list_id(),
+                    listed_rows,
+                    cx.processor(move |this, rows_in_view: Range<usize>, _, cx| {
+                        if tree_view {
+                            return rows_in_view
+                                .filter_map(|at| rows.get(at).map(|row| (at, row)))
+                                .map(|(at, row)| {
+                                    this.render_details_tree_row(pane, offset, at, row, &listed, cx)
+                                })
+                                .collect::<Vec<_>>();
+                        }
+                        rows_in_view
+                            .filter_map(|at| {
+                                let file = listed.files.get(offset + at)?;
+                                Some(this.render_file(pane, offset + at, file, cx))
+                            })
+                            .collect::<Vec<_>>()
+                    }),
+                )
+                .track_scroll(&scroll)
+                .size_full(),
+            )
+            .scrollbar(&scroll, ScrollbarAxis::Vertical)
+    }
+
+    /// The box at the start of a working row. Ticked means in the index, so an unticked
+    /// file is staged by ticking it and a ticked one is unstaged by clearing it.
+    fn tick_box(
+        &self,
+        pane: Pane,
+        folder: bool,
+        key: usize,
+        paths: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
+        let side = pane.side()?;
+        let unstage = side.unstages();
+        Some(
+            checkbox((pane.tick_id(folder), key), unstage, false, cx).on_click(cx.listener(
+                move |this, _, _, cx| {
+                    // The row under the box would otherwise open the diff.
+                    cx.stop_propagation();
+                    this.stage_paths(paths.clone(), unstage, cx);
+                },
+            )),
+        )
+    }
+
     /// A line of the tree: a folder that opens and closes, or a file stepped in under its
-    /// folders.
+    /// folders. `offset` is where this list starts in the details, and `index` in a file
+    /// row counts from there.
     fn render_details_tree_row(
         &self,
+        pane: Pane,
+        offset: usize,
         at: usize,
         row: &TreeRow,
         details: &CommitDetails,
@@ -655,16 +856,37 @@ impl GraphView {
                 files,
             } => {
                 let toggled = path.clone();
-                panel_row(("tree-row", at), false, cx)
+                let paths: Vec<String> = files
+                    .iter()
+                    .filter_map(|index| details.files.get(offset + index))
+                    .map(|file| file.path.to_string())
+                    .collect();
+                let menu_path = path.clone();
+                let menu_paths = paths.clone();
+                panel_row((pane.tree_id(), at), false, cx)
                     .h(px(28.))
                     .pl(px(8. + INDENT * *depth as f32))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        let closed = &mut this.inspector.closed_folders;
+                        let closed = this.closed_folders_mut(pane);
                         if !closed.remove(&toggled) {
                             closed.insert(toggled.clone());
                         }
                         cx.notify();
                     }))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            let paths = menu_paths.clone();
+                            this.open_folder_menu(
+                                &menu_path,
+                                paths,
+                                pane.side(),
+                                event.position,
+                                cx,
+                            );
+                        }),
+                    )
                     .child(
                         div()
                             .w(px(12.))
@@ -673,6 +895,7 @@ impl GraphView {
                             .text_color(muted)
                             .child(if *open { "▾" } else { "▸" }),
                     )
+                    .children(self.tick_box(pane, true, at, paths, cx))
                     .child(
                         div()
                             .flex_1()
@@ -688,12 +911,11 @@ impl GraphView {
                             .text_color(muted)
                             .child(files.len().to_string()),
                     )
-                    .children(self.folder_stage_button(at, files, cx))
             }
             TreeRow::File { index, name, depth } => {
-                let index = *index;
+                let index = offset + *index;
                 let Some(file) = details.files.get(index) else {
-                    return panel_row(("tree-row", at), false, cx);
+                    return panel_row((pane.tree_id(), at), false, cx);
                 };
                 let shown = self.shown_file() == Some(index);
                 let count = if file.binary {
@@ -701,10 +923,19 @@ impl GraphView {
                 } else {
                     format!("+{} −{}", file.additions, file.deletions)
                 };
-                panel_row(("tree-row", at), shown, cx)
+                let paths = vec![file.path.to_string()];
+                panel_row((pane.tree_id(), at), shown, cx)
                     .h(px(28.))
                     .pl(px(8. + 20. + INDENT * *depth as f32))
                     .on_click(cx.listener(move |this, _, _, cx| this.show_file(index, cx)))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.open_file_menu(index, event.position, cx);
+                        }),
+                    )
+                    .children(self.tick_box(pane, false, index, paths, cx))
                     .child(
                         div()
                             .w(px(12.))
@@ -722,48 +953,14 @@ impl GraphView {
                             .text_color(muted)
                             .child(count),
                     )
-                    .children(self.stage_controls(index, cx))
             }
         }
     }
 
-    /// A folder's button moves every file under it, in whichever direction is left to go.
-    fn folder_stage_button(
-        &self,
-        at: usize,
-        files: &[usize],
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if !self.working_row_is_selected() {
-            return None;
-        }
-        let inside: Vec<WorkingFile> = files
-            .iter()
-            .filter_map(|index| self.working_files().get(*index).cloned())
-            .collect();
-        let to_stage = working::to_stage(&inside);
-        let unstage = to_stage.is_empty();
-        let (label, paths) = if unstage {
-            ("Unstage", working::to_unstage(&inside))
-        } else {
-            ("Stage", to_stage)
-        };
-        Some(
-            Button::new(("stage-folder", at))
-                .ghost()
-                .xsmall()
-                .label(label)
-                .disabled(self.busy.is_some())
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.stage_paths(paths.clone(), unstage, cx);
-                }))
-                .into_any_element(),
-        )
-    }
-
+    /// A file's row. `index` is its place in the details, which is what a click opens.
     fn render_file(
         &self,
+        pane: Pane,
         index: usize,
         file: &FileChange,
         cx: &mut Context<Self>,
@@ -775,9 +972,17 @@ impl GraphView {
         } else {
             format!("+{} −{}", file.additions, file.deletions)
         };
-        panel_row(("file", index), shown, cx)
+        panel_row((pane.row_id(), index), shown, cx)
             .h(px(28.))
             .on_click(cx.listener(move |this, _, _, cx| this.show_file(index, cx)))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.open_file_menu(index, event.position, cx);
+                }),
+            )
+            .children(self.tick_box(pane, false, index, vec![file.path.to_string()], cx))
             .child(
                 div()
                     .w(px(12.))
@@ -795,6 +1000,5 @@ impl GraphView {
                     .text_color(muted)
                     .child(count),
             )
-            .children(self.stage_controls(index, cx))
     }
 }
