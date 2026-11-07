@@ -1,6 +1,7 @@
 //! The app's look, per `docs/design.md`: Catppuccin colours, the bundled Maple Mono, and
 //! following the OS appearance.
 
+use crate::graph::LaneColor;
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeRegistry};
 use gpui_kit::{App, Hsla, Window, rgb};
 use std::borrow::Cow;
@@ -82,10 +83,14 @@ pub fn selected_row(theme: &Theme) -> Hsla {
     }
 }
 
-/// The colour of a branch lane, repeating once the palette runs out.
-pub fn lane_color(index: u32, is_dark: bool) -> Hsla {
+/// The colour of a lane: Blue for you, otherwise the palette, repeating as it runs out.
+pub fn lane_color(color: LaneColor, is_dark: bool) -> Hsla {
     let lanes = if is_dark { DARK_LANES } else { LIGHT_LANES };
-    rgb(lanes[index as usize % lanes.len()]).into()
+    match color {
+        LaneColor::Head if is_dark => rgb(0x89b4fa).into(),
+        LaneColor::Head => rgb(0x1e66f5).into(),
+        LaneColor::Branch(index) => rgb(lanes[index as usize % lanes.len()]).into(),
+    }
 }
 
 #[cfg(test)]
@@ -146,8 +151,13 @@ mod tests {
 
     #[test]
     fn lanes_start_at_mauve_and_repeat() {
-        assert_eq!(lane_color(0, true), color(0xcba6f7));
-        assert_eq!(lane_color(6, true), lane_color(0, true));
-        assert_eq!(lane_color(0, false), color(0x8839ef));
+        let first = LaneColor::Branch(0);
+        assert_eq!(lane_color(first, true), color(0xcba6f7));
+        assert_eq!(
+            lane_color(LaneColor::Branch(6), true),
+            lane_color(first, true)
+        );
+        assert_eq!(lane_color(first, false), color(0x8839ef));
+        assert_eq!(lane_color(LaneColor::Head, true), color(0x89b4fa));
     }
 }

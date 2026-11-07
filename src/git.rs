@@ -3,7 +3,7 @@
 //! Going through the CLI keeps this working with everything the user's git understands
 //! (reftables, SHA-256, partial clones, the commit-graph cache) without a libgit2 build.
 
-use crate::graph::{GraphBuilder, Row};
+use crate::graph::{GraphBuilder, LaneColor, Plan, Row};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -60,6 +60,8 @@ pub struct Ref {
     pub name: String,
     /// Whether this is the branch HEAD is on.
     pub is_head: bool,
+    /// The branch's colour, the same in the lanes and the chips. Unused for tags.
+    pub color: LaneColor,
 }
 
 /// The state of a repository's refs at one moment.
@@ -67,6 +69,12 @@ pub struct Ref {
 pub struct Refs {
     pub by_commit: HashMap<Arc<str>, Vec<Ref>>,
     pub head: Option<Arc<str>>,
+    /// The short name of the branch HEAD is on.
+    pub head_branch: Option<String>,
+    /// The branch history is shared on, usually `main`.
+    pub default_branch: Option<String>,
+    /// How to lay out the graph for this repository.
+    pub plan: Plan,
     /// The top of the working tree, or the repository itself when it is bare.
     pub workdir: Option<PathBuf>,
     /// The commits to walk history from.
@@ -118,7 +126,7 @@ pub fn load(repo: &Path, mut emit: impl FnMut(LoadEvent) -> bool) {
         return;
     }
 
-    let mut builder = GraphBuilder::new();
+    let mut builder = GraphBuilder::with_plan(refs.plan.clone());
     let result = stream_commits(repo, &refs.tips, |commits| {
         let batch = commits
             .into_iter()
@@ -157,7 +165,7 @@ fn run_git(repo: &Path, args: &[&str]) -> Result<std::process::Output, String> {
 
 pub fn read_refs(repo: &Path) -> Result<Refs, String> {
     const FORMAT: &str =
-        "%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)%00%(refname)";
+        "%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)%00%(refname)%00%(symref)";
     let output = run_git(
         repo,
         &[
@@ -198,11 +206,16 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
         ..Refs::default()
     };
 
+    let mut found = Vec::new();
+    let mut origin_head = None;
     for line in listing.lines() {
         let fields: Vec<&str> = line.split('\0').collect();
-        let [object, object_type, peeled, peeled_type, full_name] = fields[..] else {
+        let [object, object_type, peeled, peeled_type, full_name, symref] = fields[..] else {
             return Err(format!("unexpected output from git for-each-ref: {line:?}"));
         };
+        if full_name == "refs/remotes/origin/HEAD" {
+            origin_head = symref.strip_prefix("refs/remotes/origin/");
+        }
         // Annotated tags point at a tag object; history starts at the commit behind it.
         // Tags can also name trees and blobs, which have no place in the graph.
         let commit = match (object_type, peeled_type) {
@@ -210,14 +223,39 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
             (_, "commit") => peeled,
             _ => continue,
         };
-        let Some((kind, name)) = classify_ref(full_name) else {
-            continue;
-        };
+        if let Some((kind, name)) = classify_ref(full_name) {
+            found.push((kind, name, commit, full_name));
+        }
+    }
+
+    let head_branch = head_ref
+        .as_deref()
+        .and_then(|full_name| full_name.strip_prefix("refs/heads/"));
+    let default_branch = default_branch(&found, origin_head);
+    let colors = branch_colors(&found, default_branch.as_deref(), head_branch);
+    let color_of = |kind: RefKind, name: &str| match kind {
+        RefKind::DetachedHead => LaneColor::Head,
+        _ => colors
+            .get(branch_key(kind, name))
+            .copied()
+            .unwrap_or_default(),
+    };
+
+    for &(kind, name, commit, full_name) in &found {
+        let color = color_of(kind, name);
         let oid = intern(&mut refs.tips, commit);
+        if kind != RefKind::Tag && color != LaneColor::Head {
+            let shared = default_branch.as_deref() == Some(branch_key(kind, name));
+            let tip = refs.plan.tips.entry(oid.clone()).or_insert(color);
+            if shared {
+                *tip = color;
+            }
+        }
         refs.by_commit.entry(oid).or_default().push(Ref {
             kind,
             name: name.to_owned(),
             is_head: head_ref.as_deref() == Some(full_name),
+            color,
         });
     }
 
@@ -228,15 +266,112 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
                 kind: RefKind::DetachedHead,
                 name: "HEAD".into(),
                 is_head: true,
+                color: LaneColor::Head,
             });
         }
     }
+
+    refs.plan.fork = default_branch
+        .as_deref()
+        .filter(|&default| head.is_some() && head_branch != Some(default))
+        .and_then(|default| {
+            let base = found
+                .iter()
+                .find(|r| r.0 == RefKind::Branch && r.1 == default);
+            let base = base.or_else(|| {
+                found
+                    .iter()
+                    .find(|r| r.0 == RefKind::Remote && branch_key(r.0, r.1) == default)
+            })?;
+            fork_point(repo, base.3)
+        });
+    refs.plan.head = head.clone();
+    refs.plan.shared_color = default_branch
+        .as_deref()
+        .and_then(|default| colors.get(default).copied())
+        .filter(|color| *color != LaneColor::Head)
+        .unwrap_or_default();
+    refs.plan.first_free_color = colors.len() as u32 + 1;
     refs.head = head;
+    refs.head_branch = head_branch.map(str::to_owned);
+    refs.default_branch = default_branch;
 
     for commit_refs in refs.by_commit.values_mut() {
         commit_refs.sort_by_key(|r| (!r.is_head, r.kind));
     }
     Ok(refs)
+}
+
+/// A remote branch and the local branch of the same name are one branch to the eye.
+fn branch_key(kind: RefKind, name: &str) -> &str {
+    match kind {
+        RefKind::Remote => name.split_once('/').map_or(name, |(_, branch)| branch),
+        _ => name,
+    }
+}
+
+type FoundRef<'a> = (RefKind, &'a str, &'a str, &'a str);
+
+/// The branch history is shared on: what origin calls its default, or a usual name.
+fn default_branch(found: &[FoundRef], origin_head: Option<&str>) -> Option<String> {
+    let exists = |wanted: &str| {
+        found
+            .iter()
+            .any(|r| r.0 != RefKind::Tag && branch_key(r.0, r.1) == wanted)
+    };
+    origin_head
+        .filter(|name| exists(name))
+        .or_else(|| ["main", "master", "trunk"].into_iter().find(|n| exists(n)))
+        .map(str::to_owned)
+}
+
+/// Gives every branch its colour. HEAD's is Blue, the default branch takes the first of
+/// the palette, and the rest follow in name order, so colours don't depend on commits.
+fn branch_colors(
+    found: &[FoundRef],
+    default_branch: Option<&str>,
+    head_branch: Option<&str>,
+) -> HashMap<String, LaneColor> {
+    let mut names: Vec<&str> = found
+        .iter()
+        .filter(|r| matches!(r.0, RefKind::Branch | RefKind::Remote))
+        .map(|r| branch_key(r.0, r.1))
+        .filter(|name| Some(*name) != default_branch && Some(*name) != head_branch)
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+
+    let mut colors: HashMap<String, LaneColor> = names
+        .into_iter()
+        .zip(1..)
+        .map(|(name, index)| (name.to_owned(), LaneColor::Branch(index)))
+        .collect();
+    if let Some(default) = default_branch {
+        colors.insert(default.to_owned(), LaneColor::Branch(0));
+    }
+    if let Some(head) = head_branch {
+        colors.insert(head.to_owned(), LaneColor::Head);
+    }
+    colors
+}
+
+/// Where HEAD's first-parent line joins `base`. This can't be `git merge-base`: after
+/// merging `base` back into a branch, that commit isn't on HEAD's line at all.
+fn fork_point(repo: &Path, base: &str) -> Option<Arc<str>> {
+    let exclude = format!("^{base}");
+    let args = ["rev-list", "--first-parent", "--parents", "HEAD", &exclude];
+    let output = run_git(repo, &args).ok()?;
+    let listing = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() {
+        return None;
+    }
+    let Some(oldest) = listing.lines().last() else {
+        // Nothing of HEAD's is outside base, so all of its line is shared.
+        return run_git(repo, &["rev-parse", "HEAD"])
+            .ok()
+            .map(|head| String::from_utf8_lossy(&head.stdout).trim().into());
+    };
+    oldest.split_whitespace().nth(1).map(Arc::from)
 }
 
 fn intern(tips: &mut Vec<Arc<str>>, oid: &str) -> Arc<str> {
@@ -649,6 +784,115 @@ mod tests {
             seen == 0
         });
         assert_eq!(seen, 1, "returning false stops the load");
+    }
+
+    fn entry<'a>(entries: &'a [Entry], subject: &str) -> &'a Entry {
+        entries
+            .iter()
+            .find(|e| &*e.commit.subject == subject)
+            .unwrap()
+    }
+
+    #[test]
+    fn head_runs_down_the_first_lane_past_newer_branches() {
+        let repo = Repo::new();
+        repo.commit("base");
+        repo.git(&["checkout", "-q", "-b", "mine"]);
+        repo.commit("my work");
+        repo.git(&["checkout", "-q", "main"]);
+        repo.commit("newer on main");
+
+        repo.git(&["checkout", "-q", "mine"]);
+        let (refs, entries, _) = load_all(repo.path());
+        let refs = refs.unwrap();
+
+        assert_eq!(refs.head_branch.as_deref(), Some("mine"));
+        assert_eq!(refs.default_branch.as_deref(), Some("main"));
+        assert_eq!(entry(&entries, "my work").row.column, 0);
+        assert_eq!(entry(&entries, "my work").row.color, LaneColor::Head);
+        assert_eq!(entry(&entries, "newer on main").row.column, 1);
+        assert_eq!(
+            entry(&entries, "newer on main").row.color,
+            LaneColor::Branch(0),
+            "main takes the first palette colour"
+        );
+        assert_eq!(entry(&entries, "base").row.column, 0);
+        assert_eq!(
+            entry(&entries, "base").row.color,
+            LaneColor::Branch(0),
+            "shared history below the fork takes main's colour"
+        );
+    }
+
+    #[test]
+    fn the_fork_stays_on_heads_line_after_merging_main_back_in() {
+        let repo = Repo::new();
+        repo.commit("base");
+        repo.git(&["checkout", "-q", "-b", "mine"]);
+        repo.commit("my work");
+        repo.git(&["checkout", "-q", "main"]);
+        repo.commit("main work");
+        repo.git(&["checkout", "-q", "mine"]);
+        repo.git(&["merge", "-q", "--no-ff", "-m", "merge main", "main"]);
+
+        let (refs, entries, _) = load_all(repo.path());
+        let base = &entry(&entries, "base").commit.oid;
+        assert_eq!(refs.unwrap().plan.fork.as_ref(), Some(base));
+        assert_eq!(entry(&entries, "my work").row.column, 0);
+        assert_eq!(entry(&entries, "my work").row.color, LaneColor::Head);
+    }
+
+    #[test]
+    fn on_the_default_branch_the_whole_line_is_blue() {
+        let repo = Repo::new();
+        repo.commit("base");
+        repo.commit("next");
+        let (refs, entries, _) = load_all(repo.path());
+        assert_eq!(refs.unwrap().plan.fork, None);
+        assert!(entries.iter().all(|e| e.row.color == LaneColor::Head));
+    }
+
+    #[test]
+    fn a_branch_and_its_remote_share_one_colour_in_refs_and_lanes() {
+        let repo = Repo::new();
+        let base = repo.commit("base");
+        repo.git(&["branch", "side", &base]);
+        repo.git(&["checkout", "-q", "side"]);
+        let tip = repo.commit("side tip");
+        repo.git(&["update-ref", "refs/remotes/origin/side", &tip]);
+        repo.git(&["checkout", "-q", "main"]);
+
+        let (refs, entries, _) = load_all(repo.path());
+        let refs = refs.unwrap();
+        let side = &refs.by_commit[tip.as_str()];
+        assert_eq!(side.len(), 2);
+        assert_eq!(side[0].color, side[1].color);
+        assert_eq!(side[0].color, LaneColor::Branch(1));
+        assert_eq!(entry(&entries, "side tip").row.color, LaneColor::Branch(1));
+    }
+
+    #[test]
+    fn colours_do_not_depend_on_commit_order() {
+        let repo = Repo::new();
+        repo.commit("base");
+        repo.git(&["branch", "aaa"]);
+        repo.git(&["branch", "zzz"]);
+        let colors = |repo: &Repo| {
+            let refs = read_refs(repo.path()).unwrap();
+            let oid = refs.head.clone().unwrap();
+            refs.by_commit[&oid]
+                .iter()
+                .map(|r| (r.name.clone(), r.color))
+                .collect::<HashMap<_, _>>()
+        };
+        let before = colors(&repo);
+        assert_eq!(before["aaa"], LaneColor::Branch(1));
+        assert_eq!(before["zzz"], LaneColor::Branch(2));
+
+        repo.commit("next");
+        repo.git(&["branch", "-f", "aaa"]);
+        repo.git(&["branch", "-f", "zzz"]);
+        assert_eq!(colors(&repo)["aaa"], before["aaa"]);
     }
 
     #[test]

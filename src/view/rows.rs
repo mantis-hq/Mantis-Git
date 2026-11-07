@@ -55,7 +55,6 @@ impl GraphView {
             let is_head = self.refs.head.as_ref() == Some(&commit.oid);
             let is_merge = commit.parents.len() > 1;
             let commit_refs = self.refs.by_commit.get(&commit.oid);
-            let lane = lane_color(entry.row.color, is_dark);
 
             rows.push(
                 div()
@@ -114,11 +113,10 @@ impl GraphView {
                                     .child(SharedString::from(commit.subject.clone())),
                             )
                             .when_some(commit_refs, |row, refs| {
-                                row.children(
-                                    refs.iter()
-                                        .take(MAX_VISIBLE_REFS)
-                                        .map(|r| ref_label(r, lane, head, on_head, warning, muted)),
-                                )
+                                row.children(refs.iter().take(MAX_VISIBLE_REFS).map(|r| {
+                                    let lane = lane_color(r.color, is_dark);
+                                    ref_label(r, lane, head, on_head, warning)
+                                }))
                                 .when(
                                     refs.len() > MAX_VISIBLE_REFS,
                                     |row| {
@@ -199,18 +197,10 @@ fn format_date(time: i64) -> String {
         .unwrap_or_default()
 }
 
-fn ref_label(
-    r: &Ref,
-    lane: Hsla,
-    head: Hsla,
-    on_head: Hsla,
-    tag: Hsla,
-    muted: Hsla,
-) -> impl IntoElement {
+fn ref_label(r: &Ref, lane: Hsla, head: Hsla, on_head: Hsla, tag: Hsla) -> impl IntoElement {
     let color = match r.kind {
         RefKind::Tag => tag,
-        RefKind::Remote => muted,
-        RefKind::Branch | RefKind::DetachedHead => lane,
+        RefKind::Branch | RefKind::Remote | RefKind::DetachedHead => lane,
     };
     let (fill, text) = if r.is_head {
         (head, on_head)

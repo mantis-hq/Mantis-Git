@@ -103,6 +103,7 @@ mod render {
         );
         git(repo, &["checkout", "-q", "main"]);
         commit(repo, "Bump the version");
+        git(repo, &["checkout", "-q", "wip"]);
     }
 
     fn open(cx: &mut HeadlessAppContext, repo: &Path) -> (AnyWindowHandle, Entity<GraphView>) {

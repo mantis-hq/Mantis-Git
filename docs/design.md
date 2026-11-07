@@ -138,6 +138,6 @@ Overlay 1). Maple Mono is bundled in `src/fonts`.
 | `list_head`          | Mantle    |
 | `list_active`        | Surface 0 |
 
-Not built yet, so match this document as you touch each area:
-
-- Lanes: `src/graph.rs` assigns lanes in arrival order, not HEAD first.
+Lanes: `GraphBuilder` reserves the first lane for HEAD before any commit arrives, and
+`Refs` assigns each branch one colour, so lanes and chips can't disagree. Branches past
+the default take palette colours in name order, so a colour doesn't change as commits land.
