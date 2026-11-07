@@ -5,6 +5,7 @@
 
 use crate::graph::{GraphBuilder, LaneColor, Plan, Row};
 use crate::ops::{self, Process, git, stderr_message};
+use crate::remote::{self, Remote};
 use crate::status::{self, RepoStatus};
 use crate::submodule::{self, Submodule};
 use crate::text::count;
@@ -188,6 +189,8 @@ pub struct Refs {
     pub worktrees: Vec<Worktree>,
     /// The repositories this one pins, by path. Empty when it has none.
     pub submodules: Vec<Submodule>,
+    /// The remotes the repository is set up with, which can have no branches yet.
+    pub remote_configs: Vec<Remote>,
     /// How to lay out the graph for this repository.
     pub plan: Plan,
     /// The top of the working tree, or the repository itself when it is bare.
@@ -367,14 +370,16 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
     let workdir = workdir.unwrap_or_else(|| repo.to_owned());
     let worktrees = worktree::list(repo, &workdir);
     let submodules = submodule::list(&workdir);
+    let remote_configs = remote::list(repo);
 
     let mut refs = Refs {
         fingerprint: format!(
-            "{listing}\0{head_ref:?}\0{head:?}\0{status:?}\0{worktrees:?}\0{submodules:?}"
+            "{listing}\0{head_ref:?}\0{head:?}\0{status:?}\0{worktrees:?}\0{submodules:?}\0{remote_configs:?}"
         ),
         workdir: Some(workdir),
         worktrees,
         submodules,
+        remote_configs,
         status,
         ..Refs::default()
     };

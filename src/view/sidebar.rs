@@ -5,12 +5,14 @@ use super::parts::{TEXT_CHIP, TEXT_SMALL};
 use super::parts::{panel_row, section_label};
 use super::{GraphView, OpenWorktreeInTab, SwitchWorktree};
 use crate::theme::{lane_color, tokens};
+use gitclient_core::branch;
 use gitclient_core::branch::Dragged;
 use gitclient_core::git::RefKind;
 use gitclient_core::picks::{Click, Picks, tip_of};
 use gitclient_core::spotlight::Spotlight;
 use gitclient_core::submodule::State as SubmoduleState;
 use gpui_kit::component::button::*;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
@@ -77,6 +79,9 @@ enum Item {
     },
     Worktree(usize),
     Submodule(usize),
+    /// A remote that has no remote branches yet, such as one just added. Index into
+    /// `remote_configs`.
+    Remote(usize),
     Stash(usize),
 }
 
@@ -97,8 +102,20 @@ struct RefRow {
     depth: usize,
 }
 
+/// The form that asks for a new branch's name.
+pub(super) struct NewBranch {
+    /// Where the branch starts, or the checked-out commit when `None`.
+    start: Option<String>,
+    /// What to call that place in the form.
+    label: String,
+    /// Made on the next render, which is the first time there is a window to make it in.
+    input: Option<Entity<InputState>>,
+    _events: Option<Subscription>,
+}
+
 #[derive(Default)]
 pub(super) struct State {
+    pub(super) new_branch: Option<NewBranch>,
     pub(super) window_is_wide: bool,
     /// What the user chose, which outranks the window's width.
     open: Option<bool>,
@@ -249,6 +266,124 @@ impl GraphView {
         cx.emit(SwitchWorktree(path));
     }
 
+    /// Opens the form for a new branch, showing the sidebar if it is closed.
+    pub(super) fn begin_new_branch(
+        &mut self,
+        start: Option<String>,
+        label: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar.open = Some(true);
+        self.sidebar.new_branch = Some(NewBranch {
+            start,
+            label,
+            input: None,
+            _events: None,
+        });
+        cx.notify();
+    }
+
+    fn cancel_new_branch(&mut self, cx: &mut Context<Self>) {
+        self.sidebar.new_branch = None;
+        cx.notify();
+    }
+
+    /// Makes the input of a form that was just opened, and puts the cursor in it.
+    pub(super) fn ensure_new_branch_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self
+            .sidebar
+            .new_branch
+            .as_ref()
+            .is_some_and(|form| form.input.is_none())
+        {
+            return;
+        }
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("feat/my-change"));
+        let events =
+            cx.subscribe_in(
+                &input,
+                window,
+                |this, _, event: &InputEvent, _, cx| match event {
+                    InputEvent::PressEnter { .. } => this.create_new_branch(cx),
+                    InputEvent::Change => cx.notify(),
+                    _ => {}
+                },
+            );
+        let focus = input.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+        if let Some(form) = &mut self.sidebar.new_branch {
+            form.input = Some(input);
+            form._events = Some(events);
+        }
+    }
+
+    fn new_branch_name(&self, cx: &App) -> String {
+        self.sidebar
+            .new_branch
+            .as_ref()
+            .and_then(|form| form.input.as_ref())
+            .map_or_else(String::new, |input| {
+                input.read(cx).value().trim().to_owned()
+            })
+    }
+
+    fn create_new_branch(&mut self, cx: &mut Context<Self>) {
+        let name = self.new_branch_name(cx);
+        if name.is_empty() || self.busy.is_some() {
+            return;
+        }
+        let Some(form) = self.sidebar.new_branch.take() else {
+            return;
+        };
+        self.run_operation(
+            "Creating a branch",
+            move |repo| branch::create_branch(repo, &name, form.start.as_deref()),
+            cx,
+        );
+    }
+
+    fn render_new_branch(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let form = self.sidebar.new_branch.as_ref()?;
+        let theme = cx.theme();
+        let (muted, border) = (theme.muted_foreground, theme.border);
+        let name = self.new_branch_name(cx);
+        let disabled = name.is_empty() || self.busy.is_some();
+        Some(
+            div()
+                .v_flex()
+                .gap_2()
+                .px_2()
+                .pb_3()
+                .mb_2()
+                .border_b_1()
+                .border_color(border)
+                .child(section_label(muted).child(branch::new_branch_prompt(&form.label)))
+                .children(form.input.as_ref().map(Input::new))
+                .child(
+                    div()
+                        .h_flex()
+                        .justify_end()
+                        .gap_1()
+                        .child(
+                            Button::new("new-branch-cancel")
+                                .ghost()
+                                .small()
+                                .label("Cancel")
+                                .on_click(cx.listener(|this, _, _, cx| this.cancel_new_branch(cx))),
+                        )
+                        .child(
+                            Button::new("new-branch-create")
+                                .ghost()
+                                .small()
+                                .label(branch::new_branch_label(&name))
+                                .disabled(disabled)
+                                .on_click(cx.listener(|this, _, _, cx| this.create_new_branch(cx))),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
     pub(super) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar.open = Some(!self.sidebar_is_open());
         cx.notify();
@@ -328,7 +463,19 @@ impl GraphView {
         let muted = theme.muted_foreground;
         let text = theme.secondary_foreground;
         let key = format!("{list}/{path}");
+        // The top folder of the remote branches is the remote itself.
+        let remote = (list == RefList::Remotes.key() && depth == 0 && self.is_remote(&path))
+            .then(|| path.clone());
         panel_row(SharedString::from(format!("folder-{key}")), false, cx)
+            .when_some(remote, |row, name| {
+                row.on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.open_remote_menu(&name, event.position, cx);
+                    }),
+                )
+            })
             .h(px(30.))
             .pl(indent(depth))
             .gap_1()
@@ -393,6 +540,14 @@ impl GraphView {
         self.push_tree(RefList::Branches, branches, &mut items);
         items.push(Item::Gap);
 
+        self.push_ref_section(
+            Section::Remotes,
+            "Remotes",
+            RefList::Remotes,
+            &self.refs.remotes,
+            &mut items,
+        );
+
         let trees = self.refs.worktrees.len();
         if trees >= 2 {
             let section = Section::Worktrees;
@@ -406,6 +561,25 @@ impl GraphView {
             }
         }
 
+        self.push_ref_section(
+            Section::Tags,
+            "Tags",
+            RefList::Tags,
+            &self.refs.tags,
+            &mut items,
+        );
+
+        let stashes = self.refs.stashes.len();
+        items.push(Item::Header {
+            section: Section::Stashes,
+            title: "Stashes",
+            count: stashes,
+        });
+        if self.sidebar.expanded.contains(&Section::Stashes) {
+            items.extend((0..stashes).map(Item::Stash));
+        }
+
+        // Last, since a repository seldom has them and they are rarely what one is after.
         let modules = self.refs.submodules.len();
         if modules > 0 {
             let section = Section::Submodules;
@@ -418,37 +592,46 @@ impl GraphView {
                 items.extend((0..modules).map(Item::Submodule));
             }
         }
+        items
+    }
 
-        let sections = [
-            (
-                Section::Remotes,
-                "Remotes",
-                RefList::Remotes,
-                &self.refs.remotes,
-            ),
-            (Section::Tags, "Tags", RefList::Tags, &self.refs.tags),
-        ];
-        for (section, title, list, refs) in sections {
-            items.push(Item::Header {
-                section,
-                title,
-                count: refs.len(),
-            });
-            if self.sidebar.expanded.contains(&section) {
-                self.push_tree(list, refs.iter().map(|named| &*named.name), &mut items);
+    /// A header and, when open, the folder tree of the refs under it.
+    fn push_ref_section(
+        &self,
+        section: Section,
+        title: &'static str,
+        list: RefList,
+        refs: &[gitclient_core::git::NamedRef],
+        items: &mut Vec<Item>,
+    ) {
+        items.push(Item::Header {
+            section,
+            title,
+            count: refs.len(),
+        });
+        if self.sidebar.expanded.contains(&section) {
+            self.push_tree(list, refs.iter().map(|named| &*named.name), items);
+            if section == Section::Remotes {
+                items.extend(self.remotes_without_branches().map(Item::Remote));
             }
         }
+    }
 
-        let stashes = self.refs.stashes.len();
-        items.push(Item::Header {
-            section: Section::Stashes,
-            title: "Stashes",
-            count: stashes,
-        });
-        if self.sidebar.expanded.contains(&Section::Stashes) {
-            items.extend((0..stashes).map(Item::Stash));
-        }
-        items
+    /// The remotes that no remote branch shows, until the first fetch brings some.
+    fn remotes_without_branches(&self) -> impl Iterator<Item = usize> + '_ {
+        let has_branch = |name: &str| {
+            let prefix = format!("{name}/");
+            self.refs
+                .remotes
+                .iter()
+                .any(|branch| branch.name.starts_with(&prefix))
+        };
+        self.refs
+            .remote_configs
+            .iter()
+            .enumerate()
+            .filter(move |(_, remote)| !has_branch(&remote.name))
+            .map(|(index, _)| index)
     }
 
     /// The ref at `index` in a list.
@@ -509,6 +692,10 @@ impl GraphView {
                 None => slot,
             },
             Item::Submodule(index) => match self.render_submodule_row(*index, cx) {
+                Some(row) => slot.child(row),
+                None => slot,
+            },
+            Item::Remote(index) => match self.render_remote_row(*index, cx) {
                 Some(row) => slot.child(row),
                 None => slot,
             },
@@ -598,35 +785,45 @@ impl GraphView {
         let theme = cx.theme();
         let (panel, border) = (theme.title_bar, theme.border);
         let items = self.sidebar_items();
+        let form = self.render_new_branch(cx);
 
         Some(
             div()
+                .v_flex()
                 .w(self.sidebar.width.map_or(WIDTH, px))
                 .flex_none()
                 .bg(panel)
                 .border_r_1()
                 .border_color(border)
+                .child(div().v_flex().px_2().pt_3().children(form))
                 .child(
-                    div().id("sidebar").size_full().px_2().py_3().child(
-                        div()
-                            .relative()
-                            .size_full()
-                            .child(
-                                uniform_list(
-                                    "sidebar-rows",
-                                    items.len(),
-                                    cx.processor(move |this, range: Range<usize>, _, cx| {
-                                        range
-                                            .filter_map(|index| items.get(index))
-                                            .map(|item| this.render_item(item, cx))
-                                            .collect::<Vec<_>>()
-                                    }),
+                    div()
+                        .id("sidebar")
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .px_2()
+                        .pb_3()
+                        .child(
+                            div()
+                                .relative()
+                                .size_full()
+                                .child(
+                                    uniform_list(
+                                        "sidebar-rows",
+                                        items.len(),
+                                        cx.processor(move |this, range: Range<usize>, _, cx| {
+                                            range
+                                                .filter_map(|index| items.get(index))
+                                                .map(|item| this.render_item(item, cx))
+                                                .collect::<Vec<_>>()
+                                        }),
+                                    )
+                                    .track_scroll(&self.sidebar.scroll)
+                                    .size_full(),
                                 )
-                                .track_scroll(&self.sidebar.scroll)
-                                .size_full(),
-                            )
-                            .scrollbar(&self.sidebar.scroll, ScrollbarAxis::Vertical),
-                    ),
+                                .scrollbar(&self.sidebar.scroll, ScrollbarAxis::Vertical),
+                        ),
                 )
                 .into_any_element(),
         )
@@ -640,6 +837,19 @@ impl GraphView {
             .h(px(24.))
             .px_2()
             .child(section_label(muted).h_flex().flex_1().child("Branches"))
+            .child(
+                div()
+                    .id("new-branch")
+                    .cursor_pointer()
+                    .text_size(TEXT_SMALL)
+                    .font_medium()
+                    .text_color(link)
+                    .child("New branch")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let label = this.refs.head_name().to_owned();
+                        this.begin_new_branch(None, label, cx)
+                    })),
+            )
             .when(self.sidebar.spotlight.is_some(), |heading| {
                 heading.child(
                     div()
@@ -827,6 +1037,43 @@ impl GraphView {
         )
     }
 
+    /// A remote with nothing fetched from it yet. It is what there is to right-click.
+    fn render_remote_row(&self, index: usize, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let remote = self.refs.remote_configs.get(index)?;
+        let theme = cx.theme();
+        let (muted, text) = (theme.muted_foreground, theme.secondary_foreground);
+        let name = remote.name.clone();
+        let menu_name = remote.name.clone();
+        Some(
+            panel_row(("remote", index), false, cx)
+                .h(px(30.))
+                .pl(indent(0))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.open_remote_menu(&menu_name, event.position, cx);
+                    }),
+                )
+                .child(div().size(px(8.)).flex_none().rounded_full().bg(muted))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(text)
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(TEXT_CHIP)
+                        .text_color(muted)
+                        .child("no branches yet"),
+                ),
+        )
+    }
+
     fn render_section_header(
         &self,
         section: Section,
@@ -835,12 +1082,31 @@ impl GraphView {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = cx.theme();
+        let link = theme.primary;
         panel_row(title, false, cx)
             .h(px(30.))
             .justify_between()
             .text_color(tokens(theme.is_dark()).subtext0)
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_section(section, cx)))
-            .child(title)
+            .child(div().flex_1().child(title))
+            .when(section == Section::Remotes, |row| {
+                row.child(
+                    div()
+                        .id("add-remote")
+                        .flex_none()
+                        .px_1()
+                        .rounded(px(4.))
+                        .cursor_pointer()
+                        .text_color(link)
+                        .font_semibold()
+                        .child("+ Add")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            // The header under it would otherwise fold the section.
+                            cx.stop_propagation();
+                            this.open_remote_form(None, cx);
+                        })),
+                )
+            })
             .child(
                 div()
                     .text_size(TEXT_CHIP)

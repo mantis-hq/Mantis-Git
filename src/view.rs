@@ -10,6 +10,7 @@ mod inspector;
 mod menu;
 mod notice;
 mod parts;
+mod remotes;
 mod rows;
 mod settings;
 mod sidebar;
@@ -63,11 +64,13 @@ pub fn bind_keys(cx: &mut App) {
         ("ctrl-r", "ctrl-b")
     };
     let context = Some(KEY_CONTEXT);
+    // Letter keys would swallow typing, so they only act while no text input has focus.
+    let letters = Some("GraphView && !Input");
     cx.bind_keys([
         KeyBinding::new("up", SelectPrevious, context),
-        KeyBinding::new("k", SelectPrevious, context),
+        KeyBinding::new("k", SelectPrevious, letters),
         KeyBinding::new("down", SelectNext, context),
-        KeyBinding::new("j", SelectNext, context),
+        KeyBinding::new("j", SelectNext, letters),
         KeyBinding::new("pageup", SelectPreviousPage, context),
         KeyBinding::new("pagedown", SelectNextPage, context),
         KeyBinding::new("home", SelectFirst, context),
@@ -141,6 +144,10 @@ pub struct GraphView {
     busy: Option<SharedString>,
     notice: Option<Notice>,
     confirm: Option<Confirm>,
+    /// Whether the key now down is a repeat of one still held.
+    key_held: bool,
+    /// The form that adds or edits a remote, while it is open.
+    remote_form: Option<remotes::RemoteForm>,
     sidebar: sidebar::State,
     inspector: inspector::State,
     diff: diff::State,
@@ -197,6 +204,8 @@ impl GraphView {
             busy: None,
             notice: None,
             confirm: None,
+            key_held: false,
+            remote_form: None,
             sidebar: sidebar::State::new(),
             inspector: Default::default(),
             diff: Default::default(),
@@ -245,6 +254,7 @@ impl GraphView {
         // Nothing of the old repository, or worktree, applies to the new one.
         self.selection = Selection::default();
         self.menu = None;
+        self.remote_form = None;
         self.screen = Screen::Graph;
         self.sidebar.picks.clear();
         self.sidebar.spotlight = None;
@@ -550,13 +560,16 @@ impl GraphView {
         let inspector = self.render_inspector(cx);
         let diff = self.render_diff(cx);
         let (has_sidebar, has_inspector) = (sidebar.is_some(), inspector.is_some());
+        // An open diff takes the place of the whole graph, and the inspector beside it stays
+        // for picking another file.
         let main = div()
             .v_flex()
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .child(
-                div()
+            .child(match diff {
+                Some(diff) => diff,
+                None => div()
                     .relative()
                     .flex_1()
                     .min_h_0()
@@ -571,22 +584,11 @@ impl GraphView {
                         .track_scroll(&self.scroll)
                         .size_full(),
                     )
-                    .vertical_scrollbar(&self.scroll),
-            )
-            .when(diff.is_some(), |main| {
-                main.child(parts::grip(parts::Edge::Diff, false, cx))
-            })
-            .children(diff);
+                    .vertical_scrollbar(&self.scroll)
+                    .into_any_element(),
+            });
         // The graph keeps at least this much, so no edge can be dragged over it.
         const GRAPH_MIN: f32 = 320.;
-        let main = parts::on_resize(main, parts::Edge::Diff, cx, |this, pointer, bounds| {
-            let height = bounds.bottom() - pointer.y;
-            this.diff.height = Some(parts::fit(
-                height,
-                180.,
-                f32::from(bounds.size.height) - 120.,
-            ));
-        });
 
         let row = div()
             .h_flex()
@@ -627,6 +629,7 @@ impl GraphView {
 impl Render for GraphView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sidebar.window_is_wide = window.viewport_size().width >= sidebar::WIDE_WINDOW;
+        self.ensure_new_branch_input(window, cx);
         let theme = cx.theme();
         let (background, foreground) = (theme.background, theme.foreground);
 
@@ -638,8 +641,16 @@ impl Render for GraphView {
             Screen::Commit => (None, self.render_commit_screen(window, cx)),
             Screen::Conflict => (None, self.render_conflict_screen(window, cx)),
         };
+        self.ensure_remote_inputs(window, cx);
         let notice = self.render_notice(cx);
+        let remote_form = self.render_remote_form(cx);
         let menu = self.render_menu(cx);
+        let popup = self.render_confirm_popup(cx);
+        // Enter and Escape are bound on this view, and a click elsewhere (a menu line, a
+        // terminal) leaves the focus somewhere they don't reach.
+        if popup.is_some() && !self.focus.is_focused(window) {
+            window.focus(&self.focus, cx);
+        }
 
         div()
             .v_flex()
@@ -647,6 +658,9 @@ impl Render for GraphView {
             .size_full()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, _| {
+                this.key_held = event.is_held;
+            }))
             .bg(background)
             .text_size(parts::TEXT_BODY)
             .text_color(foreground)
@@ -669,12 +683,14 @@ impl Render for GraphView {
             .on_action(cx.listener(|this, _: &settings::OpenSettings, _, cx| {
                 settings::open(this.repo.clone(), cx)
             }))
-            .on_action(cx.listener(|this, _: &CloseMenu, _, cx| this.close_menu(cx)))
-            .on_action(cx.listener(|this, _: &ActivateMenu, _, cx| this.activate_menu(cx)))
+            .on_action(cx.listener(|this, _: &CloseMenu, _, cx| this.press_escape(cx)))
+            .on_action(cx.listener(|this, _: &ActivateMenu, _, cx| this.press_enter(cx)))
             .children(bar)
             .children(notice)
+            .children(remote_form)
             .child(content)
             .children(menu)
+            .children(popup)
     }
 }
 
@@ -889,6 +905,91 @@ mod tests {
             view.start_action(NextAction::Push { commits: 1 }, cx);
             assert!(!view.is_confirming());
         });
+    }
+
+    #[gpui_kit::test]
+    fn a_deletion_popup_takes_enter_and_escape_and_the_risky_one_needs_two_presses(
+        cx: &mut TestAppContext,
+    ) {
+        use super::notice::Confirm;
+        use gitclient_core::menu::Weight;
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let (view, mut cx) = open_view(cx);
+        let ran = Rc::new(Cell::new(0));
+        let ask = |view: &mut GraphView, weight| {
+            let ran = ran.clone();
+            view.confirm = Some(Confirm {
+                message: "This deletes it.".into(),
+                action: "Delete".into(),
+                run: Rc::new(move |_, _| ran.set(ran.get() + 1)),
+                weight,
+                armed: None,
+            });
+        };
+        view.update(&mut cx, |view, cx| {
+            ask(view, Weight::Popup);
+            view.press_escape(cx);
+            assert!(!view.is_confirming());
+            assert_eq!(ran.get(), 0, "Escape cancels");
+
+            ask(view, Weight::Popup);
+            view.key_held = true;
+            view.press_enter(cx);
+            assert!(view.is_confirming(), "a held key doesn't answer");
+            view.key_held = false;
+            view.press_enter(cx);
+            assert!(!view.is_confirming());
+            assert_eq!(ran.get(), 1, "Enter confirms");
+
+            ask(view, Weight::DoublePress);
+            view.press_enter(cx);
+            assert!(view.is_confirming());
+            assert_eq!(ran.get(), 1, "one press only arms it");
+            view.press_enter(cx);
+            assert!(!view.is_confirming());
+            assert_eq!(ran.get(), 2, "the second press confirms");
+
+            ask(view, Weight::DoublePress);
+            view.press_enter(cx);
+            view.press_escape(cx);
+            assert!(!view.is_confirming());
+            assert_eq!(ran.get(), 2);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn the_keys_reach_a_popup_even_when_focus_was_elsewhere(cx: &mut TestAppContext) {
+        use super::notice::Confirm;
+        use gitclient_core::menu::Weight;
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let (view, mut cx) = open_view(cx);
+        let ran = Rc::new(Cell::new(0));
+        let ask = |cx: &mut VisualTestContext| {
+            let ran = ran.clone();
+            view.update(cx, |view, cx| {
+                view.confirm = Some(Confirm {
+                    message: "This deletes it.".into(),
+                    action: "Delete".into(),
+                    run: Rc::new(move |_, _| ran.set(ran.get() + 1)),
+                    weight: Weight::Popup,
+                    armed: None,
+                });
+                cx.notify();
+            });
+            cx.run_until_parked();
+        };
+        // Nothing has focused the view, as after a click on a menu line.
+        cx.update(|window, cx| window.blur(cx));
+        ask(&mut cx);
+        cx.simulate_keystrokes("escape");
+        assert!(!view.read_with(&cx, |view, _| view.is_confirming()));
+        assert_eq!(ran.get(), 0);
+        ask(&mut cx);
+        cx.simulate_keystrokes("enter");
+        assert!(!view.read_with(&cx, |view, _| view.is_confirming()));
+        assert_eq!(ran.get(), 1);
     }
 
     #[gpui_kit::test]
@@ -1136,6 +1237,33 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn editing_a_remote_starts_from_its_address_and_escape_closes_the_menu_before_the_form(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, mut cx) = open_view(cx);
+        view.update(&mut cx, |view, cx| {
+            let mut refs = gitclient_core::git::Refs::default();
+            refs.remote_configs = vec![gitclient_core::remote::Remote {
+                name: "origin".into(),
+                url: "git@host:a.git".into(),
+                push_url: None,
+            }];
+            view.refs = Arc::new(refs);
+            assert!(view.is_remote("origin") && !view.is_remote("feat"));
+
+            view.open_remote_form(Some("origin".into()), cx);
+            let form = view.remote_form.as_ref().unwrap();
+            assert_eq!(form.prefill(), ("origin", "git@host:a.git"));
+
+            view.open_remote_menu("origin", point(px(10.), px(10.)), cx);
+            view.dismiss(cx);
+            assert!(view.menu.is_none() && view.remote_form.is_some());
+            view.dismiss(cx);
+            assert!(view.remote_form.is_none());
+        });
+    }
+
+    #[gpui_kit::test]
     fn the_keyboard_walks_a_menu_wraps_and_skips_lines_that_do_nothing(cx: &mut TestAppContext) {
         let (view, mut cx) = open_view(cx);
         load(&view, &["a", "b"], &mut cx);
@@ -1164,7 +1292,7 @@ mod tests {
             };
             view.open_ref_menu(main, point(px(10.), px(10.)), cx);
             view.step_menu(1, cx);
-            assert_eq!(at(view).as_deref(), Some("Copy name"));
+            assert_eq!(at(view).as_deref(), Some("New branch from main"));
         });
     }
 

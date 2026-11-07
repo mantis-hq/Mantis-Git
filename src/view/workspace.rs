@@ -405,6 +405,10 @@ mod tests {
     use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 
     fn open_workspace(cx: &mut TestAppContext) -> (Entity<Workspace>, VisualTestContext) {
+        // The dock listens to the process-wide command log, which any test's git thread
+        // can wake, and a terminal wakes its pane from its own thread. The scheduler
+        // would call both non-deterministic.
+        cx.executor().allow_parking();
         cx.update(|cx| {
             gpui_kit::init(cx);
             bind_keys(cx);

@@ -102,8 +102,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   closes one, `Ctrl Tab` and `Ctrl Shift Tab` move between them, and `Ctrl O` opens a
   repository in a new tab, or in the current one while it is empty. Opening a repository
   that is already open switches to its tab. Closing the last tab leaves an empty one.
-- Graph window: 300 px branch sidebar, graph, 380 px inspector. The diff sits under the
-  graph, so history stays visible while reading it.
+- Graph window: 300 px branch sidebar, graph, 380 px inspector. A file's diff opens over
+  the whole graph, between the sidebar and the inspector, so it has the room to be read.
+  The inspector stays beside it for picking another file, `Esc` or "Close" brings the graph
+  back, and the diff has a 40 px header: the path, two chips "Changes" and "Whole file"
+  (the picked one ticked), a "Hide white space" chip that ticks when on, and for working
+  changes a quiet "Stage" or "Unstage" button. The choices last until the window closes and
+  apply to every file. A file whose only changes were white space says so.
 - The sidebar starts closed below 1500 px, because the two side panels would leave 520 px
   for the graph at the default window. A quiet button and `Ctrl B` open it at any width.
 - Task screens (commit, conflict) replace the sidebar and link back to the graph.
@@ -155,7 +160,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   column headings or hash: the refs column, the graph, the subject, then author and a short time
   ("12m", "3h", "Tue", "Oct 30"). The full hash belongs to the inspector.
 - Resizing: every panel edge drags, so a panel can be made smaller or bigger. These are
-  the sidebar, inspector, diff, dock and its log list, the commit screen's file list and
+  the sidebar, inspector, dock and its log list, the commit screen's file list and
   form, the conflict steps, and the settings side panel. The pointer shows a resize cursor
   over a 4 px strip on the edge, which tints 50% Blue. A panel stops at a minimum, and at
   the point where the main area would be under 320 px. Sizes last until the window closes.
@@ -184,7 +189,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   command to bring each back. A checked-out branch and remote branches stay, and the menu
   says so.
 - Worktrees: when a repository has more than one working tree, the sidebar lists them
-  under "Worktrees", open by default, between Branches and Remotes. A row is the folder's
+  under "Worktrees", open by default, between Remotes and Tags. A row is the folder's
   name, then its branch (or `detached at <hash>`) in Overlay 2, with a dot in that
   branch's colour. The one on show is selected and semibold. Clicking another switches
   the current tab to it, so the tab strip doesn't grow. A worktree whose
@@ -195,7 +200,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   one stay, and the menu says why. Git refuses to remove one with uncommitted changes,
   and the app never forces it. With one working tree the section isn't drawn.
 - Submodules: when a repository has any, the sidebar lists them under "Submodules", open
-  by default, after Worktrees. A row is the submodule's path, then where it stands in
+  by default, as the last section, after Stashes. A row is the submodule's path, then where it stands in
   Overlay 2 (its short commit, `moved to <hash>`, `not downloaded` or `in conflict`), with
   a dot that says the same: Green at the commit the repository records, Yellow on another,
   Peach in conflict, Overlay 2 when not downloaded. Clicking a downloaded one opens it in
@@ -206,6 +211,21 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   out the recorded commit in a submodule that is on another one asks first, and gives the
   `git -C <path> checkout <hash>` that goes back. The app never forces anything. With no
   submodules the section isn't drawn.
+- New branch: a quiet "New branch" link ends the Branches heading, and branch, tag and
+  commit menus have "New branch from <name or hash>". Either opens a form at the top of the
+  sidebar (the sidebar opens if closed): a section label saying where the branch starts
+  ("New branch, starting at main"), a name input with the cursor in it, and quiet "Cancel"
+  and "Create <name>" buttons, never blue. Enter creates it. The new branch is checked out,
+  and the band under the header says how to undo it. A name git would refuse, or one
+  already taken, is explained in that band and nothing changes.
+- Remotes: the "Remotes" header ends in a quiet blue "+ Add" that opens a form band under
+  the header (the notice band's look), with a name, an address, and quiet "Cancel" and
+  result-named buttons ("Add remote", "Save origin"). `Enter` saves and `Esc` closes. Each
+  remote's top folder in the list, or a row saying "no branches yet" for one nothing has
+  been fetched from, opens a menu on right-click: "Edit <name>" (the same form, filled in;
+  renaming also renames its remote branches), "Copy address", and in red "Remove remote
+  <name>", which asks first and gives the `git remote add` that brings it back. Names that
+  can't work are turned down in the form in Peach, before git runs.
 - A branch row ends with its count against the default branch (`+2 −1`), then against
   the remote branch it tracks (`↑1 ↓2`: to push, to pull). Level or untracked shows nothing.
 
@@ -224,6 +244,16 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   ("Merge feat/x into main", "Rebase main onto feat/x"). A line that can't be used stays,
   in Overlay 2, and says why. Only lines that remove something are red, and they ask
   first, saying how to undo. `Up`/`Down` move, `Enter` chooses, `Esc` closes.
+- **Delete confirmation:** deleting a branch, tag, worktree or remote asks in a small popup centred
+  over the window, never in the band under the header. A card on Mantle with a Surface 0
+  border and 8 px radius holds the sentence (which says how to undo it), a line naming the
+  keys, and "Cancel" and the result ("Delete") as quiet buttons. `Enter` confirms and `Esc`
+  cancels; clicking outside cancels too. A held-down key never answers. Deleting a branch
+  that is neither merged into the default branch nor pushed loses commits nothing else
+  keeps, so `Enter` has to be pressed twice within 600 ms: the first press turns the key
+  line Red and says "Press Enter again to delete." Rules for which is which live in core
+  (`Weight` in `crates/core/src/menu.rs`). Other risky steps (rebase, force push, hard
+  reset) still use the band.
 - **Double-click:** double-clicking a branch, in the sidebar or on a chip, checks it out. A
   remote branch gets a local copy that follows it. The checked-out branch does nothing.
 - **Drag and drop:** branches and tags drag from the sidebar and from the refs column,
@@ -236,6 +266,15 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   button, "Review and commit", and lists the changed files under them exactly as it does
   for a commit, so a file's diff is one click away. Diffs open on a click, never on
   their own. The list and an open diff refresh when the window is used again.
+- **Staging:** each file in the working changes ends with a quiet button that names its
+  result: "Stage", "Unstage", or "Stage rest" for a file with changes both in and out of the
+  index, with the word "staged" or "partly staged" before it. Folder rows in the tree have
+  the same button for everything below them. Under "Review and commit" sit quiet "Stage all
+  3 files" and "Unstage all 2 files" buttons, each shown only while it has something to do.
+  Unstaging never touches the file itself. The list refreshes at once, and the commit screen
+  starts with what is staged.
+- **Merges in the inspector:** a merge lists and diffs what it brought in over its first
+  parent, the branch it was made on, so its files match what reverting it with `-m 1` undoes.
 - **Inspector actions:** "Check out" names the branch when one is at the commit. Commands
   that add a commit say how to undo it in the band under the header.
 - **Long lists:** lists that can grow without limit, such as a commit's files, the commit
@@ -248,10 +287,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Commit form:** the bump card only shows when the repository has `v1.2.3` style tags to
   count from. Hunks start ticked, except that files with nothing staged start unticked
   when something else is staged, so work staged from a terminal carries over.
-- **Commit file list:** the header of the list always holds two chips, "List" (every file
+- **File lists:** the commit screen's file list and the inspector's list of a commit's (or
+  the working changes') files share one choice. Its header always holds two chips, "List" (every file
   by its path, the default) and "Tree" (files grouped by folder), the picked one with a
   tick. A folder row has an arrow, a tick box that ticks or clears everything below it
-  (dash when partly ticked), its name in Overlay 2 and a file count. A click opens or
+  (dash when partly ticked; the inspector has no tick boxes), its name in Overlay 2 and a file count. A click opens or
   closes it. A chain of folders with one child each is one row (`crates/core/src/`), and
   folders come before files. The choice applies to every repository and is saved at once
   as `files_view` in the app's `state` file.

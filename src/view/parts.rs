@@ -259,7 +259,6 @@ pub(super) fn checkbox(
 pub(super) enum Edge {
     Sidebar,
     Inspector,
-    Diff,
     Dock,
     Log,
     Files,

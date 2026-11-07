@@ -223,12 +223,29 @@ pub fn delete_warning(kind: RefKind, name: &str, tip: Option<&str>) -> String {
     }
 }
 
+/// Whether deleting a ref loses commits that nothing else keeps: a local branch the default
+/// branch doesn't contain, with commits its remote branch doesn't have either (or none).
+/// A tag, a merged branch and a pushed branch can all be brought back from elsewhere.
+pub fn loses_commits(refs: &crate::git::Refs, kind: RefKind, name: &str) -> bool {
+    if kind != RefKind::Branch {
+        return false;
+    }
+    let Some(branch) = refs.branches.iter().find(|branch| branch.name == name) else {
+        return false;
+    };
+    let unmerged = !matches!(branch.ahead_behind, Some((0, _)));
+    let unpushed = branch.upstream.is_none_or(|(ahead, _)| ahead > 0);
+    unmerged && unpushed
+}
+
 /// A branch or tag that is about to be deleted, with where it pointed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Doomed {
     pub kind: RefKind,
     pub name: String,
     pub tip: Option<String>,
+    /// Whether deleting it loses commits that nothing else keeps, see [`loses_commits`].
+    pub at_risk: bool,
 }
 
 fn counted(number: usize, one: &str, many: &str) -> String {
@@ -308,6 +325,52 @@ pub fn delete_branch(repo: &Path, name: &str) -> Result<Option<String>, String> 
     ops::run(repo, &["branch", "-D", name]).map(|_| Some(format!("Deleted the branch {name}.")))
 }
 
+/// Makes a branch at `start` (the checked-out commit when `None`) and switches to it. The
+/// name is checked first, so that git's own refusal isn't the first word on a typo.
+pub fn create_branch(
+    repo: &Path,
+    name: &str,
+    start: Option<&str>,
+) -> Result<Option<String>, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Name the new branch first.".to_owned());
+    }
+    if ops::run(repo, &["check-ref-format", "--branch", name]).is_err() {
+        return Err(format!(
+            "{name} can't be a branch name: it can't have spaces, `~`, `^`, `:`, `..` \
+             or end in `.lock`."
+        ));
+    }
+    if ops::resolves(repo, &format!("refs/heads/{name}")) {
+        return Err(format!("A branch called {name} already exists."));
+    }
+    let before = current_branch(repo);
+    let mut args = vec!["switch", "-c", name];
+    args.extend(start);
+    ops::run(repo, &args)?;
+    let undo = match before {
+        Some(before) => format!("git switch {before} && git branch -D {name}"),
+        None => format!("git switch --detach - && git branch -D {name}"),
+    };
+    Ok(Some(format!(
+        "Created {name} and switched to it. To undo it, run `{undo}`."
+    )))
+}
+
+/// What the new-branch form says about where the branch will start.
+pub fn new_branch_prompt(start: &str) -> String {
+    format!("New branch, starting at {start}")
+}
+
+/// The button of the new-branch form, which names the branch it makes.
+pub fn new_branch_label(name: &str) -> String {
+    match name.trim() {
+        "" => "Create branch".to_owned(),
+        name => format!("Create {name}"),
+    }
+}
+
 pub fn delete_tag(repo: &Path, name: &str) -> Result<Option<String>, String> {
     ops::run(repo, &["tag", "-d", name]).map(|_| Some(format!("Deleted the tag {name}.")))
 }
@@ -339,6 +402,33 @@ mod tests {
             kind: RefKind::Branch,
             name: name.into(),
         }
+    }
+
+    #[test]
+    fn a_new_branch_starts_where_asked_and_is_switched_to() {
+        let repo = ahead();
+        let side = repo.git(&["rev-parse", "side"]);
+        let said = create_branch(repo.path(), " topic ", Some("side")).unwrap();
+        assert_eq!(repo.git(&["branch", "--show-current"]).trim(), "topic");
+        assert_eq!(repo.git(&["rev-parse", "topic"]), side);
+        assert!(
+            said.unwrap()
+                .contains("git switch main && git branch -D topic")
+        );
+        // Without a start it grows from where you are.
+        create_branch(repo.path(), "next", None).unwrap();
+        assert_eq!(repo.git(&["rev-parse", "next"]), side);
+    }
+
+    #[test]
+    fn bad_and_taken_names_are_refused_in_words() {
+        let repo = ahead();
+        for bad in ["", "  ", "two words", "a..b", "x.lock"] {
+            assert!(create_branch(repo.path(), bad, None).is_err(), "{bad:?}");
+        }
+        let taken = create_branch(repo.path(), "side", None).unwrap_err();
+        assert!(taken.contains("already exists"), "{taken}");
+        assert_eq!(repo.git(&["branch", "--show-current"]).trim(), "main");
     }
 
     #[test]
@@ -507,6 +597,7 @@ mod tests {
             kind,
             name: name.into(),
             tip: Some(repo.git(&["rev-parse", name])),
+            at_risk: false,
         };
         let refs = [
             doomed(RefKind::Branch, "side"),

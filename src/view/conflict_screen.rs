@@ -12,7 +12,6 @@ use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use std::rc::Rc;
 use std::sync::Arc;
 
 const STEPS_WIDTH: Pixels = px(340.);
@@ -103,18 +102,18 @@ impl GraphView {
                 .disabled(self.busy.is_some())
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let target = target.clone();
-                    this.confirm = Some(Confirm {
-                        message: conflict::rebase_warning(&target).into(),
-                        action: "Rebase".into(),
-                        run: Rc::new(move |this, cx| {
+                    this.confirm = Some(Confirm::banner(
+                        conflict::rebase_warning(&target),
+                        "Rebase",
+                        move |this, cx| {
                             let target = target.clone();
                             this.run_operation(
                                 "Rebasing",
                                 move |repo| conflict::rebase_onto(repo, &target),
                                 cx,
                             );
-                        }),
-                    });
+                        },
+                    ));
                     cx.notify();
                 }))
                 .into_any_element(),
@@ -219,11 +218,11 @@ impl GraphView {
     /// Leaves the screen with the operation still paused, keeping a way back.
     fn leave_for_graph(&mut self, cx: &mut Context<Self>) {
         if let Some(progress) = &self.conflict.progress {
-            self.confirm = Some(Confirm {
-                message: progress.sentence().into(),
-                action: "Resolve".into(),
-                run: Rc::new(|this, cx| this.show_screen(Screen::Conflict, cx)),
-            });
+            self.confirm = Some(Confirm::banner(
+                progress.sentence(),
+                "Resolve",
+                |this, cx| this.show_screen(Screen::Conflict, cx),
+            ));
         }
         self.conflict.finished = None;
         self.show_screen(Screen::Graph, cx);

@@ -6,6 +6,7 @@ use crate::branch::{self, Doomed, Dragged, DropAction, Relation};
 use crate::conflict;
 use crate::details;
 use crate::git::{Commit, RefKind, Refs};
+use crate::remote;
 use crate::submodule;
 use crate::text::{count, short_oid};
 use crate::worktree;
@@ -39,6 +40,8 @@ pub enum Command {
         name: String,
         /// Where the ref pointed, so the warning can say how to get it back.
         tip: Option<String>,
+        /// Whether deleting it loses commits that nothing else keeps.
+        at_risk: bool,
     },
     /// Several branches and tags at once.
     DeleteMany {
@@ -65,6 +68,13 @@ pub enum Command {
     OpenWorktreeInTab {
         path: PathBuf,
     },
+    /// Handled by the interface, which asks for a name: makes a branch at `start`.
+    NewBranch {
+        /// A revision to start at, or the checked-out commit when `None`.
+        start: Option<String>,
+        /// What to call that place, such as `a1b2c3d` or `main`.
+        label: String,
+    },
     RemoveWorktree {
         path: PathBuf,
         /// What removing it does and how to bring it back, worked out when the menu opened.
@@ -81,6 +91,15 @@ pub enum Command {
         warning: Option<String>,
     },
     UpdateSubmodules,
+    /// Handled by the interface, which owns the form that edits a remote.
+    EditRemote {
+        name: String,
+    },
+    RemoveRemote {
+        name: String,
+        /// What removing it does and how to bring it back, worked out when the menu opened.
+        warning: String,
+    },
     /// Handled by the interface, which owns the clipboard.
     Copy {
         text: String,
@@ -93,6 +112,42 @@ pub enum Command {
 pub struct Confirmation {
     pub message: String,
     pub action: &'static str,
+    pub weight: Weight,
+}
+
+/// How a confirmation is asked, by how much a mistake costs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Weight {
+    /// A band under the header, for steps that rewrite rather than remove.
+    Banner,
+    /// A small popup: Enter confirms, Escape cancels.
+    Popup,
+    /// A popup for losing work that can't be found again: Enter has to be pressed twice,
+    /// quickly.
+    DoublePress,
+}
+
+impl Weight {
+    /// The line under the question that says which keys answer it. `armed` is true once the
+    /// first of two presses has landed.
+    pub fn hint(self, action: &str, armed: bool) -> String {
+        let action = action.to_lowercase();
+        match (self, armed) {
+            (Self::DoublePress, false) => {
+                format!("Press Enter twice to {action}, or Esc to cancel.")
+            }
+            (Self::DoublePress, true) => format!("Press Enter again to {action}."),
+            _ => format!("Press Enter to {action}, or Esc to cancel."),
+        }
+    }
+}
+
+fn deletion_weight(at_risk: bool) -> Weight {
+    if at_risk {
+        Weight::DoublePress
+    } else {
+        Weight::Popup
+    }
 }
 
 impl Command {
@@ -116,9 +171,12 @@ impl Command {
             Self::Revert { .. } => "Reverting",
             Self::Reset { .. } => "Resetting",
             Self::SwitchWorktree { .. } | Self::OpenWorktreeInTab { .. } => "Switching",
+            Self::NewBranch { .. } => "Creating a branch",
             Self::RemoveWorktree { .. } => "Removing the worktree",
             Self::OpenSubmoduleInTab { .. } => "Switching",
             Self::UpdateSubmodule { .. } | Self::UpdateSubmodules => "Updating",
+            Self::EditRemote { .. } => "Editing",
+            Self::RemoveRemote { .. } => "Removing the remote",
             Self::Copy { .. } => "Copying",
         }
     }
@@ -134,14 +192,27 @@ impl Command {
             } => Some(Confirmation {
                 message: branch::rebase_warning(branch, onto),
                 action: "Rebase",
+                weight: Weight::Banner,
             }),
-            Self::Delete { kind, name, tip } => Some(Confirmation {
+            Self::Delete {
+                kind,
+                name,
+                tip,
+                at_risk,
+            } => Some(Confirmation {
                 message: branch::delete_warning(*kind, name, tip.as_deref()),
                 action: "Delete",
+                weight: deletion_weight(*at_risk),
             }),
             Self::RemoveWorktree { warning, .. } => Some(Confirmation {
                 message: warning.clone(),
                 action: "Remove",
+                weight: Weight::Popup,
+            }),
+            Self::RemoveRemote { warning, .. } => Some(Confirmation {
+                message: warning.clone(),
+                action: "Remove",
+                weight: Weight::Popup,
             }),
             Self::UpdateSubmodule {
                 warning: Some(warning),
@@ -149,10 +220,12 @@ impl Command {
             } => Some(Confirmation {
                 message: warning.clone(),
                 action: "Check out",
+                weight: Weight::Banner,
             }),
             Self::DeleteMany { refs } => Some(Confirmation {
                 message: branch::delete_many_warning(refs),
                 action: "Delete",
+                weight: deletion_weight(refs.iter().any(|doomed| doomed.at_risk)),
             }),
             Self::Reset {
                 oid, hard: true, ..
@@ -164,6 +237,7 @@ impl Command {
                     short_oid(oid)
                 ),
                 action: "Discard and reset",
+                weight: Weight::Banner,
             }),
             _ => None,
         }
@@ -208,9 +282,12 @@ impl Command {
             Self::RemoveWorktree { path, .. } => worktree::remove(repo, path),
             Self::UpdateSubmodule { path, .. } => submodule::update(repo, path),
             Self::UpdateSubmodules => submodule::update_all(repo),
+            Self::RemoveRemote { name, .. } => remote::remove(repo, name),
             Self::SwitchWorktree { .. }
             | Self::OpenWorktreeInTab { .. }
             | Self::OpenSubmoduleInTab { .. }
+            | Self::NewBranch { .. }
+            | Self::EditRemote { .. }
             | Self::Copy { .. } => Ok(None),
         }
     }
@@ -312,6 +389,13 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
         }
     }
 
+    lines.push(Line::item(
+        format!("New branch from {name}"),
+        Command::NewBranch {
+            start: Some(name.clone()),
+            label: name.clone(),
+        },
+    ));
     lines.push(Line::Separator);
     lines.push(Line::item("Copy name", copy(&name, "the name")));
 
@@ -340,6 +424,7 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
                 label,
                 Command::Delete {
                     kind,
+                    at_risk: branch::loses_commits(refs, kind, &name),
                     name,
                     tip: tip.map(|tip| tip.to_string()),
                 },
@@ -464,6 +549,39 @@ pub fn submodule_menu(refs: &Refs, path: &str) -> Vec<Line> {
     lines
 }
 
+/// The menu for a remote in the sidebar.
+pub fn remote_menu(refs: &Refs, name: &str) -> Vec<Line> {
+    let Some(remote) = refs
+        .remote_configs
+        .iter()
+        .find(|remote| remote.name == name)
+    else {
+        return Vec::new();
+    };
+    let mut lines = vec![
+        Line::Heading(name.to_owned()),
+        Line::item(
+            format!("Edit {name}"),
+            Command::EditRemote {
+                name: name.to_owned(),
+            },
+        ),
+        Line::item("Copy address", copy(&remote.url, "the address")),
+        Line::Separator,
+    ];
+    lines.push(
+        Line::item(
+            format!("Remove remote {name}"),
+            Command::RemoveRemote {
+                name: name.to_owned(),
+                warning: remote::remove_warning(remote),
+            },
+        )
+        .danger(),
+    );
+    lines
+}
+
 /// The menu for several picked branches and tags. What it can do to many at once is
 /// copy their names and delete them.
 pub fn refs_menu(refs: &Refs, targets: &[Dragged]) -> Vec<Line> {
@@ -490,6 +608,7 @@ pub fn refs_menu(refs: &Refs, targets: &[Dragged]) -> Vec<Line> {
                 kind: target.kind,
                 name: target.name.clone(),
                 tip: crate::picks::tip_of(refs, target).map(|tip| tip.to_string()),
+                at_risk: branch::loses_commits(refs, target.kind, &target.name),
             })
             .collect();
         let tags = doomed.iter().filter(|d| d.kind == RefKind::Tag).count();
@@ -560,6 +679,13 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
         Command::Revert {
             oids: vec![oid.clone()],
             is_merge: actions.is_merge,
+        },
+    ));
+    lines.push(Line::item(
+        format!("New branch from {}", short_oid(&oid)),
+        Command::NewBranch {
+            start: Some(oid.clone()),
+            label: short_oid(&oid).to_owned(),
         },
     ));
 
@@ -691,6 +817,34 @@ mod tests {
             color: LaneColor::default(),
         }];
         refs
+    }
+
+    #[test]
+    fn a_remote_menu_edits_copies_and_removes_with_a_way_back() {
+        let mut refs = refs();
+        refs.remote_configs = vec![crate::remote::Remote {
+            name: "origin".into(),
+            url: "git@host:a.git".into(),
+            push_url: None,
+        }];
+        let lines = remote_menu(&refs, "origin");
+        let commands: Vec<_> = lines.iter().filter_map(Line::command).collect();
+        assert_eq!(
+            commands[0],
+            &Command::EditRemote {
+                name: "origin".into()
+            }
+        );
+        assert_eq!(commands[1], &copy("git@host:a.git", "the address"));
+        let remove = commands[2];
+        assert!(
+            remove
+                .confirmation()
+                .unwrap()
+                .message
+                .contains("git remote add origin git@host:a.git")
+        );
+        assert!(remote_menu(&refs, "nowhere").is_empty());
     }
 
     #[test]
@@ -852,6 +1006,7 @@ mod tests {
                 "Check out feat/x",
                 "Merge feat/x into main",
                 "Rebase main onto feat/x",
+                "New branch from feat/x",
                 "Copy name",
                 "Delete branch feat/x"
             ]
@@ -864,7 +1019,14 @@ mod tests {
     #[test]
     fn the_checked_out_branch_can_be_neither_checked_out_nor_deleted() {
         let lines = ref_menu(&refs(), &target(RefKind::Branch, "main"));
-        assert_eq!(labels(&lines), ["main is already checked out", "Copy name"]);
+        assert_eq!(
+            labels(&lines),
+            [
+                "main is already checked out",
+                "New branch from main",
+                "Copy name"
+            ]
+        );
         assert!(lines[1].command().is_none());
     }
 
@@ -876,6 +1038,7 @@ mod tests {
             [
                 "Check out v1.0.0 without a branch",
                 "Merge v1.0.0 into main",
+                "New branch from v1.0.0",
                 "Copy name",
                 "Delete tag v1.0.0"
             ]
@@ -899,6 +1062,7 @@ mod tests {
             [
                 "This commit is already checked out",
                 "Revert",
+                "New branch from aaaaaaa",
                 "Copy hash",
                 "Copy subject"
             ]
@@ -911,6 +1075,7 @@ mod tests {
                 "Merge into main",
                 "Cherry-pick onto main",
                 "Revert",
+                "New branch from bbbbbbb",
                 "Reset main to here, keeping changes",
                 "Reset main to here, discarding changes",
                 "Copy hash",
@@ -1006,5 +1171,45 @@ mod tests {
         let command = copy("abc", "the hash");
         assert_eq!(command.copied_notice().as_deref(), Some("Copied the hash."));
         assert_eq!(command.run(Path::new(".")), Ok(None));
+    }
+
+    #[test]
+    fn deleting_asks_in_a_popup_and_only_unmerged_unpushed_work_needs_two_presses() {
+        let weight = |upstream, ahead_behind| {
+            let mut refs = refs();
+            let branch = refs
+                .branches
+                .iter_mut()
+                .find(|b| b.name == "feat/x")
+                .unwrap();
+            branch.upstream = upstream;
+            branch.ahead_behind = ahead_behind;
+            let lines = ref_menu(&refs, &target(RefKind::Branch, "feat/x"));
+            let delete = lines.last().unwrap().command().unwrap();
+            assert!(matches!(delete, Command::Delete { .. }));
+            delete.confirmation().unwrap().weight
+        };
+        // Nothing known: not shown to be merged, and no remote branch has it.
+        assert_eq!(weight(None, None), Weight::DoublePress);
+        assert_eq!(weight(Some((2, 0)), Some((2, 0))), Weight::DoublePress);
+        // Pushed, merged, or both are recoverable.
+        assert_eq!(weight(Some((0, 0)), Some((2, 0))), Weight::Popup);
+        assert_eq!(weight(None, Some((0, 3))), Weight::Popup);
+    }
+
+    #[test]
+    fn the_hint_names_the_keys() {
+        assert_eq!(
+            Weight::Popup.hint("Delete", false),
+            "Press Enter to delete, or Esc to cancel."
+        );
+        assert_eq!(
+            Weight::DoublePress.hint("Delete", false),
+            "Press Enter twice to delete, or Esc to cancel."
+        );
+        assert_eq!(
+            Weight::DoublePress.hint("Delete", true),
+            "Press Enter again to delete."
+        );
     }
 }
