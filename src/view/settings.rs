@@ -238,6 +238,8 @@ pub struct Settings {
     new_identity_email: Entity<InputState>,
     new_identity_key: Entity<InputState>,
     feedback: Feedback,
+    /// Inputs the user has typed in since they were last saved or filled in.
+    dirty: std::collections::HashSet<String>,
     _new_inputs: Vec<Subscription>,
 }
 
@@ -271,7 +273,7 @@ impl Settings {
                     &input,
                     window,
                     move |this, _, event: &InputEvent, window, cx| {
-                        if commits(event) {
+                        if this.edited(&format!("text:{key}"), event) {
                             this.commit_text(key, window, cx);
                         }
                     },
@@ -344,6 +346,7 @@ impl Settings {
             new_identity_email,
             new_identity_key,
             feedback: Feedback::None,
+            dirty: Default::default(),
             _new_inputs: new_inputs,
         };
         this.load(window, cx);
@@ -491,7 +494,8 @@ impl Settings {
     fn apply_values(&mut self, values: Values, window: &mut Window, cx: &mut Context<Self>) {
         for field in &self.fields {
             let shown = values.get(field.key).unwrap_or("").to_owned();
-            sync(&field.input, shown, window, cx);
+            let typed_in = self.dirty.contains(&format!("text:{}", field.key));
+            sync(&field.input, shown, typed_in, window, cx);
         }
 
         let wanted = values.aliases();
@@ -499,7 +503,10 @@ impl Settings {
             .retain(|row| wanted.iter().any(|alias| alias.name == row.name));
         for alias in wanted {
             match self.aliases.iter().find(|row| row.name == alias.name) {
-                Some(row) => sync(&row.input, alias.command, window, cx),
+                Some(row) => {
+                    let typed_in = self.dirty.contains(&format!("alias:{}", row.name));
+                    sync(&row.input, alias.command, typed_in, window, cx);
+                }
                 None => {
                     let input = field("What git runs", &alias.command, window, cx);
                     let name = alias.name.clone();
@@ -507,7 +514,7 @@ impl Settings {
                         &input,
                         window,
                         move |this, _, event: &InputEvent, window, cx| {
-                            if commits(event) {
+                            if this.edited(&format!("alias:{name}"), event) {
                                 this.commit_alias(&name, window, cx);
                             }
                         },
@@ -539,9 +546,10 @@ impl Settings {
                 .find(|row| row.matcher == identity.matcher)
             {
                 Some(row) => {
-                    sync(&row.name, identity.name.clone(), window, cx);
-                    sync(&row.email, identity.email.clone(), window, cx);
-                    sync(&row.key, identity.signing_key.clone(), window, cx);
+                    let typed_in = self.dirty.contains(&format!("identity:{:?}", row.matcher));
+                    sync(&row.name, identity.name.clone(), typed_in, window, cx);
+                    sync(&row.email, identity.email.clone(), typed_in, window, cx);
+                    sync(&row.key, identity.signing_key.clone(), typed_in, window, cx);
                 }
                 None => {
                     let name = field("Name", &identity.name, window, cx);
@@ -554,7 +562,7 @@ impl Settings {
                             input,
                             window,
                             move |this, _, event: &InputEvent, window, cx| {
-                                if commits(event) {
+                                if this.edited(&format!("identity:{matcher:?}"), event) {
                                     this.commit_identity(&matcher, window, cx);
                                 }
                             },
@@ -589,6 +597,20 @@ impl Settings {
             window,
             cx,
         );
+    }
+
+    /// Notes what happened to an input, and says whether to save it now. Only text the
+    /// user typed is ever saved: an input that was merely focused and left, which may
+    /// not even have been filled in yet, must not overwrite what the file holds.
+    fn edited(&mut self, id: &str, event: &InputEvent) -> bool {
+        match event {
+            InputEvent::Change => {
+                self.dirty.insert(id.to_owned());
+                false
+            }
+            event if commits(event) => self.dirty.remove(id),
+            _ => false,
+        }
     }
 
     fn commit_text(&mut self, key: &'static str, window: &mut Window, cx: &mut Context<Self>) {
@@ -1607,10 +1629,19 @@ fn commits(event: &InputEvent) -> bool {
     matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur)
 }
 
-/// Puts `text` in `input`, unless it is being typed in or already says that.
-fn sync(input: &Entity<InputState>, text: String, window: &mut Window, cx: &mut Context<Settings>) {
-    let focused = input.read(cx).focus_handle(cx).is_focused(window);
-    if !focused && input.read(cx).value().as_ref() != text {
+/// Puts `text` in `input`, unless the user has typed in it or it already says that.
+///
+/// What counts is whether it was edited, not whether it has focus: an input that had
+/// focus before its value arrived must still be filled in. Otherwise leaving it would
+/// "save" the empty box over the real value.
+fn sync(
+    input: &Entity<InputState>,
+    text: String,
+    typed_in: bool,
+    window: &mut Window,
+    cx: &mut Context<Settings>,
+) {
+    if !typed_in && input.read(cx).value().as_ref() != text {
         input.update(cx, |input, cx| input.set_value(text, window, cx));
     }
 }
@@ -1643,7 +1674,8 @@ fn chip(id: impl Into<ElementId>, label: &str, on: bool, cx: &App) -> Stateful<D
 mod tests {
     use super::{Feedback, Match, NewKind, Scope, Settings, Target, config, identity};
     use gitclient_core::testing::Repo;
-    use gpui_kit::{Entity, TestAppContext, VisualTestContext};
+    use gpui_kit::component::input::InputEvent;
+    use gpui_kit::{Entity, Focusable as _, TestAppContext, VisualTestContext};
     use std::path::PathBuf;
 
     fn open(
@@ -1809,6 +1841,91 @@ mod tests {
         settle(&mut cx);
         assert!(identity::list(&scope).unwrap().is_empty());
         view.read_with(&cx, |view, _| assert!(view.identity_rows.is_empty()));
+    }
+
+    #[gpui_kit::test]
+    fn leaving_an_input_that_was_never_typed_in_does_not_erase_the_value(cx: &mut TestAppContext) {
+        let (_dir, scope) = file_scope();
+        config::set(&scope, "user.name", "Ada").unwrap();
+        config::set(&scope, "user.email", "ada@example.com").unwrap();
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let window = {
+            let scope = scope.clone();
+            cx.add_window(move |window, cx| Settings::new(None, scope, window, cx))
+        };
+        let view = window.root(cx).unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        // The first field has focus before the config has been read, as when the window
+        // opens, so it is still empty when focus moves on.
+        view.update_in(&mut cx, |view, window, cx| {
+            let input = view.fields[0].input.clone();
+            let focus = input.read(cx).focus_handle(cx);
+            window.focus(&focus, cx);
+        });
+        settle(&mut cx);
+
+        let shown = view.read_with(&cx, |view, cx| {
+            view.fields[0].input.read(cx).value().to_string()
+        });
+        assert_eq!(shown, "Ada", "a focused input is still filled in");
+
+        // Even an empty box, left alone, saves nothing.
+        view.update_in(&mut cx, |view, window, cx| {
+            let input = view.fields[0].input.clone();
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        });
+        for field in ["user.name", "user.email"] {
+            let input = view.read_with(&cx, |view, _| {
+                view.fields
+                    .iter()
+                    .find(|f| f.key == field)
+                    .unwrap()
+                    .input
+                    .clone()
+            });
+            input.update(&mut cx, |_, cx| cx.emit(InputEvent::Blur));
+        }
+        settle(&mut cx);
+        let values = config::read(&scope).unwrap();
+        assert_eq!(values.get("user.name"), Some("Ada"));
+        assert_eq!(values.get("user.email"), Some("ada@example.com"));
+    }
+
+    #[gpui_kit::test]
+    fn text_that_was_typed_is_saved_when_the_input_is_left(cx: &mut TestAppContext) {
+        let (_dir, scope) = file_scope();
+        config::set(&scope, "user.name", "Ada").unwrap();
+        let (view, mut cx) = open(None, scope.clone(), cx);
+
+        let input = view.read_with(&cx, |view, _| view.fields[0].input.clone());
+        view.update_in(&mut cx, |view, window, cx| {
+            assert_eq!(view.fields[0].key, "user.name");
+            let input = view.fields[0].input.clone();
+            input.update(cx, |input, cx| input.set_value("Grace", window, cx));
+        });
+        // `set_value` is silent, as it is for the app; typing is what says "Change".
+        input.update(&mut cx, |_, cx| cx.emit(InputEvent::Change));
+        input.update(&mut cx, |_, cx| cx.emit(InputEvent::Blur));
+        settle(&mut cx);
+        assert_eq!(
+            config::read(&scope).unwrap().get("user.name"),
+            Some("Grace")
+        );
+
+        // Clearing it on purpose does remove it.
+        view.update_in(&mut cx, |view, window, cx| {
+            let input = view.fields[0].input.clone();
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        });
+        input.update(&mut cx, |_, cx| cx.emit(InputEvent::Change));
+        input.update(&mut cx, |_, cx| cx.emit(InputEvent::Blur));
+        settle(&mut cx);
+        assert!(!config::read(&scope).unwrap().is_set("user.name"));
     }
 
     #[gpui_kit::test]
