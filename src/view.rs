@@ -140,6 +140,11 @@ pub struct SwitchWorktree(pub PathBuf);
 
 impl EventEmitter<SwitchWorktree> for GraphView {}
 
+/// Asks whoever holds this view to show a worktree in a tab of its own.
+pub struct OpenWorktreeInTab(pub PathBuf);
+
+impl EventEmitter<OpenWorktreeInTab> for GraphView {}
+
 impl GraphView {
     /// A view with no repository open. Call [`GraphView::open`] to show one.
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -212,6 +217,14 @@ impl GraphView {
         self.max_columns = 0;
         self.selected = None;
         self.selected_oid = None;
+        // Nothing of the old repository, or worktree, applies to the new one.
+        self.selection = Selection::default();
+        self.menu = None;
+        self.screen = Screen::Graph;
+        self.sidebar.picks.clear();
+        self.sidebar.spotlight = None;
+        self.inspector = Default::default();
+        self.diff = Default::default();
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.reload(cx);
     }

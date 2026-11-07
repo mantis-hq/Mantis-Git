@@ -6,7 +6,7 @@
 
 use super::dock::{Dock, NewTerminal, ToggleDock};
 use super::parts::TEXT_BODY;
-use super::{GraphView, SwitchWorktree, parts, repository_name};
+use super::{GraphView, OpenWorktreeInTab, SwitchWorktree, parts, repository_name};
 use gpui_kit::component::button::*;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
@@ -84,14 +84,24 @@ impl Workspace {
             .update(cx, |dock, _| dock.set_directory(directory.as_deref()));
     }
 
-    /// A tab with no repository, which listens for asks to switch to another worktree.
+    /// A tab with no repository, which listens for asks to switch worktree. The tab
+    /// moves to the other working tree in place, keeping its position in the strip.
     fn make_tab(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<GraphView> {
         let view = cx.new(|cx| GraphView::new(window, cx));
         cx.subscribe_in(
             &view,
             window,
-            |this, _, event: &SwitchWorktree, window, cx| this.open(event.0.clone(), window, cx),
+            |this, _, event: &OpenWorktreeInTab, window, cx| {
+                // Opening dedupes, so a worktree that has a tab is brought forward.
+                this.open(event.0.clone(), window, cx)
+            },
         )
+        .detach();
+        cx.subscribe(&view, |_, view, event: &SwitchWorktree, cx| {
+            let path = event.0.clone();
+            view.update(cx, |view, cx| view.open(path, cx));
+            cx.notify();
+        })
         .detach();
         view
     }
@@ -460,31 +470,89 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn switching_worktree_opens_it_in_a_tab_and_returns_to_the_tab_it_already_has(
-        cx: &mut TestAppContext,
-    ) {
+    fn switching_worktree_changes_the_current_tab_and_opens_no_new_one(cx: &mut TestAppContext) {
         use crate::view::SwitchWorktree;
         let (view, mut cx) = open_workspace(cx);
         let (main, linked) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let path = main.path().to_owned();
         view.update_in(&mut cx, |view, window, cx| view.open(path, window, cx));
-        let first = view.read_with(&cx, |view, _| view.active_view().clone());
+        let tab = view.read_with(&cx, |view, _| view.active_view().clone());
 
         let to = linked.path().to_owned();
-        first.update(&mut cx, |_, cx| cx.emit(SwitchWorktree(to)));
-        assert_eq!(
-            state(&view, &cx),
-            (2, 1),
-            "the linked tree gets its own tab"
-        );
+        tab.update(&mut cx, |_, cx| cx.emit(SwitchWorktree(to.clone())));
+        assert_eq!(state(&view, &cx), (1, 0), "no new tab");
+        let showing = tab.read_with(&cx, |view, _| view.repository().map(|p| p.to_owned()));
+        assert_eq!(showing, Some(to));
+    }
 
-        let back = main.path().to_owned();
-        let second = view.read_with(&cx, |view, _| view.active_view().clone());
-        second.update(&mut cx, |_, cx| cx.emit(SwitchWorktree(back)));
-        assert_eq!(
-            state(&view, &cx),
-            (2, 0),
-            "and the first tab is shown again"
+    /// A tab that shows `main` and knows `linked` is another worktree of it, without
+    /// starting a load, which would run on a thread the test scheduler can't follow.
+    fn tab_with_worktrees(
+        view: &Entity<Workspace>,
+        main: &std::path::Path,
+        linked: &std::path::Path,
+        cx: &mut VisualTestContext,
+    ) -> Entity<crate::view::GraphView> {
+        let tab = view.read_with(cx, |view, _| view.active_view().clone());
+        let listing = format!(
+            "worktree {}\nHEAD aaaaaaa\nbranch refs/heads/main\n\nworktree {}\nHEAD aaaaaaa\ndetached\n",
+            main.display(),
+            linked.display()
         );
+        let mut refs = gitclient_core::git::Refs::default();
+        refs.worktrees = gitclient_core::worktree::parse(&listing);
+        refs.worktrees[0].is_current = true;
+        let main = main.to_owned();
+        tab.update(cx, |tab, _| {
+            tab.repo = Some(main);
+            tab.refs = std::sync::Arc::new(refs);
+        });
+        tab
+    }
+
+    /// Right-clicks `linked` and chooses the first line.
+    fn choose_first_line(
+        tab: &Entity<crate::view::GraphView>,
+        linked: &std::path::Path,
+        cx: &mut VisualTestContext,
+    ) {
+        let linked = linked.to_owned();
+        tab.update(cx, |tab, cx| {
+            tab.open_worktree_menu(
+                &linked,
+                gpui_kit::point(gpui_kit::px(10.), gpui_kit::px(10.)),
+                cx,
+            );
+            assert!(tab.step_menu(1, cx));
+            tab.activate_menu(cx);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn the_worktree_menu_switches_in_place_or_opens_a_tab(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_workspace(cx);
+        let (main, linked) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let tab = tab_with_worktrees(&view, main.path(), linked.path(), &mut cx);
+
+        // The first line is "Switch to", which keeps to the one tab.
+        choose_first_line(&tab, linked.path(), &mut cx);
+        assert_eq!(state(&view, &cx), (1, 0));
+        let showing = tab.read_with(&cx, |tab, _| tab.repository().map(|p| p.to_owned()));
+        assert_eq!(showing.as_deref(), Some(linked.path()));
+
+        // Back on the first one, the second line opens a tab of its own.
+        let tab = tab_with_worktrees(&view, main.path(), linked.path(), &mut cx);
+        let path = linked.path().to_owned();
+        tab.update(&mut cx, |tab, cx| {
+            tab.open_worktree_menu(
+                &path,
+                gpui_kit::point(gpui_kit::px(10.), gpui_kit::px(10.)),
+                cx,
+            );
+            tab.step_menu(1, cx);
+            tab.step_menu(1, cx);
+            tab.activate_menu(cx);
+        });
+        assert_eq!(state(&view, &cx), (2, 1), "a new tab shows the worktree");
     }
 }

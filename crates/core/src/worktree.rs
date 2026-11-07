@@ -94,6 +94,32 @@ pub fn list(repo: &Path, workdir: &Path) -> Vec<Worktree> {
     found
 }
 
+/// Takes a working tree away. Git refuses one with changes in it or one that is locked,
+/// and says so, so this never forces.
+pub fn remove(repo: &Path, path: &Path) -> Result<Option<String>, String> {
+    let path = path.to_string_lossy();
+    ops::run(repo, &["worktree", "remove", &path])?;
+    Ok(Some(format!("Removed the worktree at {path}.")))
+}
+
+/// What removing `worktree` does, and how to bring it back.
+pub fn remove_warning(worktree: &Worktree) -> String {
+    let path = worktree.path.display();
+    let undo = match (&worktree.branch, worktree.head.as_str()) {
+        (Some(branch), _) => format!("`git worktree add {path} {branch}`"),
+        (None, head) if !head.is_empty() => format!("`git worktree add --detach {path} {head}`"),
+        _ => "`git worktree add`".to_owned(),
+    };
+    let kept = match &worktree.branch {
+        Some(branch) => format!(" The branch {branch} stays."),
+        None => String::new(),
+    };
+    format!(
+        "This deletes the folder {path}.{kept} Git won't remove it if it has changes that \
+         aren't committed. To bring it back, run {undo}."
+    )
+}
+
 fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_owned())
 }
@@ -118,6 +144,43 @@ mod tests {
         assert_eq!(got[2].label(), "app-old");
         assert_eq!(got[2].detail(), "detached at ccccccc");
         assert_eq!(got[0].detail(), "main");
+    }
+
+    #[test]
+    fn removing_a_tree_deletes_its_folder_and_refuses_one_with_changes() {
+        let repo = Repo::new();
+        repo.commit("first");
+        let linked = repo.path().join("linked");
+        repo.git(&[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat/x",
+            linked.to_str().unwrap(),
+        ]);
+        std::fs::write(linked.join("new.txt"), "x").unwrap();
+
+        assert!(remove(repo.path(), &linked).is_err(), "changes are kept");
+        assert!(linked.exists());
+        std::fs::remove_file(linked.join("new.txt")).unwrap();
+        assert!(remove(repo.path(), &linked).unwrap().is_some());
+        assert!(!linked.exists());
+        assert_eq!(list(repo.path(), repo.path()).len(), 1);
+        assert!(repo.git(&["branch", "--list", "feat/x"]).contains("feat/x"));
+    }
+
+    #[test]
+    fn the_warning_gives_the_command_that_brings_it_back() {
+        let tree = parse("worktree /code/app-x\nHEAD abc\nbranch refs/heads/feat/x\n").remove(0);
+        let warning = remove_warning(&tree);
+        assert!(
+            warning.contains("`git worktree add /code/app-x feat/x`"),
+            "{warning}"
+        );
+        assert!(warning.contains("The branch feat/x stays."));
+        let tree = parse("worktree /code/app-y\nHEAD abc\ndetached\n").remove(0);
+        assert!(remove_warning(&tree).contains("--detach /code/app-y abc"));
     }
 
     #[test]

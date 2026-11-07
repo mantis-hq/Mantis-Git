@@ -621,8 +621,16 @@ impl GraphView {
                 if tree.locked {
                     detail.push_str(" · locked");
                 }
+                let menu_path = tree.path.clone();
                 let row =
                     panel_row(("worktree", index), tree.is_current, cx)
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                this.open_worktree_menu(&menu_path, event.position, cx);
+                            }),
+                        )
                         .h(px(30.))
                         .pl(indent(0))
                         .when(unavailable.is_some(), |row| {

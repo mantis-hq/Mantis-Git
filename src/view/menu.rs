@@ -2,9 +2,9 @@
 //! that is chosen. What a menu offers, and what each line does, is decided in
 //! `gitclient_core::menu`.
 
-use super::GraphView;
 use super::notice::{Confirm, Notice};
 use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
+use super::{GraphView, OpenWorktreeInTab, SwitchWorktree};
 use crate::theme::selected_row;
 use gitclient_core::branch::{self, Dragged, Relation};
 use gitclient_core::git::RefKind;
@@ -12,6 +12,7 @@ use gitclient_core::menu::{self, Command, Line};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::path::Path;
 use std::rc::Rc;
 
 const MENU_WIDTH: Pixels = px(300.);
@@ -168,7 +169,11 @@ impl GraphView {
     /// Closes the menu and does what the chosen line says, asking first when it must.
     fn choose(&mut self, command: Command, cx: &mut Context<Self>) {
         self.menu = None;
-        if let Some(text) = copied_text(&command) {
+        if let Command::SwitchWorktree { path } = &command {
+            cx.emit(SwitchWorktree(path.clone()));
+        } else if let Command::OpenWorktreeInTab { path } = &command {
+            cx.emit(OpenWorktreeInTab(path.clone()));
+        } else if let Some(text) = copied_text(&command) {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
             self.notice = command
                 .copied_notice()
@@ -184,11 +189,6 @@ impl GraphView {
         } else {
             self.run_command(command, cx);
         }
-    }
-
-    fn run_command(&mut self, command: Command, cx: &mut Context<Self>) {
-        let label = command.progress();
-        self.run_operation(label, move |repo| command.run(repo), cx);
     }
 
     /// A double-click on a branch switches to it. The checked-out branch has nowhere to go.
@@ -213,6 +213,11 @@ impl GraphView {
         );
     }
 
+    fn run_command(&mut self, command: Command, cx: &mut Context<Self>) {
+        let label = command.progress();
+        self.run_operation(label, move |repo| command.run(repo), cx);
+    }
+
     pub(super) fn open_ref_menu(
         &mut self,
         target: Dragged,
@@ -226,6 +231,16 @@ impl GraphView {
         } else {
             menu::ref_menu(&self.refs, &target)
         };
+        self.show_menu(position, lines, cx);
+    }
+
+    pub(super) fn open_worktree_menu(
+        &mut self,
+        path: &Path,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let lines = menu::worktree_menu(&self.refs, path);
         self.show_menu(position, lines, cx);
     }
 

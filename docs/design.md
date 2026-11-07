@@ -172,9 +172,14 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Worktrees: when a repository has more than one working tree, the sidebar lists them
   under "Worktrees", open by default, between Branches and Remotes. A row is the folder's
   name, then its branch (or `detached at <hash>`) in Overlay 2, with a dot in that
-  branch's colour. The one on show is selected and semibold. Clicking another switches to
-  it: the tab already on it, else a new tab, like opening a repository. A worktree whose
-  folder is gone is dimmed and says so. With one working tree the section isn't drawn.
+  branch's colour. The one on show is selected and semibold. Clicking another switches
+  the current tab to it, so the tab strip doesn't grow. A worktree whose
+  folder is gone is dimmed and says so.
+  Right-clicking one opens the usual menu: "Switch to <name>", "Open <name> in a new tab",
+  "Copy path", and in red "Remove worktree <name>", which asks first and gives the
+  `git worktree add` that brings it back. The main worktree, the one on show and a locked
+  one stay, and the menu says why. Git refuses to remove one with uncommitted changes,
+  and the app never forces it. With one working tree the section isn't drawn.
 - A branch row ends with its count against the default branch (`+2 −1`), then against
   the remote branch it tracks (`↑1 ↓2`: to push, to pull). Level or untracked shows nothing.
 

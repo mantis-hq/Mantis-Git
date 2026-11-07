@@ -7,7 +7,8 @@ use crate::conflict;
 use crate::details;
 use crate::git::{Commit, RefKind, Refs};
 use crate::text::{count, short_oid};
-use std::path::Path;
+use crate::worktree;
+use std::path::{Path, PathBuf};
 
 /// What a menu line does when chosen.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,6 +56,19 @@ pub enum Command {
         oid: String,
         hard: bool,
     },
+    /// Handled by the interface, which owns the tabs: shows the worktree in this tab.
+    SwitchWorktree {
+        path: PathBuf,
+    },
+    /// Handled by the interface, which owns the tabs.
+    OpenWorktreeInTab {
+        path: PathBuf,
+    },
+    RemoveWorktree {
+        path: PathBuf,
+        /// What removing it does and how to bring it back, worked out when the menu opened.
+        warning: String,
+    },
     /// Handled by the interface, which owns the clipboard.
     Copy {
         text: String,
@@ -89,6 +103,8 @@ impl Command {
             Self::CherryPick { .. } => "Cherry-picking",
             Self::Revert { .. } => "Reverting",
             Self::Reset { .. } => "Resetting",
+            Self::SwitchWorktree { .. } | Self::OpenWorktreeInTab { .. } => "Switching",
+            Self::RemoveWorktree { .. } => "Removing the worktree",
             Self::Copy { .. } => "Copying",
         }
     }
@@ -108,6 +124,10 @@ impl Command {
             Self::Delete { kind, name, tip } => Some(Confirmation {
                 message: branch::delete_warning(*kind, name, tip.as_deref()),
                 action: "Delete",
+            }),
+            Self::RemoveWorktree { warning, .. } => Some(Confirmation {
+                message: warning.clone(),
+                action: "Remove",
             }),
             Self::DeleteMany { refs } => Some(Confirmation {
                 message: branch::delete_many_warning(refs),
@@ -164,7 +184,10 @@ impl Command {
                 _ => details::revert_many(repo, oids),
             },
             Self::Reset { oid, hard } => details::reset(repo, oid, *hard),
-            Self::Copy { .. } => Ok(None),
+            Self::RemoveWorktree { path, .. } => worktree::remove(repo, path),
+            Self::SwitchWorktree { .. } | Self::OpenWorktreeInTab { .. } | Self::Copy { .. } => {
+                Ok(None)
+            }
         }
     }
 }
@@ -315,6 +338,63 @@ fn why_not_deletable(refs: &Refs, target: &Dragged) -> Option<String> {
         RefKind::Branch => None,
         _ => Some(format!("{name} is a remote branch, so it stays")),
     }
+}
+
+/// The menu for a working tree in the sidebar.
+pub fn worktree_menu(refs: &Refs, path: &Path) -> Vec<Line> {
+    let Some(tree) = refs.worktrees.iter().find(|tree| tree.path == path) else {
+        return Vec::new();
+    };
+    let name = tree.label();
+    let mut lines = vec![Line::Heading(name.clone())];
+    let (switch, new_tab) = if tree.is_current {
+        (
+            Line::unavailable(format!("{name} is the one on show")),
+            Line::unavailable("Already open here"),
+        )
+    } else if let Some(reason) = tree.unavailable() {
+        (
+            Line::unavailable(format!("Can't switch to {name}: {}", reason.to_lowercase())),
+            Line::unavailable("Can't open it in a new tab"),
+        )
+    } else {
+        let path = tree.path.clone();
+        (
+            Line::item(
+                format!("Switch to {name}"),
+                Command::SwitchWorktree { path: path.clone() },
+            ),
+            Line::item(
+                format!("Open {name} in a new tab"),
+                Command::OpenWorktreeInTab { path },
+            ),
+        )
+    };
+    lines.push(switch);
+    lines.push(new_tab);
+    lines.push(Line::Separator);
+    lines.push(Line::item(
+        "Copy path",
+        copy(&tree.path.to_string_lossy(), "the path"),
+    ));
+    lines.push(Line::Separator);
+    lines.push(if tree.is_main {
+        Line::unavailable(format!("{name} holds the repository, so it stays"))
+    } else if tree.is_current {
+        Line::unavailable(format!("{name} is on show, so it stays"))
+    } else if tree.locked {
+        Line::unavailable(format!("{name} is locked, so it stays"))
+    } else {
+        Line::item(
+            format!("Remove worktree {name}"),
+            Command::RemoveWorktree {
+                path: tree.path.clone(),
+                warning: worktree::remove_warning(tree),
+            },
+        )
+        .danger()
+    });
+    lines
 }
 
 /// The menu for several picked branches and tags. What it can do to many at once is
@@ -544,6 +624,47 @@ mod tests {
             color: LaneColor::default(),
         }];
         refs
+    }
+
+    #[test]
+    fn a_worktree_menu_switches_copies_and_removes_only_what_may_go() {
+        let mut refs = refs();
+        refs.worktrees = crate::worktree::parse(
+            "worktree /code/app\nHEAD aaaaaaaa\nbranch refs/heads/main\n\n\
+             worktree /code/app-x\nHEAD bbbbbbbb\nbranch refs/heads/feat/x\n\n\
+             worktree /code/app-l\nHEAD bbbbbbbb\ndetached\nlocked\n",
+        );
+        refs.worktrees[0].is_current = true;
+
+        let linked = worktree_menu(&refs, Path::new("/code/app-x"));
+        assert_eq!(
+            labels(&linked),
+            [
+                "Switch to app-x",
+                "Open app-x in a new tab",
+                "Copy path",
+                "Remove worktree app-x",
+            ]
+        );
+        let remove = linked.last().and_then(Line::command).unwrap();
+        assert!(
+            remove
+                .confirmation()
+                .unwrap()
+                .message
+                .contains("git worktree add")
+        );
+
+        let current = worktree_menu(&refs, Path::new("/code/app"));
+        assert!(current.iter().all(|line| {
+            line.command()
+                .is_none_or(|c| matches!(c, Command::Copy { .. }))
+        }));
+        assert!(labels(&current).contains(&"app holds the repository, so it stays"));
+
+        let locked = worktree_menu(&refs, Path::new("/code/app-l"));
+        assert!(labels(&locked).contains(&"app-l is locked, so it stays"));
+        assert!(worktree_menu(&refs, Path::new("/nowhere")).is_empty());
     }
 
     fn labels(lines: &[Line]) -> Vec<&str> {
