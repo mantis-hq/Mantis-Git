@@ -142,6 +142,45 @@ impl FilePatch {
     }
 }
 
+/// How a file's diff is drawn: only what changed with a few lines around it, or the whole
+/// file, and with or without changes that are only white space.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DiffView {
+    pub whole_file: bool,
+    pub ignore_whitespace: bool,
+}
+
+impl DiffView {
+    /// Whether this is what a plain `git diff` shows, which is what gets cached.
+    pub fn is_default(self) -> bool {
+        self == Self::default()
+    }
+
+    /// The options that make git draw it this way.
+    pub fn args(self) -> Vec<&'static str> {
+        let mut args = Vec::new();
+        if self.whole_file {
+            // Enough context to reach both ends of any file.
+            args.push("--unified=1000000");
+        }
+        if self.ignore_whitespace {
+            args.push("-w");
+        }
+        args
+    }
+
+    /// What to say when a file has no lines to draw.
+    pub fn empty_sentence(self, binary: bool) -> &'static str {
+        if binary {
+            "This is a binary file, so there is no text to show."
+        } else if self.ignore_whitespace {
+            "Only white space changed in this file."
+        } else {
+            "No lines changed in this file."
+        }
+    }
+}
+
 /// The arguments for a diff that [`parse`] can read whatever the user's settings are.
 /// `command` is the git subcommand and any options of its own.
 pub fn diff_args<'a>(command: &[&'a str]) -> Vec<&'a str> {
@@ -298,6 +337,22 @@ fn unquote(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_diff_view_names_the_git_options_it_needs() {
+        assert!(DiffView::default().is_default());
+        assert!(DiffView::default().args().is_empty());
+        let view = DiffView {
+            whole_file: true,
+            ignore_whitespace: true,
+        };
+        assert!(!view.is_default());
+        assert_eq!(view.args(), ["--unified=1000000", "-w"]);
+        assert_eq!(
+            view.empty_sentence(false),
+            "Only white space changed in this file."
+        );
+    }
 
     const TWO_HUNKS: &str = "\
 diff --git a/src/app.rs b/src/app.rs

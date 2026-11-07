@@ -88,6 +88,8 @@ impl GraphView {
             self.close_menu(cx);
         } else if self.remote_form.take().is_some() {
             cx.notify();
+        } else if self.diff_is_open() {
+            self.close_diff(cx);
         }
     }
 

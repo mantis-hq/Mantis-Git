@@ -11,7 +11,7 @@
 use crate::cache::{Cache, Config, DiskSettings, hash64};
 use crate::details::{self, CommitDetails, FileChange};
 use crate::ops::{self, Cancel};
-use crate::patch::FilePatch;
+use crate::patch::{DiffView, FilePatch};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -114,7 +114,7 @@ impl Caches {
     ) -> Result<Arc<FilePatch>, String> {
         self.diffs
             .get_or_load(&diff_key(fingerprint, oid, file), || {
-                details::file_diff(repo, oid, file)
+                details::file_diff(repo, oid, file, DiffView::default())
             })
     }
 }

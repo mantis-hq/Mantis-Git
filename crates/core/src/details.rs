@@ -2,7 +2,7 @@
 
 use crate::cache::{Cacheable, Reader, Writer};
 use crate::ops::{self, Cancel};
-use crate::patch::{self, FilePatch};
+use crate::patch::{self, DiffView, FilePatch};
 use crate::text::{count, short_oid};
 use std::path::Path;
 use std::sync::Arc;
@@ -50,7 +50,8 @@ impl CommitDetails {
 }
 
 impl Cacheable for CommitDetails {
-    const FORMAT: u32 = 1;
+    // 2: merges are read against their first parent. Version 1 stored them with no files.
+    const FORMAT: u32 = 2;
 
     fn weight(&self) -> usize {
         let files: usize = self
@@ -113,8 +114,11 @@ pub fn read(repo: &Path, oid: &str, cancel: &Cancel) -> Result<CommitDetails, St
             "--raw",
             "--numstat",
             "--no-commit-id",
-            oid,
-        ],
+        ]
+        .into_iter()
+        .chain(first_parent(repo, oid).as_deref())
+        .chain([oid])
+        .collect::<Vec<_>>(),
         cancel,
     )?;
     Ok(CommitDetails {
@@ -122,6 +126,17 @@ pub fn read(repo: &Path, oid: &str, cancel: &Cancel) -> Result<CommitDetails, St
         body: body.trim().to_owned(),
         files: parse_changes(&output),
     })
+}
+
+/// A merge has no diff of its own, so it is read against its first parent: what it brought
+/// onto the branch it was made on, the side `revert -m 1` undoes. Other commits need none.
+fn first_parent(repo: &Path, oid: &str) -> Option<String> {
+    let parents = ops::run(
+        repo,
+        &["log", "-1", "--no-show-signature", "--format=%P", oid],
+    )
+    .ok()?;
+    (parents.split_whitespace().count() > 1).then(|| format!("{oid}^1"))
 }
 
 /// Parses `--raw --numstat -z`: every file's raw record, then every file's numstat record.
@@ -167,9 +182,17 @@ fn parse_changes(output: &str) -> Vec<FileChange> {
 }
 
 /// Reads one file's diff within a commit.
-pub fn file_diff(repo: &Path, oid: &str, file: &FileChange) -> Result<FilePatch, String> {
+pub fn file_diff(
+    repo: &Path,
+    oid: &str,
+    file: &FileChange,
+    view: DiffView,
+) -> Result<FilePatch, String> {
     let command = ["diff-tree", "--root", "-r", "-p", "-M", "--no-commit-id"];
     let mut args = patch::diff_args(&command);
+    args.extend(view.args());
+    let base = first_parent(repo, oid);
+    args.extend(base.as_deref());
     args.extend([oid, "--", &*file.path]);
     // A rename only shows as one if git can see both of its ends.
     if let Some(old_path) = &file.old_path {
@@ -355,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn a_clean_merge_has_no_changes_of_its_own() {
+    fn a_merge_shows_what_it_brought_in_over_its_first_parent() {
         let repo = Repo::new();
         repo.write("a", "1\n");
         repo.commit("base");
@@ -368,12 +391,13 @@ mod tests {
         repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "side"]);
 
         let merge = repo.git(&["rev-parse", "HEAD"]);
-        assert!(
-            read(repo.path(), &merge, &Cancel::new())
-                .unwrap()
-                .files
-                .is_empty()
-        );
+        let details = read(repo.path(), &merge, &Cancel::new()).unwrap();
+        assert_eq!(details.files.len(), 1);
+        assert_eq!(&*details.files[0].path, "b");
+        assert_eq!(details.files[0].status, 'A');
+        let patch = file_diff(repo.path(), &merge, &details.files[0], DiffView::default()).unwrap();
+        assert_eq!(patch.path, "b");
+        assert_eq!(patch.hunks[0].lines.len(), 1);
     }
 
     #[test]
@@ -387,7 +411,7 @@ mod tests {
         let oid = repo.commit("both");
 
         let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
-        let patch = file_diff(repo.path(), &oid, &details.files[0]).unwrap();
+        let patch = file_diff(repo.path(), &oid, &details.files[0], DiffView::default()).unwrap();
         assert_eq!(patch.path, "a");
         assert_eq!(patch.hunks[0].lines.len(), 2);
     }
@@ -402,7 +426,7 @@ mod tests {
         let oid = repo.commit("rename");
 
         let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
-        let patch = file_diff(repo.path(), &oid, &details.files[0]).unwrap();
+        let patch = file_diff(repo.path(), &oid, &details.files[0], DiffView::default()).unwrap();
         assert_eq!(patch.path, "after");
         let added = patch.hunks[0].lines.iter().filter(|l| l.old.is_none());
         assert_eq!(added.count(), 1, "not the whole file");
@@ -414,7 +438,7 @@ mod tests {
         repo.write("a", "one\ntwo\n");
         let oid = repo.commit("root");
         let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
-        let patch = file_diff(repo.path(), &oid, &details.files[0]).unwrap();
+        let patch = file_diff(repo.path(), &oid, &details.files[0], DiffView::default()).unwrap();
         assert_eq!(patch.hunks[0].lines.len(), 2);
     }
 
@@ -525,5 +549,36 @@ mod tests {
 
         reset(repo.path(), &first, true).unwrap();
         assert_eq!(repo.read("a"), "1\n");
+    }
+
+    #[test]
+    fn a_commits_file_can_be_shown_whole_and_without_white_space_changes() {
+        let repo = Repo::new();
+        let lines = |tail: &str| (0..30).map(|n| format!("l{n}\n")).collect::<String>() + tail;
+        repo.write("f", &lines("end\n"));
+        repo.commit("base");
+        repo.write("f", &lines("end  \n").replacen("l0\n", "changed\n", 1));
+        let oid = repo.commit("edit");
+        let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
+        let file = &details.files[0];
+
+        let plain = file_diff(repo.path(), &oid, file, DiffView::default()).unwrap();
+        assert!(plain.hunks.len() > 1);
+        let whole = DiffView {
+            whole_file: true,
+            ..DiffView::default()
+        };
+        let whole = file_diff(repo.path(), &oid, file, whole).unwrap();
+        assert_eq!(whole.hunks.len(), 1);
+        let quiet = DiffView {
+            ignore_whitespace: true,
+            ..DiffView::default()
+        };
+        let quiet = file_diff(repo.path(), &oid, file, quiet).unwrap();
+        assert_eq!(
+            quiet.hunks.len(),
+            1,
+            "only the edit on the first line is left"
+        );
     }
 }

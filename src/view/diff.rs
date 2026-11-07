@@ -1,11 +1,12 @@
-//! The diff panel under the graph, so history stays visible while reading it.
+//! The diff of one file, drawn over the whole graph pane while it is read.
 
-use super::parts::{LineStyle, expand_tabs, file_path, line_style};
+use super::parts::{LineStyle, chip, expand_tabs, file_path, line_style};
 use super::parts::{TEXT_BODY, TEXT_SMALL};
 use super::{GraphView, Notice};
 use crate::theme::tokens;
 use gitclient_core::details::{self, FileChange};
-use gitclient_core::patch::{FilePatch, Line};
+use gitclient_core::patch::{DiffView, FilePatch, Line};
+use gitclient_core::working;
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
@@ -25,8 +26,9 @@ pub(super) struct State {
     /// Closing stays closed until a file is picked, however the selection moves.
     closed: bool,
     patch: Option<Arc<Shown>>,
-    /// The height the user dragged the panel to.
-    pub(super) height: Option<f32>,
+    /// Whole file or just the changes, and whether white space counts. It stays as it is
+    /// set while other files and commits are picked.
+    view: DiffView,
     scroll: UniformListScrollHandle,
 }
 
@@ -98,6 +100,21 @@ impl GraphView {
         }
     }
 
+    /// Whether a file's diff is open, and so covers the graph.
+    pub(super) fn diff_is_open(&self) -> bool {
+        self.shown_file().is_some() && self.diff.patch.is_some()
+    }
+
+    pub(super) fn set_diff_view(&mut self, view: DiffView, cx: &mut Context<Self>) {
+        if view == self.diff.view {
+            return;
+        }
+        self.diff.view = view;
+        if let Some(index) = self.shown_file() {
+            self.load_file(index, cx);
+        }
+    }
+
     pub(super) fn show_file(&mut self, index: usize, cx: &mut Context<Self>) {
         self.diff.closed = false;
         self.load_file(index, cx);
@@ -119,13 +136,17 @@ impl GraphView {
         let oid = details.oid.clone();
         let fingerprint = self.fingerprint.clone();
         let caches = self.caches.clone();
+        let view = self.diff.view;
         // Even a cached diff is flattened into rows in the background, since a large one
         // takes a while to lay out.
         Self::spawn_blocking(
             move || {
+                // Only the plain view is cached; the others are read from git each time.
                 let patch = match fingerprint {
-                    Some(fingerprint) => caches.read_diff(&repo, &fingerprint, &oid, &file)?,
-                    None => Arc::new(details::file_diff(&repo, &oid, &file)?),
+                    Some(fingerprint) if view.is_default() => {
+                        caches.read_diff(&repo, &fingerprint, &oid, &file)?
+                    }
+                    _ => Arc::new(details::file_diff(&repo, &oid, &file, view)?),
                 };
                 Ok::<_, String>(Shown::new(oid, &file, &patch))
             },
@@ -133,7 +154,7 @@ impl GraphView {
                 let current = this
                     .selected_details()
                     .is_some_and(|d| d.oid == details.oid);
-                if !current || this.diff.file != Some(index) {
+                if !current || this.diff.file != Some(index) || this.diff.view != view {
                     return;
                 }
                 match shown {
@@ -147,23 +168,57 @@ impl GraphView {
         );
     }
 
-    /// The working changes carry their patches already, so nothing is read.
+    /// The working changes carry their plain patches already, so only another view of a
+    /// file is read from git.
     fn load_working_file(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(details) = self.shown_details().cloned() else {
             return;
         };
-        let (Some(change), Some(file)) = (details.files.get(index), self.working_patch(index))
+        let (Some(change), Some(file)) =
+            (details.files.get(index), self.working_patch(index).cloned())
         else {
             return;
         };
-        let shown = Shown::new(details.oid.clone(), change, &file.patch);
         // Stay where the reader was if this is the same file coming back after a refresh.
         let same_file = self
             .diff
             .patch
             .as_ref()
-            .is_some_and(|old| old.path == shown.path);
+            .is_some_and(|old| *old.path == *file.path.as_str());
+        let view = self.diff.view;
+        let change = change.clone();
+        let oid = details.oid.clone();
         self.diff.file = Some(index);
+        if view.is_default() {
+            let shown = Shown::new(oid, &change, &file.patch);
+            return self.show_working_patch(shown, same_file, cx);
+        }
+        let Some(repo) = self.workdir() else {
+            return;
+        };
+        cx.notify();
+        Self::spawn_blocking(
+            move || {
+                let patch = working::file_diff(&repo, &file, view)?;
+                Ok::<_, String>(Shown::new(oid, &change, &patch))
+            },
+            move |this, shown, cx| {
+                if this.diff.file != Some(index) || this.diff.view != view {
+                    return;
+                }
+                match shown {
+                    Ok(shown) => this.show_working_patch(shown, same_file, cx),
+                    Err(message) => {
+                        this.notice = Some(Notice::Error(message.into()));
+                        cx.notify();
+                    }
+                }
+            },
+            cx,
+        );
+    }
+
+    fn show_working_patch(&mut self, shown: Shown, same_file: bool, cx: &mut Context<Self>) {
         self.diff.patch = Some(Arc::new(shown));
         if !same_file {
             self.diff.scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -171,32 +226,36 @@ impl GraphView {
         cx.notify();
     }
 
-    fn close_diff(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn close_diff(&mut self, cx: &mut Context<Self>) {
         self.diff.closed = true;
         cx.notify();
     }
 
+    /// The diff, drawn in place of the graph.
     pub(super) fn render_diff(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        self.shown_file()?;
+        let index = self.shown_file()?;
         let shown = self.diff.patch.clone()?;
         let theme = cx.theme();
         let (border, panel, muted) = (theme.border, theme.title_bar, theme.muted_foreground);
+        let view = self.diff.view;
         let empty = shown.rows.is_empty();
+        // Only the working changes can be staged, and only they have a file in the index.
+        let stage = self
+            .working_row_is_selected()
+            .then(|| self.working_patch(index))
+            .flatten()
+            .map(|file| (file.path.clone(), file.stage()));
 
         Some(
             div()
                 .v_flex()
-                .flex_none()
-                .when_some(self.diff.height, |panel, height| panel.h(px(height)))
-                .when(self.diff.height.is_none(), |panel| panel.h(relative(0.38)))
-                .min_h(px(180.))
+                .flex_1()
+                .min_h_0()
                 .bg(panel)
-                .border_t_1()
-                .border_color(border)
                 .child(
                     div()
                         .h_flex()
-                        .h(px(34.))
+                        .h(px(40.))
                         .flex_none()
                         .pl_4()
                         .pr_2()
@@ -204,7 +263,57 @@ impl GraphView {
                         .text_size(TEXT_SMALL)
                         .border_b_1()
                         .border_color(border)
-                        .child(file_path(&shown.path, muted))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .h_flex()
+                                .child(file_path(&shown.path, muted)),
+                        )
+                        .child(div().h_flex().children([false, true].map(|whole_file| {
+                            chip(
+                                ("diff-whole-file", usize::from(whole_file)),
+                                if whole_file { "Whole file" } else { "Changes" },
+                                view.whole_file == whole_file,
+                                cx,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    let view = DiffView {
+                                        whole_file,
+                                        ..this.diff.view
+                                    };
+                                    this.set_diff_view(view, cx);
+                                },
+                            ))
+                        })))
+                        .child(
+                            chip(
+                                "diff-ignore-whitespace",
+                                "Hide white space",
+                                view.ignore_whitespace,
+                                cx,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let view = DiffView {
+                                    ignore_whitespace: !this.diff.view.ignore_whitespace,
+                                    ..this.diff.view
+                                };
+                                this.set_diff_view(view, cx);
+                            })),
+                        )
+                        .when_some(stage, |bar, (path, stage)| {
+                            bar.child(
+                                Button::new("diff-stage")
+                                    .ghost()
+                                    .xsmall()
+                                    .label(stage.button())
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        let staged = stage == working::Stage::Staged;
+                                        this.stage_paths(vec![path.clone()], !staged, cx);
+                                    })),
+                            )
+                        })
                         .child(
                             Button::new("close-diff")
                                 .ghost()
@@ -214,19 +323,52 @@ impl GraphView {
                         ),
                 )
                 .when(empty, |panel_body| {
-                    panel_body.child(div().p_4().text_size(TEXT_BODY).text_color(muted).child(
-                        if shown.binary {
-                            "This is a binary file, so there is no text to show."
-                        } else {
-                            "No lines changed in this file."
-                        },
-                    ))
+                    panel_body.child(
+                        div()
+                            .p_4()
+                            .text_size(TEXT_BODY)
+                            .text_color(muted)
+                            .child(view.empty_sentence(shown.binary)),
+                    )
                 })
                 .when(!empty, |panel_body| {
                     panel_body.child(self.render_lines(&shown, cx))
                 })
                 .into_any_element(),
         )
+    }
+
+    /// Puts files into the index, or takes them out, then reads the changes again so the
+    /// inspector shows where they stand.
+    pub(super) fn stage_paths(
+        &mut self,
+        paths: Vec<String>,
+        unstage: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo) = self.workdir() else {
+            return;
+        };
+        if paths.is_empty() {
+            return;
+        }
+        Self::spawn_blocking(
+            move || {
+                if unstage {
+                    working::unstage_files(&repo, &paths)
+                } else {
+                    working::stage_files(&repo, &paths)
+                }
+            },
+            move |this, result, cx| {
+                if let Err(message) = result {
+                    this.notice = Some(Notice::Error(message.into()));
+                }
+                this.reload_working(cx);
+                cx.notify();
+            },
+            cx,
+        );
     }
 
     fn render_lines(&self, shown: &Arc<Shown>, cx: &mut Context<Self>) -> impl IntoElement {

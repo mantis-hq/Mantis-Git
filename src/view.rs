@@ -560,13 +560,16 @@ impl GraphView {
         let inspector = self.render_inspector(cx);
         let diff = self.render_diff(cx);
         let (has_sidebar, has_inspector) = (sidebar.is_some(), inspector.is_some());
+        // An open diff takes the place of the whole graph, and the inspector beside it stays
+        // for picking another file.
         let main = div()
             .v_flex()
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .child(
-                div()
+            .child(match diff {
+                Some(diff) => diff,
+                None => div()
                     .relative()
                     .flex_1()
                     .min_h_0()
@@ -581,22 +584,11 @@ impl GraphView {
                         .track_scroll(&self.scroll)
                         .size_full(),
                     )
-                    .vertical_scrollbar(&self.scroll),
-            )
-            .when(diff.is_some(), |main| {
-                main.child(parts::grip(parts::Edge::Diff, false, cx))
-            })
-            .children(diff);
+                    .vertical_scrollbar(&self.scroll)
+                    .into_any_element(),
+            });
         // The graph keeps at least this much, so no edge can be dragged over it.
         const GRAPH_MIN: f32 = 320.;
-        let main = parts::on_resize(main, parts::Edge::Diff, cx, |this, pointer, bounds| {
-            let height = bounds.bottom() - pointer.y;
-            this.diff.height = Some(parts::fit(
-                height,
-                180.,
-                f32::from(bounds.size.height) - 120.,
-            ));
-        });
 
         let row = div()
             .h_flex()

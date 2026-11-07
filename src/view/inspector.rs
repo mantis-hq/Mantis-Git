@@ -69,6 +69,14 @@ impl GraphView {
         self.selected_details()
     }
 
+    /// The files of the working changes, in the order the inspector lists them.
+    fn working_files(&self) -> &[WorkingFile] {
+        self.inspector
+            .working
+            .as_ref()
+            .map_or(&[], |working| &working.files)
+    }
+
     pub(super) fn working_patch(&self, index: usize) -> Option<&WorkingFile> {
         self.inspector.working.as_ref()?.files.get(index)
     }
@@ -235,7 +243,8 @@ impl GraphView {
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.open_commit_screen(cx)
                                             })),
-                                    ),
+                                    )
+                                    .child(self.render_stage_all(cx)),
                             )
                             .when_some(files, |panel, details| {
                                 panel.child(self.render_files(false, &details, cx))
@@ -289,6 +298,72 @@ impl GraphView {
                                 ))
                             },
                         ),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// Quiet buttons that move every file at once, each only while it has something to do.
+    fn render_stage_all(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let files = self.working_files();
+        let busy = self.busy.is_some();
+        let button = |id: &'static str, label: String, paths: Vec<String>, unstage: bool| {
+            Button::new(id)
+                .ghost()
+                .small()
+                .label(label)
+                .disabled(busy)
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.stage_paths(paths.clone(), unstage, cx)),
+                )
+        };
+        div()
+            .h_flex()
+            .gap_1()
+            .when_some(working::stage_all_label(files), |row, label| {
+                row.child(button("stage-all", label, working::to_stage(files), false))
+            })
+            .when_some(working::unstage_all_label(files), |row, label| {
+                row.child(button(
+                    "unstage-all",
+                    label,
+                    working::to_unstage(files),
+                    true,
+                ))
+            })
+    }
+
+    /// The button at the end of a working file's row, and the word for how much of the
+    /// file is staged. Absent for a commit's files.
+    fn stage_controls(&self, index: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let file = self
+            .working_files()
+            .get(index)
+            .filter(|_| self.working_row_is_selected())?;
+        let (stage, path) = (file.stage(), file.path.clone());
+        let (muted, success) = (cx.theme().muted_foreground, cx.theme().success);
+        let staged = stage == working::Stage::Staged;
+        Some(
+            div()
+                .h_flex()
+                .flex_none()
+                .gap_1()
+                .child(
+                    div()
+                        .text_size(TEXT_CHIP)
+                        .text_color(if staged { success } else { muted })
+                        .child(stage.word()),
+                )
+                .child(
+                    Button::new(("stage-file", index))
+                        .ghost()
+                        .xsmall()
+                        .label(stage.button())
+                        .disabled(self.busy.is_some())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.stage_paths(vec![path.clone()], staged, cx);
+                        })),
                 )
                 .into_any_element(),
         )
@@ -613,6 +688,7 @@ impl GraphView {
                             .text_color(muted)
                             .child(files.len().to_string()),
                     )
+                    .children(self.folder_stage_button(at, files, cx))
             }
             TreeRow::File { index, name, depth } => {
                 let index = *index;
@@ -646,8 +722,44 @@ impl GraphView {
                             .text_color(muted)
                             .child(count),
                     )
+                    .children(self.stage_controls(index, cx))
             }
         }
+    }
+
+    /// A folder's button moves every file under it, in whichever direction is left to go.
+    fn folder_stage_button(
+        &self,
+        at: usize,
+        files: &[usize],
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !self.working_row_is_selected() {
+            return None;
+        }
+        let inside: Vec<WorkingFile> = files
+            .iter()
+            .filter_map(|index| self.working_files().get(*index).cloned())
+            .collect();
+        let to_stage = working::to_stage(&inside);
+        let unstage = to_stage.is_empty();
+        let (label, paths) = if unstage {
+            ("Unstage", working::to_unstage(&inside))
+        } else {
+            ("Stage", to_stage)
+        };
+        Some(
+            Button::new(("stage-folder", at))
+                .ghost()
+                .xsmall()
+                .label(label)
+                .disabled(self.busy.is_some())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.stage_paths(paths.clone(), unstage, cx);
+                }))
+                .into_any_element(),
+        )
     }
 
     fn render_file(
@@ -683,5 +795,6 @@ impl GraphView {
                     .text_color(muted)
                     .child(count),
             )
+            .children(self.stage_controls(index, cx))
     }
 }

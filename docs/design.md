@@ -102,8 +102,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   closes one, `Ctrl Tab` and `Ctrl Shift Tab` move between them, and `Ctrl O` opens a
   repository in a new tab, or in the current one while it is empty. Opening a repository
   that is already open switches to its tab. Closing the last tab leaves an empty one.
-- Graph window: 300 px branch sidebar, graph, 380 px inspector. The diff sits under the
-  graph, so history stays visible while reading it.
+- Graph window: 300 px branch sidebar, graph, 380 px inspector. A file's diff opens over
+  the whole graph, between the sidebar and the inspector, so it has the room to be read.
+  The inspector stays beside it for picking another file, `Esc` or "Close" brings the graph
+  back, and the diff has a 40 px header: the path, two chips "Changes" and "Whole file"
+  (the picked one ticked), a "Hide white space" chip that ticks when on, and for working
+  changes a quiet "Stage" or "Unstage" button. The choices last until the window closes and
+  apply to every file. A file whose only changes were white space says so.
 - The sidebar starts closed below 1500 px, because the two side panels would leave 520 px
   for the graph at the default window. A quiet button and `Ctrl B` open it at any width.
 - Task screens (commit, conflict) replace the sidebar and link back to the graph.
@@ -155,7 +160,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   column headings or hash: the refs column, the graph, the subject, then author and a short time
   ("12m", "3h", "Tue", "Oct 30"). The full hash belongs to the inspector.
 - Resizing: every panel edge drags, so a panel can be made smaller or bigger. These are
-  the sidebar, inspector, diff, dock and its log list, the commit screen's file list and
+  the sidebar, inspector, dock and its log list, the commit screen's file list and
   form, the conflict steps, and the settings side panel. The pointer shows a resize cursor
   over a 4 px strip on the edge, which tints 50% Blue. A panel stops at a minimum, and at
   the point where the main area would be under 320 px. Sizes last until the window closes.
@@ -249,6 +254,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   button, "Review and commit", and lists the changed files under them exactly as it does
   for a commit, so a file's diff is one click away. Diffs open on a click, never on
   their own. The list and an open diff refresh when the window is used again.
+- **Staging:** each file in the working changes ends with a quiet button that names its
+  result: "Stage", "Unstage", or "Stage rest" for a file with changes both in and out of the
+  index, with the word "staged" or "partly staged" before it. Folder rows in the tree have
+  the same button for everything below them. Under "Review and commit" sit quiet "Stage all
+  3 files" and "Unstage all 2 files" buttons, each shown only while it has something to do.
+  Unstaging never touches the file itself. The list refreshes at once, and the commit screen
+  starts with what is staged.
 - **Merges in the inspector:** a merge lists and diffs what it brought in over its first
   parent, the branch it was made on, so its files match what reverting it with `-m 1` undoes.
 - **Inspector actions:** "Check out" names the branch when one is at the commit. Commands

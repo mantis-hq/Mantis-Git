@@ -2,7 +2,7 @@
 
 use crate::details::FileChange;
 use crate::ops;
-use crate::patch::{self, FilePatch, LineKind};
+use crate::patch::{self, DiffView, FilePatch, LineKind};
 use crate::text::count;
 use std::collections::HashSet;
 use std::path::Path;
@@ -17,9 +17,47 @@ pub struct WorkingFile {
     pub patch: FilePatch,
     /// Whether any of the file was already staged.
     pub staged: bool,
+    /// Whether any of the file's changes are still out of the index.
+    pub unstaged: bool,
+}
+
+/// How much of a file is in the index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage {
+    Staged,
+    Partly,
+    Unstaged,
+}
+
+impl Stage {
+    /// The word the inspector shows beside a file.
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Staged => "staged",
+            Self::Partly => "partly staged",
+            Self::Unstaged => "",
+        }
+    }
+
+    /// What the file's button does: a staged file is taken out, anything else goes in.
+    pub fn button(self) -> &'static str {
+        match self {
+            Self::Staged => "Unstage",
+            Self::Partly => "Stage rest",
+            Self::Unstaged => "Stage",
+        }
+    }
 }
 
 impl WorkingFile {
+    pub fn stage(&self) -> Stage {
+        match (self.staged, self.unstaged) {
+            (true, false) => Stage::Staged,
+            (true, true) => Stage::Partly,
+            _ => Stage::Unstaged,
+        }
+    }
+
     /// The file as the inspector lists it, the same as for a commit's files.
     pub fn change(&self) -> FileChange {
         let count = |kind| {
@@ -164,11 +202,14 @@ pub fn read(repo: &Path) -> Result<Vec<WorkingFile>, String> {
     let diff = ops::run(repo, &patch::diff_args(&["diff", &base, "--no-renames"]))?;
     let names = ops::run(repo, &["diff", "--cached", "--name-only", "-z", &base])?;
     let staged: HashSet<&str> = names.split('\0').collect();
+    let loose = ops::run(repo, &["diff", "--name-only", "-z", "--no-renames"])?;
+    let unstaged: HashSet<&str> = loose.split('\0').collect();
 
     let mut files: Vec<WorkingFile> = patch::parse(&diff)
         .into_iter()
         .map(|patch| WorkingFile {
             staged: staged.contains(patch.path.as_str()),
+            unstaged: unstaged.contains(patch.path.as_str()),
             path: patch.path.clone(),
             patch,
         })
@@ -180,10 +221,78 @@ pub fn read(repo: &Path) -> Result<Vec<WorkingFile>, String> {
             path: path.to_owned(),
             patch: read_new_file(repo, path),
             staged: false,
+            unstaged: true,
         });
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
+}
+
+/// One file as it is drawn, in the chosen [`DiffView`]. What [`read`] found is the plain
+/// view, so that is used as it is, and so is a file git doesn't know yet, which is all
+/// additions whatever the view.
+pub fn file_diff(repo: &Path, file: &WorkingFile, view: DiffView) -> Result<FilePatch, String> {
+    if view.is_default() || file.patch.status() == 'A' && !file.staged {
+        return Ok(file.patch.clone());
+    }
+    let base = if ops::resolves(repo, "HEAD") {
+        "HEAD".to_owned()
+    } else {
+        ops::run_with_input(repo, &["mktree"], b"")?
+            .trim()
+            .to_owned()
+    };
+    let command = ["diff", &base, "--no-renames"];
+    let mut args = patch::diff_args(&command);
+    args.extend(view.args());
+    args.extend(["--", &file.path]);
+    let diff = ops::run(repo, &args)?;
+    // Nothing but white space changed, so git has no diff to print.
+    let mut patch = patch::parse(&diff).into_iter().next().unwrap_or_default();
+    patch.path.clone_from(&file.path);
+    Ok(patch)
+}
+
+/// Puts these files, all of their changes, into the index.
+pub fn stage_files(repo: &Path, paths: &[String]) -> Result<(), String> {
+    let mut args = vec!["--literal-pathspecs", "add", "-A", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    ops::run(repo, &args).map(drop)
+}
+
+/// Takes these files out of the index, leaving the files themselves as they are.
+pub fn unstage_files(repo: &Path, paths: &[String]) -> Result<(), String> {
+    let mut args = vec!["--literal-pathspecs"];
+    if ops::resolves(repo, "HEAD") {
+        args.extend(["reset", "-q", "--"]);
+    } else {
+        args.extend(["rm", "--cached", "-r", "-q", "--ignore-unmatch", "--"]);
+    }
+    args.extend(paths.iter().map(String::as_str));
+    ops::run(repo, &args).map(drop)
+}
+
+/// Which of these files a click on "Stage all" and "Unstage all" would move.
+pub fn to_stage(files: &[WorkingFile]) -> Vec<String> {
+    let wanted = files.iter().filter(|file| file.stage() != Stage::Staged);
+    wanted.map(|file| file.path.clone()).collect()
+}
+
+/// "Stage all 3 files", or nothing when everything is in the index already.
+pub fn stage_all_label(files: &[WorkingFile]) -> Option<String> {
+    let moving = to_stage(files).len();
+    (moving > 0).then(|| format!("Stage all {}", count(moving, "file")))
+}
+
+/// "Unstage all 2 files", or nothing when the index holds none of them.
+pub fn unstage_all_label(files: &[WorkingFile]) -> Option<String> {
+    let moving = to_unstage(files).len();
+    (moving > 0).then(|| format!("Unstage all {}", count(moving, "file")))
+}
+
+pub fn to_unstage(files: &[WorkingFile]) -> Vec<String> {
+    let staged = files.iter().filter(|file| file.staged);
+    staged.map(|file| file.path.clone()).collect()
 }
 
 /// Shows an untracked file as all additions. `git diff --no-index` exits non-zero when it
@@ -573,6 +682,7 @@ diff --git a/x b/x
             path: path.to_owned(),
             patch,
             staged,
+            unstaged: true,
         }
     }
 
@@ -642,5 +752,97 @@ diff --git a/x b/x
         assert!(can_commit(&included, "add it"));
         assert!(!can_commit(&included, "  "));
         assert!(!can_commit(&[], "add it"));
+    }
+
+    #[test]
+    fn staging_and_unstaging_move_files_in_and_out_of_the_index() {
+        let repo = Repo::new();
+        repo.write("a", "1\n");
+        repo.write("b", "1\n");
+        repo.commit("base");
+        repo.write("a", "2\n");
+        repo.write("b", "2\n");
+        repo.write("new file", "x\n");
+
+        let all: Vec<String> = ["a", "new file"].map(String::from).into();
+        stage_files(repo.path(), &all).unwrap();
+        let files = read(repo.path()).unwrap();
+        assert_eq!(file(&files, "a").stage(), Stage::Staged);
+        assert_eq!(file(&files, "new file").stage(), Stage::Staged);
+        assert_eq!(file(&files, "b").stage(), Stage::Unstaged);
+        assert_eq!(to_stage(&files), ["b"]);
+        assert_eq!(stage_all_label(&files).as_deref(), Some("Stage all 1 file"));
+        assert_eq!(
+            unstage_all_label(&files).as_deref(),
+            Some("Unstage all 2 files")
+        );
+
+        // A second edit leaves the file partly staged.
+        repo.write("a", "3\n");
+        let files = read(repo.path()).unwrap();
+        assert_eq!(file(&files, "a").stage(), Stage::Partly);
+        assert_eq!(to_unstage(&files), ["a", "new file"]);
+
+        unstage_files(repo.path(), &all).unwrap();
+        assert_eq!(repo.git(&["diff", "--cached", "--name-only"]), "");
+        assert_eq!(repo.read("a"), "3\n", "the file itself is untouched");
+    }
+
+    #[test]
+    fn unstaging_works_before_the_first_commit() {
+        let repo = Repo::new();
+        repo.write("first", "hello\n");
+        stage_files(repo.path(), &["first".to_owned()]).unwrap();
+        assert_eq!(repo.git(&["ls-files"]), "first");
+        unstage_files(repo.path(), &["first".to_owned()]).unwrap();
+        assert_eq!(repo.git(&["ls-files"]), "");
+    }
+
+    #[test]
+    fn a_working_diff_can_show_the_whole_file_and_skip_white_space() {
+        let repo = Repo::new();
+        repo.write("file", &long("top", "bottom"));
+        repo.commit("base");
+        repo.write("file", &long("top  ", "new bottom"));
+        let files = read(repo.path()).unwrap();
+        let lines = |patch: &FilePatch| patch.hunks.iter().map(|h| h.lines.len()).sum::<usize>();
+
+        let plain = file_diff(repo.path(), &files[0], DiffView::default()).unwrap();
+        assert_eq!(plain.hunks.len(), 2);
+
+        let whole = DiffView {
+            whole_file: true,
+            ..DiffView::default()
+        };
+        let whole = file_diff(repo.path(), &files[0], whole).unwrap();
+        assert_eq!(whole.hunks.len(), 1);
+        assert_eq!(
+            lines(&whole),
+            22,
+            "every line of the file, plus the one removed"
+        );
+
+        let quiet = DiffView {
+            ignore_whitespace: true,
+            ..DiffView::default()
+        };
+        let quiet = file_diff(repo.path(), &files[0], quiet).unwrap();
+        assert_eq!(quiet.hunks.len(), 1, "the trailing spaces no longer count");
+    }
+
+    #[test]
+    fn a_file_with_only_white_space_changes_has_no_lines_when_they_are_hidden() {
+        let repo = Repo::new();
+        repo.write("file", "a b\n");
+        repo.commit("base");
+        repo.write("file", "a  b\n");
+        let files = read(repo.path()).unwrap();
+        let quiet = DiffView {
+            ignore_whitespace: true,
+            ..DiffView::default()
+        };
+        let patch = file_diff(repo.path(), &files[0], quiet).unwrap();
+        assert!(patch.hunks.is_empty());
+        assert_eq!(patch.path, "file");
     }
 }
