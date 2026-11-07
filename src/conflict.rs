@@ -546,6 +546,7 @@ mod tests {
             repo.git(&["config", "user.name", "T"]);
             repo.git(&["config", "user.email", "t@e.com"]);
             repo.git(&["config", "commit.gpgsign", "false"]);
+            repo.git(&["config", "core.autocrlf", "false"]);
             repo
         }
 
