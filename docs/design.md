@@ -132,7 +132,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Primary button:** 32 px, Blue fill, Crust text, weight 600. One per screen.
 - **Quiet button:** text only, Subtext 1, with a faint hover fill.
 - **Ref chips:** tinted with 14% of the branch colour, text in full colour. Only the
-  current branch gets a solid fill. Chips sit in their own 180 px column left of the graph (one chip, then `+n`), so subjects stay aligned.
+  current branch gets a solid fill. Chips sit in their own 180 px column left of the graph (one chip, then `+n`), so subjects stay aligned. Hovering a commit with more
+  refs opens a card over the column that lists every one, and each chip on it drags and
+  right-clicks like the first.
   A branch and its remote at the same commit are one chip with a small cloud.
 - **Menus:** right-clicking a branch, tag or commit opens one menu, and so does dropping
   a branch or tag on a branch. A card on Mantle with a Surface 0 border, 8 px radius and
