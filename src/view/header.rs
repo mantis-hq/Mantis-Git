@@ -44,6 +44,7 @@ impl GraphView {
                         bar.child(div().flex_none().text_sm().text_color(muted).child(label))
                     })
             })
+            .children(self.render_rebase_button(cx))
             .children(self.render_sidebar_toggle(cx))
             .when(has_repo && self.refs.status.remote.is_some(), |bar| {
                 bar.child(
@@ -89,8 +90,11 @@ impl GraphView {
     }
 
     fn render_action(&self, action: NextAction, cx: &mut Context<Self>) -> impl IntoElement {
+        // Each screen has one filled button, and the inspector's is the next thing to do
+        // while the working changes are selected.
         Button::new("next-action")
-            .primary()
+            .when(self.working_row_is_selected(), |button| button.ghost())
+            .when(!self.working_row_is_selected(), |button| button.primary())
             .label(action.label())
             .disabled(self.busy.is_some())
             .on_click(cx.listener(move |this, _, _, cx| this.start_action(action.clone(), cx)))

@@ -1,3 +1,4 @@
+pub mod conflict;
 pub mod details;
 pub mod git;
 pub mod graph;

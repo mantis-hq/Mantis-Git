@@ -117,6 +117,7 @@ impl GraphView {
         let activation = cx.observe_window_activation(window, |this, window, cx| {
             if window.is_window_active() {
                 this.reload_if_refs_moved(cx);
+                this.check_paused_operation(cx);
             }
         });
         Self {
@@ -233,6 +234,7 @@ impl GraphView {
         self.load_task = None;
         self.select_head_if_unselected(cx);
         self.refresh_spotlight();
+        self.check_paused_operation(cx);
         cx.notify();
     }
 

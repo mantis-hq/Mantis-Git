@@ -27,7 +27,15 @@ impl GraphView {
     }
 
     fn selected_commit(&self) -> Option<&Commit> {
-        Some(&self.entries.get(self.selected?)?.commit)
+        let entry = self.entries.get(self.selected?)?;
+        (!entry.working).then_some(&entry.commit)
+    }
+
+    /// Whether the row selected is the working changes rather than a commit.
+    pub(super) fn working_row_is_selected(&self) -> bool {
+        self.selected
+            .and_then(|index| self.entries.get(index))
+            .is_some_and(|entry| entry.working)
     }
 
     /// Loads the new selection's details, keeping the old ones up until then so that
@@ -97,6 +105,45 @@ impl GraphView {
             .bg(theme.title_bar)
             .border_l_1()
             .border_color(theme.border);
+        if self.working_row_is_selected() {
+            let branch = self
+                .refs
+                .head_branch
+                .clone()
+                .unwrap_or_else(|| "HEAD".to_owned());
+            let files = self.refs.working_files;
+            let noun = if files == 1 { "file" } else { "files" };
+            let subtext = tokens(theme.is_dark()).subtext0;
+            return Some(
+                panel
+                    .child(
+                        div()
+                            .v_flex()
+                            .p_4()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_size(px(18.))
+                                    .line_height(px(24.))
+                                    .font_semibold()
+                                    .child("Working changes"),
+                            )
+                            .child(div().text_color(subtext).child(format!(
+                                "{files} {noun} changed, not committed yet. These sit on top of \
+                                 {branch}."
+                            )))
+                            .child(
+                                Button::new("review-and-commit")
+                                    .primary()
+                                    .label("Review and commit")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.open_commit_screen(cx)),
+                                    ),
+                            ),
+                    )
+                    .into_any_element(),
+            );
+        }
         let Some(commit) = self.selected_commit() else {
             return Some(
                 panel

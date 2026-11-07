@@ -77,11 +77,7 @@ impl GraphView {
                     .when(!commit_lit, |row| row.opacity(FADED_ROW))
                     .when(!selected, |row| row.hover(|style| style.bg(hover)))
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        if this.entries.get(index).is_some_and(|entry| entry.working) {
-                            this.open_commit_screen(cx);
-                        } else {
-                            this.select(index, cx);
-                        }
+                        this.select(index, cx);
                         window.focus(&this.focus, cx);
                     }))
                     .child(

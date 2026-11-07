@@ -131,6 +131,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Commit form:** the bump card only shows when the repository has `v1.2.3` style tags to
   count from. Hunks start ticked, except that files with nothing staged start unticked
   when something else is staged, so work staged from a terminal carries over.
+- **Conflicts:** buttons name the branch ("Use feat/x"), never "mine", in line with
+  principle 5. A file with nothing to merge line by line, such as a binary file, is one
+  choice between the two sides.
 - **Files:** a status letter, then the path with its folder muted, then `+n −n`.
 - **Diffs:** added and removed lines use a 10% green or red wash. Text stays Text.
 - **Focus:** every control shows a 2 px blue focus ring, and each action has a key.
