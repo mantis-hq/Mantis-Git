@@ -9,6 +9,9 @@ mod inspector;
 mod notice;
 mod rows;
 mod sidebar;
+mod workspace;
+
+pub use workspace::Workspace;
 
 use crate::git::{self, Entry, LoadEvent, Refs};
 use gpui_kit::component::button::*;
@@ -35,17 +38,17 @@ actions!(
         SelectFirst,
         SelectLast,
         Refresh,
-        OpenRepository,
         ToggleSidebar
     ]
 );
 
 pub fn bind_keys(cx: &mut App) {
+    workspace::bind_workspace_keys(cx);
     // KeyBinding::new has no OS to resolve a `secondary-` modifier against, and panics.
-    let (refresh, open, sidebar) = if cfg!(target_os = "macos") {
-        ("cmd-r", "cmd-o", "cmd-b")
+    let (refresh, sidebar) = if cfg!(target_os = "macos") {
+        ("cmd-r", "cmd-b")
     } else {
-        ("ctrl-r", "ctrl-o", "ctrl-b")
+        ("ctrl-r", "ctrl-b")
     };
     let context = Some(KEY_CONTEXT);
     cx.bind_keys([
@@ -59,7 +62,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("end", SelectLast, context),
         KeyBinding::new("f5", Refresh, context),
         KeyBinding::new(refresh, Refresh, context),
-        KeyBinding::new(open, OpenRepository, context),
         KeyBinding::new(sidebar, ToggleSidebar, context),
     ]);
 }
@@ -106,6 +108,9 @@ pub struct GraphView {
     diff: diff::State,
     commit: commit_screen::State,
     conflict: conflict_screen::State,
+    /// Set while another tab is showing, so that only the visible tab reacts to the
+    /// window coming back to the front.
+    in_background: bool,
     _activation: Subscription,
 }
 
@@ -115,9 +120,8 @@ impl GraphView {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let activation = cx.observe_window_activation(window, |this, window, cx| {
-            if window.is_window_active() {
-                this.reload_if_refs_moved(cx);
-                this.check_paused_operation(cx);
+            if window.is_window_active() && !this.in_background {
+                this.catch_up(cx);
             }
         });
         Self {
@@ -141,8 +145,31 @@ impl GraphView {
             diff: Default::default(),
             commit: Default::default(),
             conflict: Default::default(),
+            in_background: false,
             _activation: activation,
         }
+    }
+
+    pub fn has_repository(&self) -> bool {
+        self.repo.is_some()
+    }
+
+    pub fn repository(&self) -> Option<&Path> {
+        self.repo.as_deref()
+    }
+
+    pub fn focus_handle(&self) -> &FocusHandle {
+        &self.focus
+    }
+
+    pub(super) fn set_in_background(&mut self, in_background: bool) {
+        self.in_background = in_background;
+    }
+
+    /// Picks up what happened outside the app while this view was out of sight.
+    pub(super) fn catch_up(&mut self, cx: &mut Context<Self>) {
+        self.reload_if_refs_moved(cx);
+        self.check_paused_operation(cx);
     }
 
     pub fn open(&mut self, repo: PathBuf, cx: &mut Context<Self>) {
@@ -454,9 +481,6 @@ impl Render for GraphView {
             }))
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.reload(cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| this.toggle_sidebar(cx)))
-            .on_action(
-                cx.listener(|this, _: &OpenRepository, _, cx| this.prompt_for_repository(cx)),
-            )
             .children(bar)
             .children(notice)
             .child(content)

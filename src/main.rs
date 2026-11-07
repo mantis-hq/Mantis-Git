@@ -1,13 +1,14 @@
 use gitclient::theme;
-use gitclient::view::{self, GraphView};
+use gitclient::view::{self, Workspace};
 use gpui_kit::*;
 use std::path::PathBuf;
 
 fn main() {
-    let repo = std::env::args_os()
-        .nth(1)
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok());
+    // Each path on the command line gets a tab; with none, the current folder does.
+    let mut repos: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    if repos.is_empty() {
+        repos.extend(std::env::current_dir().ok());
+    }
 
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
@@ -27,11 +28,11 @@ fn main() {
         gpui_kit::open_window(options, cx, |window, cx| {
             theme::follow_system(window, cx);
             cx.new(|cx| {
-                let mut view = GraphView::new(window, cx);
-                if let Some(repo) = repo {
-                    view.open(repo, cx);
+                let mut workspace = Workspace::new(window, cx);
+                for repo in repos {
+                    workspace.open(repo, window, cx);
                 }
-                view
+                workspace
             })
         })
         .expect("Failed to open window");

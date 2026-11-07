@@ -33,8 +33,13 @@ impl GraphView {
                 Button::new("switch-repository")
                     .ghost()
                     .label(name.unwrap_or_else(|| "Open repository".to_owned()))
-                    .tooltip("Open another repository")
-                    .on_click(cx.listener(|this, _, _, cx| this.prompt_for_repository(cx))),
+                    .tooltip("Open another repository in a new tab")
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(
+                            super::workspace::OpenRepositoryInTab.boxed_clone(),
+                            cx,
+                        )
+                    }),
             )
             .child(div().flex_none().w(px(1.)).h(px(20.)).bg(border))
             .child(self.render_sentence(cx))

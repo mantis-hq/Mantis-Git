@@ -91,6 +91,14 @@ description stands out. Draw merge commit subjects in Subtext 0.
 Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 
 - Header: 52 px, Mantle, with a 1 px Surface 0 bottom border.
+- Tabs: one repository per tab, in a 36 px Mantle strip above the header with a 1 px
+  Surface 0 bottom border. The strip only shows from the second tab on, since a lone tab
+  is a control that does nothing. A tab is a 28 px quiet button with the folder name; the
+  active one takes the selected-row fill (Surface 0) and Text colour, the rest are Overlay 2.
+  Tabs have a `×` to close and the strip ends in a `+`. `Ctrl T` opens a tab, `Ctrl W`
+  closes one, `Ctrl Tab` and `Ctrl Shift Tab` move between them, and `Ctrl O` opens a
+  repository in a new tab, or in the current one while it is empty. Opening a repository
+  that is already open switches to its tab. Closing the last tab leaves an empty one.
 - Graph window: 300 px branch sidebar, graph, 380 px inspector. The diff sits under the
   graph, so history stays visible while reading it.
 - The sidebar starts closed below 1500 px, because the two side panels would leave 520 px
