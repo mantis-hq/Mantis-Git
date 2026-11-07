@@ -7,6 +7,7 @@ use crate::conflict;
 use crate::details;
 use crate::git::{Commit, RefKind, Refs};
 use crate::remote;
+use crate::submodule;
 use crate::text::{count, short_oid};
 use crate::working::Side;
 use crate::worktree;
@@ -80,6 +81,17 @@ pub enum Command {
         /// What removing it does and how to bring it back, worked out when the menu opened.
         warning: String,
     },
+    /// Handled by the interface, which owns the tabs: shows a submodule in a tab.
+    OpenSubmoduleInTab {
+        path: PathBuf,
+    },
+    /// Downloads a submodule if need be and checks out the commit this repository records.
+    UpdateSubmodule {
+        path: String,
+        /// What it does and how to undo it, when it moves the submodule off a commit.
+        warning: Option<String>,
+    },
+    UpdateSubmodules,
     /// Handled by the interface, which owns the form that edits a remote.
     EditRemote {
         name: String,
@@ -173,6 +185,8 @@ impl Command {
             Self::SwitchWorktree { .. } | Self::OpenWorktreeInTab { .. } => "Switching",
             Self::NewBranch { .. } => "Creating a branch",
             Self::RemoveWorktree { .. } => "Removing the worktree",
+            Self::OpenSubmoduleInTab { .. } => "Switching",
+            Self::UpdateSubmodule { .. } | Self::UpdateSubmodules => "Updating",
             Self::EditRemote { .. } => "Editing",
             Self::RemoveRemote { .. } => "Removing the remote",
             Self::Copy { .. } => "Copying",
@@ -214,6 +228,14 @@ impl Command {
                 message: warning.clone(),
                 action: "Remove",
                 weight: Weight::Popup,
+            }),
+            Self::UpdateSubmodule {
+                warning: Some(warning),
+                ..
+            } => Some(Confirmation {
+                message: warning.clone(),
+                action: "Check out",
+                weight: Weight::Banner,
             }),
             Self::DeleteMany { refs } => Some(Confirmation {
                 message: branch::delete_many_warning(refs),
@@ -273,9 +295,12 @@ impl Command {
             },
             Self::Reset { oid, hard } => details::reset(repo, oid, *hard),
             Self::RemoveWorktree { path, .. } => worktree::remove(repo, path),
+            Self::UpdateSubmodule { path, .. } => submodule::update(repo, path),
+            Self::UpdateSubmodules => submodule::update_all(repo),
             Self::RemoveRemote { name, .. } => remote::remove(repo, name),
             Self::SwitchWorktree { .. }
             | Self::OpenWorktreeInTab { .. }
+            | Self::OpenSubmoduleInTab { .. }
             | Self::NewBranch { .. }
             | Self::EditRemote { .. }
             | Self::ShowFile { .. }
@@ -544,6 +569,49 @@ pub fn folder_menu(path: &str, files: Vec<String>, side: Option<Side>) -> Vec<Li
         lines.push(Line::Separator);
     }
     lines.push(Line::item("Copy path", copy(path, "the path")));
+    lines
+}
+
+/// The menu for a submodule in the sidebar, found by its path.
+pub fn submodule_menu(refs: &Refs, path: &str) -> Vec<Line> {
+    let Some(module) = refs.submodules.iter().find(|module| module.path == path) else {
+        return Vec::new();
+    };
+    let name = module.label();
+    let mut lines = vec![Line::Heading(name.to_owned())];
+    lines.push(if module.is_downloaded() {
+        Line::item(
+            format!("Open {name} in a new tab"),
+            Command::OpenSubmoduleInTab {
+                path: module.folder.clone(),
+            },
+        )
+    } else {
+        Line::unavailable(format!("Can't open {name}: it isn't downloaded yet"))
+    });
+    lines.push(match module.update_unavailable() {
+        Some(reason) => {
+            Line::unavailable(format!("Can't update {name}: {}", reason.to_lowercase()))
+        }
+        None => Line::item(
+            module.update_label(),
+            Command::UpdateSubmodule {
+                path: module.path.clone(),
+                warning: module.update_warning(),
+            },
+        ),
+    });
+    if let Some(label) = submodule::update_all_label(&refs.submodules) {
+        lines.push(Line::item(label, Command::UpdateSubmodules));
+    }
+    lines.push(Line::Separator);
+    lines.push(Line::item(
+        "Copy path",
+        copy(&module.folder.to_string_lossy(), "the path"),
+    ));
+    if let Some(url) = &module.url {
+        lines.push(Line::item("Copy URL", copy(url, "the URL")));
+    }
     lines
 }
 
@@ -942,6 +1010,54 @@ mod tests {
         let locked = worktree_menu(&refs, Path::new("/code/app-l"));
         assert!(labels(&locked).contains(&"app-l is locked, so it stays"));
         assert!(worktree_menu(&refs, Path::new("/nowhere")).is_empty());
+    }
+
+    #[test]
+    fn a_submodule_menu_opens_what_is_there_and_asks_before_moving_one() {
+        use crate::submodule::{State, Submodule};
+        let module = |path: &str, state, head: Option<&str>| Submodule {
+            name: path.into(),
+            path: path.into(),
+            folder: PathBuf::from("/code/app").join(path),
+            url: Some(format!("https://example.com/{path}.git")),
+            recorded: "a".repeat(40),
+            head: head.map(|oid| oid.repeat(40)),
+            state,
+        };
+        let mut refs = refs();
+        refs.submodules = vec![
+            module("current", State::Current, Some("a")),
+            module("moved", State::Moved, Some("b")),
+            module("absent", State::NotDownloaded, None),
+        ];
+
+        let current = submodule_menu(&refs, "current");
+        assert_eq!(
+            labels(&current),
+            [
+                "Open current in a new tab",
+                "Update current",
+                "Update 2 submodules",
+                "Copy path",
+                "Copy URL",
+            ]
+        );
+        assert!(current[2].command().unwrap().confirmation().is_none());
+
+        let moved = submodule_menu(&refs, "moved");
+        let update = moved[2].command().unwrap();
+        assert_eq!(labels(&moved)[1], "Check out aaaaaaa in moved");
+        let warning = update.confirmation().unwrap().message;
+        assert!(warning.contains("git -C moved checkout bbbb"), "{warning}");
+
+        let absent = submodule_menu(&refs, "absent");
+        assert_eq!(
+            labels(&absent)[0],
+            "Can't open absent: it isn't downloaded yet"
+        );
+        assert_eq!(labels(&absent)[1], "Download absent at aaaaaaa");
+        assert!(absent[2].command().unwrap().confirmation().is_none());
+        assert!(submodule_menu(&refs, "nowhere").is_empty());
     }
 
     fn labels(lines: &[Line]) -> Vec<&str> {

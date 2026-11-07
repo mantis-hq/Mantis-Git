@@ -179,6 +179,8 @@ impl GraphView {
             cx.emit(SwitchWorktree(path.clone()));
         } else if let Command::OpenWorktreeInTab { path } = &command {
             cx.emit(OpenWorktreeInTab(path.clone()));
+        } else if let Command::OpenSubmoduleInTab { path } = &command {
+            cx.emit(OpenWorktreeInTab(path.clone()));
         } else if let Command::NewBranch { start, label } = &command {
             self.begin_new_branch(start.clone(), label.clone(), cx);
         } else if let Command::EditRemote { name } = &command {
@@ -290,6 +292,16 @@ impl GraphView {
         cx: &mut Context<Self>,
     ) {
         let lines = menu::worktree_menu(&self.refs, path);
+        self.show_menu(position, lines, cx);
+    }
+
+    pub(super) fn open_submodule_menu(
+        &mut self,
+        path: &str,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let lines = menu::submodule_menu(&self.refs, path);
         self.show_menu(position, lines, cx);
     }
 
