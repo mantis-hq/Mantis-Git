@@ -1,3 +1,4 @@
+pub mod details;
 pub mod git;
 pub mod graph;
 pub mod ops;
