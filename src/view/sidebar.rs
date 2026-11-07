@@ -5,11 +5,13 @@ use super::parts::{TEXT_CHIP, TEXT_SMALL};
 use super::parts::{panel_row, section_label};
 use super::{GraphView, SwitchWorktree};
 use crate::theme::{lane_color, tokens};
+use gitclient_core::branch;
 use gitclient_core::branch::Dragged;
 use gitclient_core::git::RefKind;
 use gitclient_core::picks::{Click, Picks, tip_of};
 use gitclient_core::spotlight::Spotlight;
 use gpui_kit::component::button::*;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
@@ -94,8 +96,20 @@ struct RefRow {
     depth: usize,
 }
 
+/// The form that asks for a new branch's name.
+pub(super) struct NewBranch {
+    /// Where the branch starts, or the checked-out commit when `None`.
+    start: Option<String>,
+    /// What to call that place in the form.
+    label: String,
+    /// Made on the next render, which is the first time there is a window to make it in.
+    input: Option<Entity<InputState>>,
+    _events: Option<Subscription>,
+}
+
 #[derive(Default)]
 pub(super) struct State {
+    pub(super) new_branch: Option<NewBranch>,
     pub(super) window_is_wide: bool,
     /// What the user chose, which outranks the window's width.
     open: Option<bool>,
@@ -244,6 +258,124 @@ impl GraphView {
     /// Switches to another working tree, which the window's tabs take care of.
     fn switch_worktree(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         cx.emit(SwitchWorktree(path));
+    }
+
+    /// Opens the form for a new branch, showing the sidebar if it is closed.
+    pub(super) fn begin_new_branch(
+        &mut self,
+        start: Option<String>,
+        label: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar.open = Some(true);
+        self.sidebar.new_branch = Some(NewBranch {
+            start,
+            label,
+            input: None,
+            _events: None,
+        });
+        cx.notify();
+    }
+
+    fn cancel_new_branch(&mut self, cx: &mut Context<Self>) {
+        self.sidebar.new_branch = None;
+        cx.notify();
+    }
+
+    /// Makes the input of a form that was just opened, and puts the cursor in it.
+    pub(super) fn ensure_new_branch_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self
+            .sidebar
+            .new_branch
+            .as_ref()
+            .is_some_and(|form| form.input.is_none())
+        {
+            return;
+        }
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("feat/my-change"));
+        let events =
+            cx.subscribe_in(
+                &input,
+                window,
+                |this, _, event: &InputEvent, _, cx| match event {
+                    InputEvent::PressEnter { .. } => this.create_new_branch(cx),
+                    InputEvent::Change => cx.notify(),
+                    _ => {}
+                },
+            );
+        let focus = input.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+        if let Some(form) = &mut self.sidebar.new_branch {
+            form.input = Some(input);
+            form._events = Some(events);
+        }
+    }
+
+    fn new_branch_name(&self, cx: &App) -> String {
+        self.sidebar
+            .new_branch
+            .as_ref()
+            .and_then(|form| form.input.as_ref())
+            .map_or_else(String::new, |input| {
+                input.read(cx).value().trim().to_owned()
+            })
+    }
+
+    fn create_new_branch(&mut self, cx: &mut Context<Self>) {
+        let name = self.new_branch_name(cx);
+        if name.is_empty() || self.busy.is_some() {
+            return;
+        }
+        let Some(form) = self.sidebar.new_branch.take() else {
+            return;
+        };
+        self.run_operation(
+            "Creating a branch",
+            move |repo| branch::create_branch(repo, &name, form.start.as_deref()),
+            cx,
+        );
+    }
+
+    fn render_new_branch(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let form = self.sidebar.new_branch.as_ref()?;
+        let theme = cx.theme();
+        let (muted, border) = (theme.muted_foreground, theme.border);
+        let name = self.new_branch_name(cx);
+        let disabled = name.is_empty() || self.busy.is_some();
+        Some(
+            div()
+                .v_flex()
+                .gap_2()
+                .px_2()
+                .pb_3()
+                .mb_2()
+                .border_b_1()
+                .border_color(border)
+                .child(section_label(muted).child(branch::new_branch_prompt(&form.label)))
+                .children(form.input.as_ref().map(Input::new))
+                .child(
+                    div()
+                        .h_flex()
+                        .justify_end()
+                        .gap_1()
+                        .child(
+                            Button::new("new-branch-cancel")
+                                .ghost()
+                                .small()
+                                .label("Cancel")
+                                .on_click(cx.listener(|this, _, _, cx| this.cancel_new_branch(cx))),
+                        )
+                        .child(
+                            Button::new("new-branch-create")
+                                .ghost()
+                                .small()
+                                .label(branch::new_branch_label(&name))
+                                .disabled(disabled)
+                                .on_click(cx.listener(|this, _, _, cx| this.create_new_branch(cx))),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 
     pub(super) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
@@ -578,35 +710,45 @@ impl GraphView {
         let theme = cx.theme();
         let (panel, border) = (theme.title_bar, theme.border);
         let items = self.sidebar_items();
+        let form = self.render_new_branch(cx);
 
         Some(
             div()
+                .v_flex()
                 .w(self.sidebar.width.map_or(WIDTH, px))
                 .flex_none()
                 .bg(panel)
                 .border_r_1()
                 .border_color(border)
+                .child(div().v_flex().px_2().pt_3().children(form))
                 .child(
-                    div().id("sidebar").size_full().px_2().py_3().child(
-                        div()
-                            .relative()
-                            .size_full()
-                            .child(
-                                uniform_list(
-                                    "sidebar-rows",
-                                    items.len(),
-                                    cx.processor(move |this, range: Range<usize>, _, cx| {
-                                        range
-                                            .filter_map(|index| items.get(index))
-                                            .map(|item| this.render_item(item, cx))
-                                            .collect::<Vec<_>>()
-                                    }),
+                    div()
+                        .id("sidebar")
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .px_2()
+                        .pb_3()
+                        .child(
+                            div()
+                                .relative()
+                                .size_full()
+                                .child(
+                                    uniform_list(
+                                        "sidebar-rows",
+                                        items.len(),
+                                        cx.processor(move |this, range: Range<usize>, _, cx| {
+                                            range
+                                                .filter_map(|index| items.get(index))
+                                                .map(|item| this.render_item(item, cx))
+                                                .collect::<Vec<_>>()
+                                        }),
+                                    )
+                                    .track_scroll(&self.sidebar.scroll)
+                                    .size_full(),
                                 )
-                                .track_scroll(&self.sidebar.scroll)
-                                .size_full(),
-                            )
-                            .scrollbar(&self.sidebar.scroll, ScrollbarAxis::Vertical),
-                    ),
+                                .scrollbar(&self.sidebar.scroll, ScrollbarAxis::Vertical),
+                        ),
                 )
                 .into_any_element(),
         )
@@ -620,6 +762,19 @@ impl GraphView {
             .h(px(24.))
             .px_2()
             .child(section_label(muted).h_flex().flex_1().child("Branches"))
+            .child(
+                div()
+                    .id("new-branch")
+                    .cursor_pointer()
+                    .text_size(TEXT_SMALL)
+                    .font_medium()
+                    .text_color(link)
+                    .child("New branch")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let label = this.refs.head_name().to_owned();
+                        this.begin_new_branch(None, label, cx)
+                    })),
+            )
             .when(self.sidebar.spotlight.is_some(), |heading| {
                 heading.child(
                     div()
