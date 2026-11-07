@@ -261,8 +261,6 @@ pub(super) enum Edge {
     Inspector,
     Dock,
     Log,
-    Files,
-    Form,
     Steps,
     Settings,
 }

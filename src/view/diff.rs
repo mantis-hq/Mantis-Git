@@ -1,12 +1,12 @@
 //! The diff of one file, drawn over the whole graph pane while it is read.
 
-use super::parts::{LineStyle, chip, expand_tabs, file_path, line_style};
-use super::parts::{TEXT_BODY, TEXT_SMALL};
+use super::parts::{LineStyle, checkbox, chip, expand_tabs, file_path, line_style};
+use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
 use super::{GraphView, Notice};
 use crate::theme::tokens;
 use gitclient_core::details::{self, FileChange};
 use gitclient_core::patch::{DiffView, FilePatch, Line};
-use gitclient_core::working;
+use gitclient_core::working::{self, Side};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
@@ -38,6 +38,10 @@ pub(super) struct Shown {
     oid: Arc<str>,
     path: Arc<str>,
     binary: bool,
+    /// For the working changes, the list the file is in.
+    side: Option<Side>,
+    /// Whether each hunk has a box that moves it in or out of the index.
+    ticks: bool,
     rows: Vec<Row>,
     /// The row with the longest text, which sets how far the list scrolls sideways.
     widest: Option<usize>,
@@ -45,19 +49,26 @@ pub(super) struct Shown {
 
 #[derive(Debug, PartialEq, Eq)]
 enum Row {
-    Hunk(String),
+    /// `index` is the hunk's place in the file's patch, which is what moving it names.
+    Hunk {
+        title: String,
+        index: usize,
+    },
     Line(Line),
 }
 
 impl Shown {
     fn new(oid: Arc<str>, file: &FileChange, patch: &FilePatch) -> Self {
         let mut rows = Vec::new();
-        for hunk in &patch.hunks {
-            rows.push(Row::Hunk(hunk.title.clone()));
+        for (index, hunk) in patch.hunks.iter().enumerate() {
+            rows.push(Row::Hunk {
+                title: hunk.title.clone(),
+                index,
+            });
             rows.extend(hunk.lines.iter().cloned().map(Row::Line));
         }
         let width = |row: &Row| match row {
-            Row::Hunk(title) => title.len(),
+            Row::Hunk { title, .. } => title.len(),
             Row::Line(line) => line.text.len(),
         };
         let widest = (0..rows.len()).max_by_key(|&index| width(&rows[index]));
@@ -65,9 +76,18 @@ impl Shown {
             oid,
             path: file.path.clone(),
             binary: patch.binary || file.binary,
+            side: None,
+            ticks: false,
             rows,
             widest,
         }
+    }
+
+    /// Marks this as a working file in `side`, whose hunks move when `ticks` is set.
+    fn staging(mut self, side: Side, ticks: bool) -> Self {
+        self.side = Some(side);
+        self.ticks = ticks;
+        self
     }
 }
 
@@ -84,15 +104,20 @@ impl GraphView {
     }
 
     /// The working changes were read again. A file already on show stays, redrawn from
-    /// the new read, so a refresh never closes what is being read.
+    /// the new read, so a refresh never closes what is being read. One that has moved to
+    /// the other list is followed there.
     pub(super) fn working_loaded(&mut self, cx: &mut Context<Self>) {
         let on_show = self
             .shown_file()
             .and(self.diff.patch.as_ref())
-            .map(|p| p.path.clone());
-        let same = on_show.and_then(|path| {
-            let files = &self.shown_details()?.files;
-            files.iter().position(|file| file.path == path)
+            .and_then(|shown| Some((shown.path.clone(), shown.side?)));
+        let same = on_show.and_then(|(path, side)| {
+            let other = match side {
+                Side::Unstaged => Side::Staged,
+                Side::Staged => Side::Unstaged,
+            };
+            self.working_position(side, &path)
+                .or_else(|| self.working_position(other, &path))
         });
         match same {
             Some(index) => self.load_file(index, cx),
@@ -174,23 +199,24 @@ impl GraphView {
         let Some(details) = self.shown_details().cloned() else {
             return;
         };
-        let (Some(change), Some(file)) =
-            (details.files.get(index), self.working_patch(index).cloned())
+        let (Some(change), Some((side, file))) =
+            (details.files.get(index), self.working_file(index))
         else {
             return;
         };
+        let (change, file) = (change.clone(), file.clone());
         // Stay where the reader was if this is the same file coming back after a refresh.
         let same_file = self
             .diff
             .patch
             .as_ref()
-            .is_some_and(|old| *old.path == *file.path.as_str());
+            .is_some_and(|old| *old.path == *file.path.as_str() && old.side == Some(side));
         let view = self.diff.view;
-        let change = change.clone();
         let oid = details.oid.clone();
         self.diff.file = Some(index);
         if view.is_default() {
-            let shown = Shown::new(oid, &change, &file.patch);
+            let shown =
+                Shown::new(oid, &change, &file.patch).staging(side, file.has_movable_hunks());
             return self.show_working_patch(shown, same_file, cx);
         }
         let Some(repo) = self.workdir() else {
@@ -199,8 +225,10 @@ impl GraphView {
         cx.notify();
         Self::spawn_blocking(
             move || {
-                let patch = working::file_diff(&repo, &file, view)?;
-                Ok::<_, String>(Shown::new(oid, &change, &patch))
+                let patch = working::file_diff(&repo, &file, side, view)?;
+                // Hunks of a patch that skips white space or shows every line can't be
+                // applied on their own, so they get no boxes.
+                Ok::<_, String>(Shown::new(oid, &change, &patch).staging(side, false))
             },
             move |this, shown, cx| {
                 if this.diff.file != Some(index) || this.diff.view != view {
@@ -226,6 +254,34 @@ impl GraphView {
         cx.notify();
     }
 
+    /// Moves one hunk of the file on show into the index, or out of it.
+    pub(super) fn move_hunk(&mut self, hunk: usize, cx: &mut Context<Self>) {
+        let Some(repo) = self.workdir() else {
+            return;
+        };
+        let Some((side, file)) = self.shown_file().and_then(|index| self.working_file(index))
+        else {
+            return;
+        };
+        if self.inspector.staging {
+            return;
+        }
+        let file = file.clone();
+        self.inspector.staging = true;
+        Self::spawn_blocking(
+            move || working::move_hunk(&repo, &file, hunk, side),
+            move |this, result, cx| {
+                this.inspector.staging = false;
+                if let Err(message) = result {
+                    this.notice = Some(Notice::Error(message.into()));
+                }
+                this.reload_working(cx);
+                cx.notify();
+            },
+            cx,
+        );
+    }
+
     pub(super) fn close_diff(&mut self, cx: &mut Context<Self>) {
         self.diff.closed = true;
         cx.notify();
@@ -233,18 +289,21 @@ impl GraphView {
 
     /// The diff, drawn in place of the graph.
     pub(super) fn render_diff(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let index = self.shown_file()?;
+        self.shown_file()?;
         let shown = self.diff.patch.clone()?;
         let theme = cx.theme();
         let (border, panel, muted) = (theme.border, theme.title_bar, theme.muted_foreground);
         let view = self.diff.view;
         let empty = shown.rows.is_empty();
-        // Only the working changes can be staged, and only they have a file in the index.
-        let stage = self
-            .working_row_is_selected()
-            .then(|| self.working_patch(index))
-            .flatten()
-            .map(|file| (file.path.clone(), file.stage()));
+        // A box for the whole file, ticked while it is in the index.
+        let file_tick = shown.side.map(|side| {
+            let path = shown.path.to_string();
+            checkbox("diff-tick-file", side.unstages(), false, cx).on_click(cx.listener(
+                move |this, _, _, cx| {
+                    this.stage_paths(vec![path.clone()], side.unstages(), cx);
+                },
+            ))
+        });
 
         Some(
             div()
@@ -268,6 +327,8 @@ impl GraphView {
                                 .flex_1()
                                 .min_w_0()
                                 .h_flex()
+                                .gap_2()
+                                .children(file_tick)
                                 .child(file_path(&shown.path, muted)),
                         )
                         .child(div().h_flex().children([false, true].map(|whole_file| {
@@ -302,18 +363,6 @@ impl GraphView {
                                 this.set_diff_view(view, cx);
                             })),
                         )
-                        .when_some(stage, |bar, (path, stage)| {
-                            bar.child(
-                                Button::new("diff-stage")
-                                    .ghost()
-                                    .xsmall()
-                                    .label(stage.button())
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        let staged = stage == working::Stage::Staged;
-                                        this.stage_paths(vec![path.clone()], !staged, cx);
-                                    })),
-                            )
-                        })
                         .child(
                             Button::new("close-diff")
                                 .ghost()
@@ -336,39 +385,6 @@ impl GraphView {
                 })
                 .into_any_element(),
         )
-    }
-
-    /// Puts files into the index, or takes them out, then reads the changes again so the
-    /// inspector shows where they stand.
-    pub(super) fn stage_paths(
-        &mut self,
-        paths: Vec<String>,
-        unstage: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(repo) = self.workdir() else {
-            return;
-        };
-        if paths.is_empty() {
-            return;
-        }
-        Self::spawn_blocking(
-            move || {
-                if unstage {
-                    working::unstage_files(&repo, &paths)
-                } else {
-                    working::stage_files(&repo, &paths)
-                }
-            },
-            move |this, result, cx| {
-                if let Err(message) = result {
-                    this.notice = Some(Notice::Error(message.into()));
-                }
-                this.reload_working(cx);
-                cx.notify();
-            },
-            cx,
-        );
     }
 
     fn render_lines(&self, shown: &Arc<Shown>, cx: &mut Context<Self>) -> impl IntoElement {
@@ -394,10 +410,12 @@ impl GraphView {
     }
 }
 
-fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut App) -> Vec<Div> {
+fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut Context<GraphView>) -> Vec<Div> {
     let theme = cx.theme();
     let muted = theme.muted_foreground;
     let colors = tokens(theme.is_dark());
+    // Hunks have a box only where moving one on its own can work.
+    let ticks = shown.side.filter(|_| shown.ticks);
 
     range
         .map(|index| {
@@ -409,12 +427,32 @@ fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut App) -> Vec<Div> {
                 .whitespace_nowrap();
             let line = match &shown.rows[index] {
                 Row::Line(line) => line,
-                Row::Hunk(title) => {
+                Row::Hunk { title, index } => {
+                    let hunk = *index;
+                    let tick = ticks.map(|side| {
+                        checkbox(("diff-tick-hunk", hunk), side.unstages(), false, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| this.move_hunk(hunk, cx)))
+                    });
                     return row
-                        .pl(NUMBER_WIDTH * 2. + SIGN_WIDTH)
-                        .pr_4()
-                        .text_color(muted)
-                        .child(expand_tabs(title));
+                        .child(
+                            div()
+                                .w(NUMBER_WIDTH * 2. + SIGN_WIDTH)
+                                .flex_none()
+                                .h_flex()
+                                .justify_end()
+                                .pr_2()
+                                .children(tick),
+                        )
+                        .child(div().pr_2().text_color(muted).child(expand_tabs(title)))
+                        .when_some(ticks, |row, side| {
+                            row.child(
+                                div()
+                                    .pr_4()
+                                    .text_size(TEXT_CHIP)
+                                    .text_color(muted)
+                                    .child(side.hunk_note()),
+                            )
+                        });
                 }
             };
             let LineStyle {
@@ -473,8 +511,8 @@ diff --git a/x b/x
         };
         let shown = Shown::new("oid".into(), &file, &patch::parse(diff)[0]);
         assert_eq!(shown.rows.len(), 7);
-        assert!(matches!(&shown.rows[0], Row::Hunk(title) if title == "fn top() {"));
-        assert!(matches!(&shown.rows[4], Row::Hunk(_)));
+        assert!(matches!(&shown.rows[0], Row::Hunk { title, index: 0 } if title == "fn top() {"));
+        assert!(matches!(&shown.rows[4], Row::Hunk { index: 1, .. }));
         assert_eq!(shown.widest, Some(2));
     }
 

@@ -8,6 +8,7 @@ use crate::details;
 use crate::git::{Commit, RefKind, Refs};
 use crate::remote;
 use crate::text::{count, short_oid};
+use crate::working::Side;
 use crate::worktree;
 use std::path::{Path, PathBuf};
 
@@ -88,6 +89,17 @@ pub enum Command {
         /// What removing it does and how to bring it back, worked out when the menu opened.
         warning: String,
     },
+    /// Handled by the interface, which owns the diff: opens a file's changes. `index` is the
+    /// file's place in what the inspector lists.
+    ShowFile {
+        index: usize,
+    },
+    /// Handled by the interface, which owns the list of changes: puts files into the index
+    /// or takes them out.
+    StageFiles {
+        paths: Vec<String>,
+        unstage: bool,
+    },
     /// Handled by the interface, which owns the clipboard.
     Copy {
         text: String,
@@ -164,6 +176,9 @@ impl Command {
             Self::EditRemote { .. } => "Editing",
             Self::RemoveRemote { .. } => "Removing the remote",
             Self::Copy { .. } => "Copying",
+            Self::ShowFile { .. } => "Opening",
+            Self::StageFiles { unstage: false, .. } => "Staging",
+            Self::StageFiles { unstage: true, .. } => "Unstaging",
         }
     }
 
@@ -263,6 +278,8 @@ impl Command {
             | Self::OpenWorktreeInTab { .. }
             | Self::NewBranch { .. }
             | Self::EditRemote { .. }
+            | Self::ShowFile { .. }
+            | Self::StageFiles { .. }
             | Self::Copy { .. } => Ok(None),
         }
     }
@@ -478,6 +495,55 @@ pub fn worktree_menu(refs: &Refs, path: &Path) -> Vec<Line> {
         )
         .danger()
     });
+    lines
+}
+
+/// The menu for a file in the inspector. `side` is the list it is in when these are the
+/// working changes, and `None` for a commit's files, which have nothing to stage.
+pub fn file_menu(path: &str, index: usize, side: Option<Side>) -> Vec<Line> {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let mut lines = vec![
+        Line::Heading(path.to_owned()),
+        Line::item(
+            format!("Show changes in {name}"),
+            Command::ShowFile { index },
+        ),
+    ];
+    if let Some(side) = side {
+        lines.push(Line::Separator);
+        lines.push(Line::item(
+            side.action(name),
+            Command::StageFiles {
+                paths: vec![path.to_owned()],
+                unstage: side.unstages(),
+            },
+        ));
+    }
+    lines.push(Line::Separator);
+    lines.push(Line::item("Copy path", copy(path, "the path")));
+    lines
+}
+
+/// The menu for a folder in the inspector's tree, which acts on every file under it.
+pub fn folder_menu(path: &str, files: Vec<String>, side: Option<Side>) -> Vec<Line> {
+    let name = path
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(path);
+    let mut lines = vec![Line::Heading(format!("{path}/"))];
+    if let Some(side) = side {
+        let what = format!("{} in {name}/", count(files.len(), "file"));
+        lines.push(Line::item(
+            side.action(&what),
+            Command::StageFiles {
+                paths: files,
+                unstage: side.unstages(),
+            },
+        ));
+        lines.push(Line::Separator);
+    }
+    lines.push(Line::item("Copy path", copy(path, "the path")));
     lines
 }
 
@@ -714,6 +780,64 @@ pub fn drop_menu(source: &Dragged, target: &str, relation: Result<Relation, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shown_lines(lines: &[Line]) -> Vec<String> {
+        lines
+            .iter()
+            .filter_map(|line| match line {
+                Line::Item { label, .. } | Line::Heading(label) => Some(label.clone()),
+                Line::Separator => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_working_file_can_be_shown_staged_or_unstaged_and_copied() {
+        let lines = file_menu("src/a.rs", 3, Some(Side::Unstaged));
+        assert_eq!(
+            shown_lines(&lines),
+            [
+                "src/a.rs",
+                "Show changes in a.rs",
+                "Stage a.rs",
+                "Copy path"
+            ]
+        );
+        assert_eq!(
+            lines[3].command(),
+            Some(&Command::StageFiles {
+                paths: vec!["src/a.rs".to_owned()],
+                unstage: false
+            })
+        );
+        let lines = file_menu("src/a.rs", 3, Some(Side::Staged));
+        assert!(matches!(
+            lines[3].command(),
+            Some(Command::StageFiles { unstage: true, .. })
+        ));
+        assert_eq!(shown_lines(&lines)[2], "Unstage a.rs");
+    }
+
+    #[test]
+    fn a_commits_file_has_nothing_to_stage() {
+        let lines = file_menu("a.rs", 0, None);
+        assert_eq!(
+            shown_lines(&lines),
+            ["a.rs", "Show changes in a.rs", "Copy path"]
+        );
+    }
+
+    #[test]
+    fn a_folder_stages_everything_under_it() {
+        let files = vec!["src/a.rs".to_owned(), "src/b.rs".to_owned()];
+        let lines = folder_menu("crates/src", files, Some(Side::Unstaged));
+        assert_eq!(
+            shown_lines(&lines),
+            ["crates/src/", "Stage 2 files in src/", "Copy path"]
+        );
+        let lines = folder_menu("src", Vec::new(), None);
+        assert_eq!(shown_lines(&lines), ["src/", "Copy path"]);
+    }
     use crate::git::{Branch, NamedRef};
     use crate::graph::LaneColor;
 

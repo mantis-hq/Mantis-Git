@@ -1,7 +1,7 @@
 //! The main window. This file owns the state shared across the app and the overall
 //! layout; each region and screen lives in its own module.
 
-mod commit_screen;
+mod commit_form;
 mod conflict_screen;
 mod diff;
 mod dock;
@@ -88,7 +88,6 @@ pub fn bind_keys(cx: &mut App) {
 pub enum Screen {
     #[default]
     Graph,
-    Commit,
     Conflict,
 }
 
@@ -151,7 +150,7 @@ pub struct GraphView {
     sidebar: sidebar::State,
     inspector: inspector::State,
     diff: diff::State,
-    commit: commit_screen::State,
+    commit: commit_form::State,
     conflict: conflict_screen::State,
     /// Set while another tab is showing, so that only the visible tab reacts to the
     /// window coming back to the front.
@@ -630,6 +629,8 @@ impl Render for GraphView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sidebar.window_is_wide = window.viewport_size().width >= sidebar::WIDE_WINDOW;
         self.ensure_new_branch_input(window, cx);
+        self.ensure_commit_inputs(window, cx);
+        self.clear_form_after_commit(window, cx);
         let theme = cx.theme();
         let (background, foreground) = (theme.background, theme.foreground);
 
@@ -638,7 +639,6 @@ impl Render for GraphView {
                 Some(self.render_toolbar(cx).into_any_element()),
                 self.render_graph(cx),
             ),
-            Screen::Commit => (None, self.render_commit_screen(window, cx)),
             Screen::Conflict => (None, self.render_conflict_screen(window, cx)),
         };
         self.ensure_remote_inputs(window, cx);
@@ -1125,6 +1125,105 @@ mod tests {
         // The second row, below the 52px header.
         cx.simulate_click(point(px(300.), px(52. + 32. + 16.)), Modifiers::none());
         assert_eq!(view.read_with(&cx, |view, _| view.selected()), Some(1));
+    }
+
+    #[gpui_kit::test]
+    fn ticking_a_file_moves_it_between_the_lists_and_its_menu_follows(cx: &mut TestAppContext) {
+        use gitclient_core::menu::Command;
+        use gitclient_core::testing::Repo;
+        use gitclient_core::working::Side;
+        let repo = Repo::new();
+        repo.write("a", "1\n");
+        repo.commit("base");
+        repo.write("a", "2\n");
+        let (view, mut cx) = open_view(cx);
+        load(&view, &["x"], &mut cx);
+        view.update(&mut cx, |view, cx| {
+            view.repo = Some(repo.path().to_owned());
+            view.entries[0].working = true;
+            view.select(0, cx);
+        });
+        cx.run_until_parked();
+        let counts = |cx: &VisualTestContext| {
+            view.read_with(cx, |view, _| {
+                let changes = view.working_changes().expect("changes were read");
+                (changes.unstaged.len(), changes.staged.len())
+            })
+        };
+        assert_eq!(counts(&cx), (1, 0));
+
+        view.update(&mut cx, |view, cx| {
+            view.stage_paths(vec!["a".to_owned()], false, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(counts(&cx), (0, 1));
+        assert_eq!(repo.git(&["diff", "--cached", "--name-only"]), "a");
+
+        // The file is the first of the lists end to end, now in the staged one.
+        view.update(&mut cx, |view, cx| {
+            assert_eq!(
+                view.working_file(0).map(|(side, _)| side),
+                Some(Side::Staged)
+            );
+            view.open_file_menu(0, point(px(10.), px(10.)), cx);
+            let lines = view.menu.as_ref().unwrap().lines();
+            let unstage = Command::StageFiles {
+                paths: vec!["a".to_owned()],
+                unstage: true,
+            };
+            assert!(lines.iter().any(|line| line.command() == Some(&unstage)));
+            view.close_menu(cx);
+            view.show_file(0, cx);
+        });
+        cx.run_until_parked();
+        assert!(view.read_with(&cx, |view, _| view.diff_is_open()));
+        // Drawing the lists, the form and the diff with a file open must not trip.
+        cx.simulate_click(point(px(2.), px(2.)), Modifiers::none());
+
+        // Ticking the file in the diff unstages it, and the diff follows it to the other list.
+        view.update(&mut cx, |view, cx| {
+            view.stage_paths(vec!["a".to_owned()], true, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(counts(&cx), (1, 0));
+        view.read_with(&cx, |view, _| {
+            assert_eq!(view.shown_file(), Some(0), "the diff follows the file");
+        });
+    }
+
+    #[gpui_kit::test]
+    fn ticking_a_hunk_in_the_diff_stages_only_that_hunk(cx: &mut TestAppContext) {
+        use gitclient_core::testing::Repo;
+        let long = |top: &str, bottom: &str| {
+            let middle: String = (0..18).map(|n| format!("line {n}\n")).collect();
+            format!("{top}\n{middle}{bottom}\n")
+        };
+        let repo = Repo::new();
+        repo.write("f", &long("top", "bottom"));
+        repo.commit("base");
+        repo.write("f", &long("new top", "new bottom"));
+        let (view, mut cx) = open_view(cx);
+        load(&view, &["x"], &mut cx);
+        view.update(&mut cx, |view, cx| {
+            view.repo = Some(repo.path().to_owned());
+            view.entries[0].working = true;
+            view.select(0, cx);
+        });
+        cx.run_until_parked();
+        view.update(&mut cx, |view, cx| view.show_file(0, cx));
+        cx.run_until_parked();
+        cx.simulate_click(point(px(2.), px(2.)), Modifiers::none());
+
+        view.update(&mut cx, |view, cx| view.move_hunk(1, cx));
+        cx.run_until_parked();
+        assert_eq!(repo.git(&["show", ":f"]), long("top", "new bottom").trim());
+        view.read_with(&cx, |view, _| {
+            let changes = view.working_changes().unwrap();
+            assert_eq!(changes.staged[0].patch.hunks.len(), 1);
+            assert_eq!(changes.unstaged[0].patch.hunks.len(), 1);
+            // The file is in both lists now, and the diff stays on the unstaged one.
+            assert_eq!(view.shown_file(), Some(0));
+        });
     }
 
     #[gpui_kit::test]

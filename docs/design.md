@@ -106,12 +106,14 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   the whole graph, between the sidebar and the inspector, so it has the room to be read.
   The inspector stays beside it for picking another file, `Esc` or "Close" brings the graph
   back, and the diff has a 40 px header: the path, two chips "Changes" and "Whole file"
-  (the picked one ticked), a "Hide white space" chip that ticks when on, and for working
-  changes a quiet "Stage" or "Unstage" button. The choices last until the window closes and
-  apply to every file. A file whose only changes were white space says so.
+  (the picked one ticked), and a "Hide white space" chip that ticks when on. The choices
+  last until the window closes and apply to every file. A file whose only changes were white
+  space says so. For working changes the header starts with a tick box for the whole file,
+  and each hunk's header starts with one too (see "Staging").
 - The sidebar starts closed below 1500 px, because the two side panels would leave 520 px
   for the graph at the default window. A quiet button and `Ctrl B` open it at any width.
-- Task screens (commit, conflict) replace the sidebar and link back to the graph.
+- The conflict screen replaces the sidebar and links back to the graph. Committing has no
+  screen of its own: it is the foot of the inspector.
 - Settings: a quiet "Settings" button at the end of the header, or `Ctrl ,`, opens a
   second window (1000×720) and brings it forward if it is already open. It has the 52 px
   header, a 220 px Mantle side panel of pages, and the page in a column up to 720 px wide.
@@ -160,8 +162,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   column headings or hash: the refs column, the graph, the subject, then author and a short time
   ("12m", "3h", "Tue", "Oct 30"). The full hash belongs to the inspector.
 - Resizing: every panel edge drags, so a panel can be made smaller or bigger. These are
-  the sidebar, inspector, dock and its log list, the commit screen's file list and
-  form, the conflict steps, and the settings side panel. The pointer shows a resize cursor
+  the sidebar, inspector, dock and its log list, the conflict steps, and the settings
+  side panel. The pointer shows a resize cursor
   over a 4 px strip on the edge, which tints 50% Blue. A panel stops at a minimum, and at
   the point where the main area would be under 320 px. Sizes last until the window closes.
 - Radii: 4 px for chips and checkboxes, 6 px for buttons and inputs, 8 px for cards.
@@ -250,39 +252,53 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Selecting commits:** a click selects one, `Ctrl`-click adds or removes one, and
   `Shift`-click adds the range. Selected rows take the selected-row fill, and the menu
   then acts on all of them.
-- **Working changes:** the inspector opens with the status sentence and the one blue
-  button, "Review and commit", and lists the changed files under them exactly as it does
-  for a commit, so a file's diff is one click away. Diffs open on a click, never on
-  their own. The list and an open diff refresh when the window is used again.
-- **Staging:** each file in the working changes ends with a quiet button that names its
-  result: "Stage", "Unstage", or "Stage rest" for a file with changes both in and out of the
-  index, with the word "staged" or "partly staged" before it. Folder rows in the tree have
-  the same button for everything below them. Under "Review and commit" sit quiet "Stage all
-  3 files" and "Unstage all 2 files" buttons, each shown only while it has something to do.
-  Unstaging never touches the file itself. The list refreshes at once, and the commit screen
-  starts with what is staged.
+- **Working changes:** the inspector opens with the status sentence, the List and Tree
+  chips, then two file lists above each other, and the commit form under them. The top list
+  is "Unstaged" and holds only the files with changes the index doesn't have, the bottom
+  one is "Staged" and holds only what the next commit contains. A file changed both ways is
+  in both, each with its own diff. A list with no files says so in a sentence. Diffs open on
+  a click, never on their own. The lists and an open diff refresh when the window is used
+  again.
+- **Staging:** the check marks of the commit form are the index. A file, a folder and a
+  whole list each start with a tick box, ticked in "Staged" and clear in "Unstaged";
+  ticking one in "Unstaged" stages it and clearing one in "Staged" unstages it, and the
+  file moves to the other list at once. A folder's box moves everything under it, and a
+  list's header box moves everything in it. In a diff of working changes each hunk's header
+  has the same box, with "left out" or "in this commit" after its title, and the file's box
+  sits before its path. A file that is added, removed or binary has no hunks to move on
+  their own, and nor does a diff that is showing the whole file or hiding white space. The
+  diff follows a file to the other list when its last hunk moves. Unstaging never touches
+  the file itself.
+- **File menus:** right-clicking a file in the inspector opens the usual menu: its path as
+  the heading, "Show changes in <name>", for working changes "Stage <name>" or "Unstage
+  <name>", and "Copy path". A folder in the tree has "Stage 3 files in <name>/" (or
+  "Unstage"), and "Copy path".
 - **Merges in the inspector:** a merge lists and diffs what it brought in over its first
   parent, the branch it was made on, so its files match what reverting it with `-m 1` undoes.
 - **Inspector actions:** "Check out" names the branch when one is at the commit. Commands
   that add a commit say how to undo it in the band under the header.
-- **Long lists:** lists that can grow without limit, such as a commit's files, the commit
-  screen's files and the sidebar, draw only the rows in view. Their rows share one height.
+- **Long lists:** lists that can grow without limit, such as a commit's files, the two
+  lists of working changes and the sidebar, draw only the rows in view. Their rows share one height.
 - **Loading:** where a list is still being read, a small spinner and a sentence saying
   what is coming ("Loading changed files…"), over grey placeholder rows in the Surface 0
   fill that breathe between 35% and 100% opacity. The placeholders are as tall as a real
   row, so the list takes their place without a jump. It is one component (`loading` in
   `src/view/parts.rs`) for every list that loads. Picking another commit stops that read.
-- **Commit form:** the bump card only shows when the repository has `v1.2.3` style tags to
-  count from. Hunks start ticked, except that files with nothing staged start unticked
-  when something else is staged, so work staged from a terminal carries over.
-- **File lists:** the commit screen's file list and the inspector's list of a commit's (or
-  the working changes') files share one choice. Its header always holds two chips, "List" (every file
-  by its path, the default) and "Tree" (files grouped by folder), the picked one with a
-  tick. A folder row has an arrow, a tick box that ticks or clears everything below it
-  (dash when partly ticked; the inspector has no tick boxes), its name in Overlay 2 and a file count. A click opens or
-  closes it. A chain of folders with one child each is one row (`crates/core/src/`), and
-  folders come before files. The choice applies to every repository and is saved at once
-  as `files_view` in the app's `state` file.
+- **Commit form:** the foot of the inspector for working changes, under the two lists and
+  a Surface 0 border: the type of change as chips, a summary with its length against 72, a
+  details box, "Breaking change" for `feat`, and the one blue button, named for its result
+  ("Commit 2 files", or "Stage a file to commit" while nothing is staged and nothing can
+  happen). It commits exactly what is staged. The bump card only shows when the repository
+  has `v1.2.3` style tags to count from. After a commit the form empties, and the band under
+  the header says how to undo it. If a hook refuses, the message stays. When the window is
+  short the form scrolls so the lists keep room.
+- **File lists:** the inspector's lists of a commit's (or the working changes') files share
+  one choice. Its header always holds two chips, "List" (every file by its path, the
+  default) and "Tree" (files grouped by folder), the picked one with a tick. A folder row
+  has an arrow, in working changes a tick box (see "Staging"), its name in Overlay 2 and a
+  file count. A click opens or closes it. A chain of folders with one child each is one row
+  (`crates/core/src/`), and folders come before files. The choice applies to every repository
+  and is saved at once as `files_view` in the app's `state` file.
 - **Conflicts:** buttons name the branch ("Use feat/x"), never "mine", in line with
   principle 5. A file with nothing to merge line by line, such as a binary file, is one
   choice between the two sides.
