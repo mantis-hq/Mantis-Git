@@ -414,15 +414,7 @@ impl GraphView {
                                             )
                                         }),
                                 )
-                                .children(branches)
-                                .child(
-                                    div()
-                                        .mt_1()
-                                        .px_2()
-                                        .text_size(px(12.))
-                                        .text_color(muted)
-                                        .child("Click a branch to trace its history."),
-                                ),
+                                .children(branches),
                         )
                         .child(
                             div()
