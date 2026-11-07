@@ -1,14 +1,16 @@
 //! The task screen for writing a commit: choose hunks, say what they do.
 
 use super::parts::{
-    Edge, LineStyle, checkbox, expand_tabs, file_path, fit, grip, header_bar, header_divider,
+    Edge, LineStyle, checkbox, chip, expand_tabs, file_path, fit, grip, header_bar, header_divider,
     line_style, on_resize, panel_row, section_label, status_color,
 };
 use super::parts::{TEXT_CHIP, TEXT_SMALL, TEXT_STATUS};
 use super::{GraphView, Notice, Screen};
 use crate::theme::tokens;
 use gitclient_core::patch::Hunk;
+use gitclient_core::state::AppState;
 use gitclient_core::text::count;
+use gitclient_core::tree::{self, FileView, TreeRow};
 use gitclient_core::working::{
     self, Bump, COMMIT_TYPES, Included, Selection, Version, WorkingFile,
 };
@@ -18,8 +20,13 @@ use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::collections::HashSet;
 use std::ops::Range;
+use std::path::PathBuf;
 use std::sync::Arc;
+
+/// Tree rows step in by this much for each folder they sit in.
+const INDENT: f32 = 14.;
 
 const FILES_WIDTH: Pixels = px(320.);
 const FORM_WIDTH: Pixels = px(400.);
@@ -40,6 +47,11 @@ pub(super) struct State {
     form_width: Option<f32>,
     /// Scroll of the file list, which draws only the rows in view.
     files_scroll: UniformListScrollHandle,
+    /// How the files are listed, and the folders the user closed in the tree.
+    files_view: FileView,
+    closed_folders: HashSet<String>,
+    /// Where the way of listing is remembered for every repository. `None` in tests.
+    state_file: Option<PathBuf>,
     subject: Option<Entity<InputState>>,
     details: Option<Entity<TextareaState>>,
     committed: Option<String>,
@@ -48,10 +60,34 @@ pub(super) struct State {
 }
 
 impl GraphView {
+    /// Sets the file where the way of listing files is remembered.
+    pub(super) fn set_state_file(&mut self, file: Option<PathBuf>) {
+        self.commit.state_file = file;
+    }
+
+    /// Lists the files in `view` and remembers it for every repository. The file's other
+    /// settings are left as they are.
+    pub(super) fn set_files_view(&mut self, view: FileView, cx: &mut Context<Self>) {
+        self.commit.files_view = view;
+        self.commit.files_scroll = UniformListScrollHandle::new();
+        if let Some(file) = &self.commit.state_file {
+            let mut state = AppState::load(file);
+            state.files_view = view;
+            if let Err(error) = state.save(file) {
+                self.notice = Some(Notice::Error(error.into()));
+            }
+        }
+        cx.notify();
+    }
+
     pub fn open_commit_screen(&mut self, cx: &mut Context<Self>) {
         let Some(repo) = self.workdir() else {
             return;
         };
+        // Another window or tab may have changed it since this screen was last open.
+        if let Some(file) = &self.commit.state_file {
+            self.commit.files_view = AppState::load(file).files_view;
+        }
         self.commit.committed = None;
         self.show_screen(Screen::Commit, cx);
         Self::spawn_blocking(
@@ -242,7 +278,19 @@ impl GraphView {
     fn render_changed_files(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let theme = cx.theme();
         let (panel, border, muted) = (theme.title_bar, theme.border, theme.muted_foreground);
-        let total = self.commit.files.len();
+        let rows: Arc<Vec<TreeRow>> = Arc::new(match self.commit.files_view {
+            FileView::List => Vec::new(),
+            FileView::Tree => {
+                let paths: Vec<&str> = self.commit.files.iter().map(|f| f.path.as_str()).collect();
+                tree::rows(&paths, &self.commit.closed_folders)
+            }
+        });
+        let tree_view = self.commit.files_view == FileView::Tree;
+        let total = if tree_view {
+            rows.len()
+        } else {
+            self.commit.files.len()
+        };
         div()
             .id("changed-files")
             .v_flex()
@@ -257,9 +305,27 @@ impl GraphView {
             .child(
                 section_label(muted)
                     .h_flex()
-                    .h(px(24.))
+                    .h(px(28.))
                     .px_2()
-                    .child("Tick what goes in this commit"),
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child("Tick what goes in this commit"),
+                    )
+                    .children(FileView::ALL.map(|view| {
+                        chip(
+                            ("files-view", view as usize),
+                            view.label(),
+                            view == self.commit.files_view,
+                            cx,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_files_view(view, cx);
+                        }))
+                    })),
             )
             .child(
                 div()
@@ -271,6 +337,12 @@ impl GraphView {
                             "changed-file-rows",
                             total,
                             cx.processor(move |this, range: Range<usize>, _, cx| {
+                                if tree_view {
+                                    return range
+                                        .filter_map(|at| rows.get(at).map(|row| (at, row)))
+                                        .map(|(at, row)| this.render_tree_row(at, row, cx))
+                                        .collect::<Vec<_>>();
+                                }
                                 range
                                     .filter(|index| *index < this.commit.files.len())
                                     .map(|index| this.render_changed_file(index, cx))
@@ -314,6 +386,97 @@ impl GraphView {
                     .text_color(status_color(status, cx))
                     .child(status.to_string()),
             )
+    }
+
+    /// A line of the tree: a folder that opens and closes and ticks all it holds, or a file
+    /// stepped in under its folders.
+    fn render_tree_row(&self, at: usize, row: &TreeRow, cx: &mut Context<Self>) -> Stateful<Div> {
+        let muted = cx.theme().muted_foreground;
+        match row {
+            TreeRow::Folder {
+                path,
+                name,
+                depth,
+                open,
+                files,
+            } => {
+                let (all, some) = self.commit.selection.files_state(files);
+                let toggled = path.clone();
+                let ticked = files.clone();
+                panel_row(("tree-row", at), false, cx)
+                    .h(px(30.))
+                    .pl(px(8. + INDENT * *depth as f32))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !this.commit.closed_folders.remove(&toggled) {
+                            this.commit.closed_folders.insert(toggled.clone());
+                        }
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .w(px(10.))
+                            .flex_none()
+                            .text_size(TEXT_CHIP)
+                            .text_color(muted)
+                            .child(if *open { "▾" } else { "▸" }),
+                    )
+                    .child(
+                        checkbox(("tick-folder", at), all, some, cx).on_click(cx.listener(
+                            move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.commit.selection.toggle_files(&ticked);
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(muted)
+                            .child(format!("{name}/")),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(TEXT_CHIP)
+                            .text_color(muted)
+                            .child(files.len().to_string()),
+                    )
+            }
+            TreeRow::File { index, name, depth } => {
+                let index = *index;
+                let status = self.commit.files[index].patch.status();
+                let (all, some) = self.commit.selection.file_state(index);
+                // A file steps in past its folder's arrow, so its box lines up with the
+                // folder's.
+                panel_row(("tree-row", at), self.commit.file == index, cx)
+                    .h(px(30.))
+                    .pl(px(8. + 18. + INDENT * *depth as f32))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.commit.file = index;
+                        cx.notify();
+                    }))
+                    .child(
+                        checkbox(("tick-file", index), all, some, cx).on_click(cx.listener(
+                            move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.commit.selection.toggle_file(index);
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(div().flex_1().min_w_0().truncate().child(name.clone()))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(TEXT_CHIP)
+                            .text_color(status_color(status, cx))
+                            .child(status.to_string()),
+                    )
+            }
+        }
     }
 
     fn render_hunks(&self, cx: &mut Context<Self>) -> Stateful<Div> {

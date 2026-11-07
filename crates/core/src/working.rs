@@ -86,6 +86,22 @@ impl Selection {
         (on == hunks.len(), on > 0 && on < hunks.len())
     }
 
+    /// Whether every file in `files` is ticked all the way, and whether some tick is on
+    /// without that, for a folder's box.
+    pub fn files_state(&self, files: &[usize]) -> (bool, bool) {
+        let ticks = files.iter().flat_map(|file| &self.ticks[*file]);
+        let (on, all) = ticks.fold((0, 0), |(on, all), tick| (on + usize::from(*tick), all + 1));
+        (all > 0 && on == all, on > 0 && on < all)
+    }
+
+    /// Ticks every file in `files`, unless all were ticked already, and then clears them.
+    pub fn toggle_files(&mut self, files: &[usize]) {
+        let all_on = self.files_state(files).0;
+        for file in files {
+            self.ticks[*file].fill(!all_on);
+        }
+    }
+
     /// Ticking a file turns all of its hunks on, unless all were on already.
     pub fn toggle_file(&mut self, file: usize) {
         let hunks = &mut self.ticks[file];
@@ -307,6 +323,20 @@ mod tests {
     use super::*;
     use crate::testing::Repo;
     use std::fs;
+
+    #[test]
+    fn a_folder_ticks_all_its_files_and_shows_partly_ticked() {
+        let mut selection = Selection {
+            ticks: vec![vec![true, true], vec![false], vec![true]],
+        };
+        assert_eq!(selection.files_state(&[0, 1]), (false, true));
+        assert_eq!(selection.files_state(&[0, 2]), (true, false));
+        assert_eq!(selection.files_state(&[]), (false, false));
+        selection.toggle_files(&[0, 1]);
+        assert_eq!(selection.files_state(&[0, 1]), (true, false));
+        selection.toggle_files(&[0, 1]);
+        assert_eq!(selection.files_state(&[0, 1]), (false, false));
+    }
 
     #[test]
     fn working_files_list_like_a_commits_files() {

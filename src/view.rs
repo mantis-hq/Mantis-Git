@@ -686,6 +686,28 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn the_way_files_are_listed_is_saved_for_every_repository(cx: &mut TestAppContext) {
+        use gitclient_core::state::AppState;
+        use gitclient_core::tree::FileView;
+        let (view, mut cx) = open_view(cx);
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("state");
+        AppState {
+            reopen_tabs: false,
+            ..Default::default()
+        }
+        .save(&file)
+        .unwrap();
+        view.update(&mut cx, |view, cx| {
+            view.set_state_file(Some(file.clone()));
+            view.set_files_view(FileView::Tree, cx);
+        });
+        let saved = AppState::load(&file);
+        assert_eq!(saved.files_view, FileView::Tree);
+        assert!(!saved.reopen_tabs, "other settings are kept");
+    }
+
+    #[gpui_kit::test]
     fn wide_histories_stop_growing_the_graph_at_eight_lanes(cx: &mut TestAppContext) {
         let (view, mut cx) = open_view(cx);
         load(&view, &["a"], &mut cx);

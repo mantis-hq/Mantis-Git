@@ -6,6 +6,7 @@
 //! lines are ignored and kept out of the way of newer versions. Reading never fails: a
 //! missing or broken file is the same as a fresh install.
 
+use crate::tree::FileView;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -21,6 +22,8 @@ pub struct AppState {
     pub tabs: Vec<PathBuf>,
     /// The position in `tabs` of the tab that was in front.
     pub active: usize,
+    /// How the commit screen lists changed files, for every repository.
+    pub files_view: FileView,
 }
 
 impl Default for AppState {
@@ -29,6 +32,7 @@ impl Default for AppState {
             reopen_tabs: true,
             tabs: Vec::new(),
             active: 0,
+            files_view: FileView::List,
         }
     }
 }
@@ -70,6 +74,7 @@ impl AppState {
             };
             match key.trim() {
                 "reopen_tabs" => state.reopen_tabs = value.trim() != "false",
+                "files_view" => state.files_view = FileView::from_key(value),
                 "active" => state.active = value.trim().parse().unwrap_or(0),
                 "tab" if !value.is_empty() => state.tabs.push(PathBuf::from(value)),
                 _ => {}
@@ -82,6 +87,7 @@ impl AppState {
         let mut text =
             String::from("# Remembered by gitclient. Safe to edit while it is closed.\n");
         text.push_str(&format!("reopen_tabs={}\n", self.reopen_tabs));
+        text.push_str(&format!("files_view={}\n", self.files_view.key()));
         text.push_str(&format!("active={}\n", self.active));
         for tab in &self.tabs {
             // A path that isn't text can't be written to a text file, so it isn't kept.
@@ -200,6 +206,7 @@ mod tests {
             reopen_tabs: false,
             tabs: vec!["/work/a".into(), "/work/with space/b".into()],
             active: 1,
+            files_view: FileView::Tree,
         };
         state.save(&file).unwrap();
         assert_eq!(AppState::load(&file), state);

@@ -6,7 +6,7 @@
 //! press Enter or leave the field, and the header says what happened.
 
 use super::parts::{
-    Edge, checkbox, fit, grip, header_bar, on_resize, panel_row, section_label, title,
+    Edge, checkbox, chip, fit, grip, header_bar, on_resize, panel_row, section_label, title,
 };
 use super::parts::{TEXT_BODY, TEXT_SMALL, TEXT_STATUS};
 use super::repository_name;
@@ -2074,30 +2074,6 @@ fn sync(
     if !typed_in && input.read(cx).value().as_ref() != text {
         input.update(cx, |input, cx| input.set_value(text, window, cx));
     }
-}
-
-/// One option of a choice, with a tick when picked so that colour isn't the only cue.
-fn chip(id: impl Into<ElementId>, label: &str, on: bool, cx: &App) -> Stateful<Div> {
-    let theme = cx.theme();
-    let (selected, hover) = (selected_row(theme), theme.list_hover);
-    let (text, quiet) = (theme.foreground, theme.secondary_foreground);
-    div()
-        .id(id)
-        .h_flex()
-        .h(px(26.))
-        .px_2()
-        .gap_1()
-        .rounded(px(6.))
-        .cursor_pointer()
-        .text_size(TEXT_SMALL)
-        .when(on, |chip| {
-            chip.bg(selected).text_color(text).font_semibold()
-        })
-        .when(!on, |chip| {
-            chip.text_color(quiet).hover(|chip| chip.bg(hover))
-        })
-        .when(on, |chip| chip.child("✓"))
-        .child(label.to_owned())
 }
 
 #[cfg(test)]

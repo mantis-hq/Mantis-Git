@@ -22,5 +22,6 @@ pub mod terminal;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod text;
+pub mod tree;
 pub mod working;
 pub mod worktree;
