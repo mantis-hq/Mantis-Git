@@ -69,6 +69,16 @@ pub struct Decision {
     pub other_why: String,
 }
 
+impl Decision {
+    /// What one side of the decision would put there.
+    pub fn side(&self, side: Side) -> &str {
+        match side {
+            Side::Mine => &self.mine,
+            Side::Other => &self.other,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Progress {
     pub kind: Kind,
@@ -114,6 +124,15 @@ impl Progress {
             Kind::CherryPick => format!("Copying {} onto {}: {decisions}.", self.other, self.mine),
             Kind::Revert => format!("Reverting {} on {}: {decisions}.", self.other, self.mine),
             Kind::Merge => format!("Merging {} into {}: {decisions}.", self.other, self.mine),
+        }
+    }
+
+    /// What the list of steps shows.
+    pub fn steps_heading(&self) -> String {
+        if self.steps.is_empty() {
+            format!("{} on {}", self.kind.title(), self.mine)
+        } else {
+            format!("Your commits, replayed on {}", self.other)
         }
     }
 
@@ -473,6 +492,13 @@ fn resolve_whole_file(
     Ok(())
 }
 
+/// Applies the answers and moves on. Another pause isn't a failure, because the conflict
+/// screen picks it up from [`detect`].
+pub fn finish(repo: &Path, progress: &Progress, answers: &[String]) -> Result<(), String> {
+    resolve(repo, progress, answers)?;
+    carry_on(repo, progress.kind).map(|_| ())
+}
+
 /// Moves on once every conflict is resolved. Returns the next pause, if there is one.
 pub fn carry_on(repo: &Path, kind: Kind) -> Result<Option<Progress>, String> {
     // A resolution can leave nothing to commit, which git refuses to continue from.
@@ -493,6 +519,14 @@ pub fn carry_on(repo: &Path, kind: Kind) -> Result<Option<Progress>, String> {
 /// Abandons the operation, putting everything back.
 pub fn cancel(repo: &Path, kind: Kind) -> Result<Option<String>, String> {
     ops::run(repo, &[kind.command(), "--abort"]).map(|_| None)
+}
+
+/// Says what a rebase does and how to undo it.
+pub fn rebase_warning(target: &str) -> String {
+    format!(
+        "This replays your commits on top of {target} and gives them new hashes. To undo it \
+         afterwards, run `git reset --hard ORIG_HEAD`."
+    )
 }
 
 /// Starts a rebase. A conflict isn't a failure, because the conflict screen takes over.

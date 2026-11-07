@@ -3,7 +3,7 @@
 use super::GraphView;
 use crate::theme::{lane_color, selected_row, tokens};
 use chrono::{Datelike, Local, TimeZone, Utc};
-use gitclient_core::git::{Commit, Ref, RefKind, split_subject};
+use gitclient_core::git::{Chip, Commit, RefKind, split_subject};
 use gitclient_core::graph::{Lane, Row};
 use gitclient_core::spotlight::Spotlight;
 use gpui_kit::component::*;
@@ -60,7 +60,7 @@ impl GraphView {
             let is_head = self.refs.is_head(&commit.oid);
             let is_merge = commit.is_merge();
             let is_working = entry.working;
-            let chips = commit_chips(self.refs.by_commit.get(&commit.oid));
+            let chips = self.refs.chips_at(&commit.oid);
             let (prefix, description) = split_subject(&commit.subject);
             let subject_color = if is_merge { subtext0 } else { foreground };
 
@@ -188,31 +188,6 @@ fn format_when(commit: &Commit, now: i64) -> String {
         _ if date.year() == today.year() => date.format("%b %-d").to_string(),
         _ => date.format("%Y").to_string(),
     }
-}
-
-/// A ref as drawn: a branch and its remote at the same commit are one chip.
-struct Chip<'a> {
-    label: &'a Ref,
-    synced: bool,
-}
-
-fn commit_chips(refs: Option<&Vec<Ref>>) -> Vec<Chip<'_>> {
-    let refs = refs.map_or(&[][..], Vec::as_slice);
-    let local = |remote: &Ref| {
-        refs.iter()
-            .any(|r| r.kind == RefKind::Branch && r.name == remote.branch_name())
-    };
-    let tracked = |branch: &Ref| {
-        refs.iter()
-            .any(|r| r.kind == RefKind::Remote && r.branch_name() == branch.name)
-    };
-    refs.iter()
-        .filter(|r| r.kind != RefKind::Remote || !local(r))
-        .map(|label| Chip {
-            label,
-            synced: label.kind == RefKind::Branch && tracked(label),
-        })
-        .collect()
 }
 
 fn ref_label(chip: &Chip, lane: Hsla, head: Hsla, on_head: Hsla, tag: Hsla) -> impl IntoElement {
@@ -424,9 +399,9 @@ fn paint_circle(x: Pixels, y: Pixels, radius: f32, color: Hsla, window: &mut Win
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_VISIBLE_LANES, commit_chips, format_when, is_clipped};
+    use super::{MAX_VISIBLE_LANES, format_when, is_clipped};
     use chrono::{Local, TimeZone};
-    use gitclient_core::git::{Commit, Ref, RefKind};
+    use gitclient_core::git::Commit;
     use gitclient_core::graph::GraphBuilder;
     use std::sync::Arc;
 
@@ -464,29 +439,5 @@ mod tests {
         assert_eq!(when(2 * 86_400), "Thu");
         assert_eq!(when(30 * 86_400), "Oct 8");
         assert_eq!(when(400 * 86_400), "2025");
-    }
-
-    fn named(kind: RefKind, name: &str) -> Ref {
-        Ref {
-            kind,
-            name: name.to_owned(),
-            is_head: false,
-            color: Default::default(),
-        }
-    }
-
-    #[test]
-    fn a_branch_and_its_remote_at_one_commit_are_one_synced_chip() {
-        let refs = vec![
-            named(RefKind::Branch, "main"),
-            named(RefKind::Remote, "origin/main"),
-            named(RefKind::Remote, "origin/other"),
-            named(RefKind::Tag, "v1"),
-        ];
-        let chips = commit_chips(Some(&refs));
-        let names: Vec<_> = chips.iter().map(|c| c.label.name.as_str()).collect();
-        assert_eq!(names, ["main", "origin/other", "v1"]);
-        assert!(chips[0].synced);
-        assert!(!chips[1].synced && !chips[2].synced);
     }
 }

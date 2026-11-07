@@ -5,7 +5,6 @@ use super::parts::{expand_tabs, header_bar, section_label, title};
 use super::{GraphView, Notice, Screen};
 use crate::theme::{lane_color, tokens};
 use gitclient_core::conflict::{self, Decision, Progress, Side, Step, StepState};
-use gitclient_core::graph::LaneColor;
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -101,12 +100,8 @@ impl GraphView {
                 .disabled(self.busy.is_some())
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let target = target.clone();
-                    let message = format!(
-                        "This replays your commits on top of {target} and gives them new \
-                         hashes. To undo it afterwards, run `git reset --hard ORIG_HEAD`."
-                    );
                     this.confirm = Some(Confirm {
-                        message: message.into(),
+                        message: conflict::rebase_warning(&target).into(),
                         action: "Rebase".into(),
                         run: Rc::new(move |this, cx| {
                             let target = target.clone();
@@ -132,10 +127,7 @@ impl GraphView {
         let Some(decision) = progress.decisions.get(index) else {
             return;
         };
-        let text = match side {
-            Side::Mine => decision.mine.clone(),
-            Side::Other => decision.other.clone(),
-        };
+        let text = decision.side(side).to_owned();
         self.conflict.picked[index] = Some(side);
         if let Some(editor) = &self.conflict.editor {
             let shown = text.strip_suffix('\n').unwrap_or(&text).to_owned();
@@ -209,10 +201,7 @@ impl GraphView {
         let label = format!("Continuing {}", progress.kind.title().to_lowercase());
         self.run_operation(
             label,
-            move |repo| {
-                conflict::resolve(repo, &progress, &answers)?;
-                conflict::carry_on(repo, progress.kind).map(|_| None)
-            },
+            move |repo| conflict::finish(repo, &progress, &answers).map(|()| None),
             cx,
         );
     }
@@ -362,11 +351,7 @@ impl GraphView {
     ) -> impl IntoElement {
         let theme = cx.theme();
         let (border, panel, muted) = (theme.border, theme.title_bar, theme.muted_foreground);
-        let heading = if shown.steps.is_empty() {
-            format!("{} on {}", shown.kind.title(), shown.mine)
-        } else {
-            format!("Your commits, replayed on {}", shown.other)
-        };
+        let heading = shown.steps_heading();
         let steps: Vec<_> = shown
             .steps
             .iter()
@@ -407,13 +392,7 @@ impl GraphView {
         let theme = cx.theme();
         let is_dark = theme.is_dark();
         let (head, subtext) = (theme.primary, tokens(is_dark).subtext0);
-        let other = self
-            .refs
-            .branches
-            .iter()
-            .find(|branch| branch.name == shown.other)
-            .map_or(LaneColor::default(), |branch| branch.color);
-        let other = lane_color(other, is_dark);
+        let other = lane_color(self.refs.branch_color(&shown.other), is_dark);
         let index = self.conflict.decision;
         let count = shown.decisions.len();
         let picked = self.conflict.picked.get(index).copied().flatten();

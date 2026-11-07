@@ -8,7 +8,9 @@ use super::{GraphView, Notice, Screen};
 use crate::theme::tokens;
 use gitclient_core::patch::Hunk;
 use gitclient_core::text::count;
-use gitclient_core::working::{self, Bump, COMMIT_TYPES, Included, Version, WorkingFile};
+use gitclient_core::working::{
+    self, Bump, COMMIT_TYPES, Included, Selection, Version, WorkingFile,
+};
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::*;
@@ -26,8 +28,7 @@ const MAX_HUNK_LINES: usize = 200;
 #[derive(Default)]
 pub(super) struct State {
     files: Arc<Vec<WorkingFile>>,
-    /// By file, then by hunk: whether it goes in. A file without hunks has one entry.
-    included: Vec<Vec<bool>>,
+    selection: Selection,
     file: usize,
     kind: usize,
     breaking: bool,
@@ -36,36 +37,6 @@ pub(super) struct State {
     committed: Option<String>,
     needs_clearing: bool,
     _inputs: Vec<Subscription>,
-}
-
-/// What ticking a file does to its hunks: all on, unless all were on already.
-fn toggled(hunks: &[bool]) -> Vec<bool> {
-    let all_on = hunks.iter().all(|on| *on);
-    vec![!all_on; hunks.len()]
-}
-
-/// The starting ticks. If anything was staged, that choice carries over by file.
-fn starting_ticks(files: &[WorkingFile]) -> Vec<Vec<bool>> {
-    let any_staged = files.iter().any(|file| file.staged);
-    files
-        .iter()
-        .map(|file| vec![!any_staged || file.staged; file.patch.hunks.len().max(1)])
-        .collect()
-}
-
-/// Turns the ticks into what `working::commit` wants.
-fn chosen(files: &[WorkingFile], ticks: &[Vec<bool>]) -> Vec<Included> {
-    files
-        .iter()
-        .zip(ticks)
-        .filter(|(_, hunks)| hunks.iter().any(|on| *on))
-        .map(|(file, hunks)| Included {
-            file: file.clone(),
-            hunks: (0..file.patch.hunks.len())
-                .filter(|&hunk| hunks[hunk])
-                .collect(),
-        })
-        .collect()
 }
 
 impl GraphView {
@@ -79,7 +50,7 @@ impl GraphView {
             move || working::read(&repo),
             |this, files, cx| match files {
                 Ok(files) => {
-                    this.commit.included = starting_ticks(&files);
+                    this.commit.selection = Selection::starting(&files);
                     this.commit.files = Arc::new(files);
                     this.commit.file = 0;
                     cx.notify();
@@ -118,9 +89,9 @@ impl GraphView {
     }
 
     fn write_commit(&mut self, cx: &mut Context<Self>) {
-        let included = chosen(&self.commit.files, &self.commit.included);
+        let included = self.commit.selection.included(&self.commit.files);
         let subject = self.subject_text(cx);
-        if included.is_empty() || subject.trim().is_empty() {
+        if !working::can_commit(&included, &subject) {
             return;
         }
         let details = self
@@ -169,41 +140,6 @@ impl GraphView {
         );
     }
 
-    fn file_ticks(&self, file: usize) -> (bool, bool) {
-        let hunks = &self.commit.included[file];
-        let on = hunks.iter().filter(|on| **on).count();
-        (on == hunks.len(), on > 0 && on < hunks.len())
-    }
-
-    /// Says how the commit stands, in plain words.
-    fn commit_sentence(&self) -> String {
-        let total = self.commit.files.len();
-        let going_in = (0..total)
-            .filter(|&file| self.commit.included[file].iter().any(|on| *on))
-            .count();
-        let left_out: usize = self
-            .commit
-            .included
-            .iter()
-            .map(|hunks| hunks.iter().filter(|on| !**on).count())
-            .sum();
-        let files = count(total, "file");
-        if going_in == 0 {
-            format!("{files} changed, nothing ticked yet")
-        } else {
-            let left_out = count(left_out, "change");
-            format!("{going_in} of {files} going in, {left_out} left out")
-        }
-    }
-
-    fn latest_version(&self) -> Option<Version> {
-        let tags = self.refs.by_commit.values().flatten();
-        working::latest_version(
-            tags.filter(|r| r.kind == gitclient_core::git::RefKind::Tag)
-                .map(|r| r.name.as_str()),
-        )
-    }
-
     pub(super) fn render_commit_screen(
         &mut self,
         window: &mut Window,
@@ -241,7 +177,7 @@ impl GraphView {
         let sentence = match (&self.commit.committed, self.commit.files.is_empty()) {
             (Some(line), _) => format!("Committed “{line}”"),
             (None, true) => "Nothing has changed".to_owned(),
-            (None, false) => self.commit_sentence(),
+            (None, false) => self.commit.selection.sentence(),
         };
 
         header_bar(cx)
@@ -306,7 +242,7 @@ impl GraphView {
         let muted = cx.theme().muted_foreground;
         let file = &self.commit.files[index];
         let status = file.patch.status();
-        let (all, some) = self.file_ticks(index);
+        let (all, some) = self.commit.selection.file_state(index);
         let shown = self.commit.file == index;
 
         panel_row(("changed-file", index), shown, cx)
@@ -319,8 +255,7 @@ impl GraphView {
                 checkbox(("tick-file", index), all, some, cx).on_click(cx.listener(
                     move |this, _, _, cx| {
                         cx.stop_propagation();
-                        let hunks = &mut this.commit.included[index];
-                        *hunks = toggled(hunks);
+                        this.commit.selection.toggle_file(index);
                         cx.notify();
                     },
                 )),
@@ -345,8 +280,7 @@ impl GraphView {
 
         let mut cards = Vec::new();
         for file in order.collect::<Vec<_>>() {
-            let count = self.commit.included[file].len();
-            for hunk in 0..count {
+            for hunk in 0..self.commit.selection.hunks(file) {
                 cards.push(self.render_hunk(file, hunk, cx));
             }
         }
@@ -366,7 +300,7 @@ impl GraphView {
         let (panel, border, muted) = (theme.title_bar, theme.border, theme.muted_foreground);
         let subtext = tokens(theme.is_dark()).subtext0;
         let working = &self.commit.files[file];
-        let on = self.commit.included[file][hunk];
+        let on = self.commit.selection.is_on(file, hunk);
         let part = working.patch.hunks.get(hunk);
         let title = match part {
             Some(part) if !part.title.is_empty() => format!("{}  {}", working.path, part.title),
@@ -393,8 +327,7 @@ impl GraphView {
                     .child(
                         checkbox(("tick-hunk", file * 10_000 + hunk), on, false, cx).on_click(
                             cx.listener(move |this, _, _, cx| {
-                                let tick = &mut this.commit.included[file][hunk];
-                                *tick = !*tick;
+                                this.commit.selection.toggle_hunk(file, hunk);
                                 cx.notify();
                             }),
                         ),
@@ -438,9 +371,9 @@ impl GraphView {
         let subject = self.subject_text(cx);
         let line = working::subject_line(kind, breaking, &subject);
         let length = line.chars().count();
-        let included = chosen(&self.commit.files, &self.commit.included);
+        let included = self.commit.selection.included(&self.commit.files);
         let files = included.len();
-        let cannot = files == 0 || subject.trim().is_empty() || self.busy.is_some();
+        let cannot = !working::can_commit(&included, &subject) || self.busy.is_some();
         let label = match files {
             0 => "Tick a file to commit".to_owned(),
             files => format!("Commit {}", count(files, "file")),
@@ -468,6 +401,7 @@ impl GraphView {
         let types: Vec<_> = types.collect();
 
         let bump = self
+            .refs
             .latest_version()
             .map(|version| (version, working::bump(kind, breaking, version)));
         let breaking_box = checkbox("breaking", self.commit.breaking, false, cx).on_click(
@@ -528,7 +462,7 @@ impl GraphView {
                     .child(div().h(px(92.)).child(Textarea::new(input).h_full())),
             );
         }
-        form.when(kind == "feat", |form| {
+        form.when(working::can_break(kind), |form| {
             form.child(
                 div()
                     .h_flex()
@@ -696,67 +630,4 @@ fn checkbox(id: impl Into<ElementId>, on: bool, partly: bool, cx: &App) -> State
         .when(!filled, |tick| tick.border(px(1.5)).border_color(idle))
         .when(on, |tick| tick.child("✓"))
         .when(partly, |tick| tick.child("–"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{chosen, starting_ticks, toggled};
-    use gitclient_core::patch;
-    use gitclient_core::working::WorkingFile;
-
-    const TWO_HUNKS: &str = "\
-diff --git a/x b/x
---- a/x
-+++ b/x
-@@ -1 +1 @@
--a
-+b
-@@ -9 +9 @@
--c
-+d
-";
-
-    fn file(path: &str, staged: bool) -> WorkingFile {
-        let mut patch = patch::parse(TWO_HUNKS).remove(0);
-        patch.path = path.to_owned();
-        WorkingFile {
-            path: path.to_owned(),
-            patch,
-            staged,
-        }
-    }
-
-    #[test]
-    fn everything_starts_ticked_when_nothing_is_staged() {
-        let ticks = starting_ticks(&[file("a", false), file("b", false)]);
-        assert_eq!(ticks, [[true, true], [true, true]]);
-    }
-
-    #[test]
-    fn staged_files_carry_over_as_the_starting_choice() {
-        let ticks = starting_ticks(&[file("a", true), file("b", false)]);
-        assert_eq!(ticks, [[true, true], [false, false]]);
-    }
-
-    #[test]
-    fn a_file_with_no_hunks_still_gets_one_tick() {
-        let mut binary = file("a", false);
-        binary.patch.hunks.clear();
-        assert_eq!(starting_ticks(&[binary]), [[true]]);
-    }
-
-    #[test]
-    fn ticking_a_partly_ticked_file_turns_it_all_on() {
-        assert_eq!(toggled(&[true, false]), [true, true]);
-        assert_eq!(toggled(&[true, true]), [false, false]);
-        assert_eq!(toggled(&[false, false]), [true, true]);
-    }
-
-    #[test]
-    fn only_ticked_hunks_are_chosen() {
-        let files = [file("a", false), file("b", false)];
-        let parts = chosen(&files, &[vec![false, true], vec![false, false]]);
-        assert_eq!(parts.len(), 1);
-        assert_eq!(parts[0].hunks, [1]);
-    }
 }

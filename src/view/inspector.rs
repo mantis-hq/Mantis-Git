@@ -5,7 +5,7 @@ use super::{GraphView, Status};
 use crate::theme::tokens;
 use chrono::{Local, TimeZone};
 use gitclient_core::details::{self, CommitDetails, FileChange};
-use gitclient_core::git::{Commit, Entry, RefKind, split_subject};
+use gitclient_core::git::{Commit, Entry, split_subject};
 use gitclient_core::text::{count, short_oid};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -81,14 +81,6 @@ impl GraphView {
         }
     }
 
-    /// The branch to switch to for a commit: the one at it, if it isn't already current.
-    fn branch_at(&self, commit: &Commit) -> Option<String> {
-        let refs = self.refs.by_commit.get(&commit.oid)?;
-        refs.iter()
-            .find(|r| r.kind == RefKind::Branch)
-            .map(|r| r.name.clone())
-    }
-
     pub(super) fn render_inspector(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.status == Status::NoRepository {
             return None;
@@ -102,8 +94,7 @@ impl GraphView {
             .border_l_1()
             .border_color(theme.border);
         if self.working_row_is_selected() {
-            let branch = self.refs.head_name();
-            let files = count(self.refs.status.changed, "file");
+            let sentence = self.refs.working_sentence();
             let subtext = tokens(theme.is_dark()).subtext0;
             return Some(
                 panel
@@ -113,10 +104,7 @@ impl GraphView {
                             .p_4()
                             .gap_3()
                             .child(title().child("Working changes"))
-                            .child(div().text_color(subtext).child(format!(
-                                "{files} changed, not committed yet. These sit on top of \
-                                 {branch}."
-                            )))
+                            .child(div().text_color(subtext).child(sentence))
                             .child(
                                 Button::new("review-and-commit")
                                     .primary()
@@ -256,9 +244,8 @@ impl GraphView {
 
     fn render_actions(&self, commit: &Commit, cx: &mut Context<Self>) -> impl IntoElement {
         let oid = commit.oid.clone();
-        let branch = self.branch_at(commit);
-        let is_merge = commit.is_merge();
-        let is_head = self.refs.is_head(&commit.oid);
+        let actions = self.refs.actions_for(commit);
+        let (branch, is_merge) = (actions.branch.clone(), actions.is_merge);
         let busy = self.busy.is_some();
 
         let check_out = {
@@ -299,15 +286,12 @@ impl GraphView {
                 Button::new("check-out")
                     .ghost()
                     .small()
-                    .label(match &branch {
-                        Some(branch) => format!("Check out {branch}"),
-                        None => "Check out".to_owned(),
-                    })
-                    .disabled(busy || is_head)
+                    .label(actions.check_out_label())
+                    .disabled(busy || !actions.can_check_out)
                     .on_click(check_out),
             )
-            .when(!is_merge && !is_head, |actions| {
-                actions.child(
+            .when(actions.can_cherry_pick, |list| {
+                list.child(
                     Button::new("cherry-pick")
                         .ghost()
                         .small()

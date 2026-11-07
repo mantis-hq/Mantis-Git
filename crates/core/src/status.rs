@@ -54,6 +54,14 @@ impl NextAction {
             Self::ForcePush { commits, .. } => format!("Force push {}", count(*commits, "commit")),
         }
     }
+
+    /// What's happening while it runs.
+    pub fn progress_label(&self) -> &'static str {
+        match self {
+            Self::Pull { .. } => "Pulling",
+            Self::Publish { .. } | Self::Push { .. } | Self::ForcePush { .. } => "Pushing",
+        }
+    }
 }
 
 /// One stretch of the status sentence.
@@ -67,6 +75,17 @@ pub enum Span {
 }
 
 impl RepoStatus {
+    /// Says what a force push replaces and how to undo it.
+    pub fn force_push_warning(&self, replaced: u32) -> String {
+        let upstream = self.upstream.as_deref().unwrap_or_default();
+        let branch = self.branch.as_deref().unwrap_or_default();
+        format!(
+            "This replaces {} on {upstream}. To undo it, find them with \
+             `git reflog show {upstream}` and push {branch} back to that commit.",
+            count(replaced, "commit")
+        )
+    }
+
     pub fn is_on_base(&self) -> bool {
         matches!((&self.branch, &self.base), (Some(b), Some((base, _))) if b == base)
     }

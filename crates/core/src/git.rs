@@ -7,6 +7,7 @@ use crate::graph::{GraphBuilder, LaneColor, Plan, Row};
 use crate::ops::{self, git, stderr_message};
 use crate::status::{self, RepoStatus};
 use crate::text::count;
+use crate::working::{self, Version};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -74,6 +75,52 @@ impl Ref {
     /// The branch this is, or follows: a remote's `origin/main` is `main`.
     pub fn branch_name(&self) -> &str {
         branch_key(self.kind, &self.name)
+    }
+}
+
+/// A ref as drawn: a branch and its remote at the same commit are one chip.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Chip<'a> {
+    pub label: &'a Ref,
+    /// A remote has this branch at the same commit.
+    pub synced: bool,
+}
+
+/// The chips for the refs at one commit.
+pub fn chips(refs: &[Ref]) -> Vec<Chip<'_>> {
+    let local = |remote: &Ref| {
+        refs.iter()
+            .any(|r| r.kind == RefKind::Branch && r.name == remote.branch_name())
+    };
+    let tracked = |branch: &Ref| {
+        refs.iter()
+            .any(|r| r.kind == RefKind::Remote && r.branch_name() == branch.name)
+    };
+    refs.iter()
+        .filter(|r| r.kind != RefKind::Remote || !local(r))
+        .map(|label| Chip {
+            label,
+            synced: label.kind == RefKind::Branch && tracked(label),
+        })
+        .collect()
+}
+
+/// What can be done to a commit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommitActions {
+    /// The branch checking out switches to, or `None` for the bare commit.
+    pub branch: Option<String>,
+    pub can_check_out: bool,
+    pub can_cherry_pick: bool,
+    pub is_merge: bool,
+}
+
+impl CommitActions {
+    pub fn check_out_label(&self) -> String {
+        match &self.branch {
+            Some(branch) => format!("Check out {branch}"),
+            None => "Check out".to_owned(),
+        }
     }
 }
 
@@ -147,6 +194,51 @@ impl Refs {
     /// What to call where HEAD is: its branch, when it's on one.
     pub fn head_name(&self) -> &str {
         self.head_branch.as_deref().unwrap_or("HEAD")
+    }
+
+    /// The chips for the refs at a commit.
+    pub fn chips_at(&self, oid: &str) -> Vec<Chip<'_>> {
+        chips(self.by_commit.get(oid).map_or(&[], Vec::as_slice))
+    }
+
+    /// The first branch at a commit.
+    fn branch_at(&self, oid: &str) -> Option<String> {
+        let refs = self.by_commit.get(oid)?;
+        refs.iter()
+            .find(|r| r.kind == RefKind::Branch)
+            .map(|r| r.name.clone())
+    }
+
+    pub fn actions_for(&self, commit: &Commit) -> CommitActions {
+        let is_head = self.is_head(&commit.oid);
+        CommitActions {
+            branch: self.branch_at(&commit.oid),
+            can_check_out: !is_head,
+            can_cherry_pick: !is_head && !commit.is_merge(),
+            is_merge: commit.is_merge(),
+        }
+    }
+
+    /// A branch's colour, or the default branch's for a name that isn't a branch here.
+    pub fn branch_color(&self, name: &str) -> LaneColor {
+        self.branches
+            .iter()
+            .find(|branch| branch.name == name)
+            .map_or(LaneColor::default(), |branch| branch.color)
+    }
+
+    /// The highest `v1.2.3` style tag.
+    pub fn latest_version(&self) -> Option<Version> {
+        working::latest_version(self.tags.iter().map(|tag| tag.name.as_str()))
+    }
+
+    /// Says what the working changes are, in plain words.
+    pub fn working_sentence(&self) -> String {
+        format!(
+            "{} changed, not committed yet. These sit on top of {}.",
+            count(self.status.changed, "file"),
+            self.head_name()
+        )
     }
 }
 
@@ -1066,5 +1158,66 @@ mod tests {
             read_refs(repo.path()).unwrap().fingerprint(),
             "switching branch moves no commit but does move HEAD"
         );
+    }
+
+    fn named(kind: RefKind, name: &str) -> Ref {
+        Ref {
+            kind,
+            name: name.to_owned(),
+            is_head: false,
+            color: Default::default(),
+        }
+    }
+
+    #[test]
+    fn a_branch_and_its_remote_at_one_commit_are_one_synced_chip() {
+        let refs = vec![
+            named(RefKind::Branch, "main"),
+            named(RefKind::Remote, "origin/main"),
+            named(RefKind::Remote, "origin/other"),
+            named(RefKind::Tag, "v1"),
+        ];
+        let found = chips(&refs);
+        let names: Vec<_> = found.iter().map(|c| c.label.name.as_str()).collect();
+        assert_eq!(names, ["main", "origin/other", "v1"]);
+        assert!(found[0].synced);
+        assert!(!found[1].synced && !found[2].synced);
+    }
+
+    fn commit_with(oid: &str, parents: &[&str]) -> Commit {
+        Commit {
+            oid: oid.into(),
+            parents: parents.iter().map(|&parent| parent.into()).collect(),
+            author: "".into(),
+            time: 0,
+            subject: "".into(),
+        }
+    }
+
+    #[test]
+    fn head_can_only_be_reverted() {
+        let refs = Refs {
+            head: Some("a".into()),
+            ..Refs::default()
+        };
+        let actions = refs.actions_for(&commit_with("a", &["b"]));
+        assert!(!actions.can_check_out && !actions.can_cherry_pick);
+    }
+
+    #[test]
+    fn a_merge_cannot_be_cherry_picked() {
+        let actions = Refs::default().actions_for(&commit_with("a", &["b", "c"]));
+        assert!(actions.is_merge && actions.can_check_out && !actions.can_cherry_pick);
+    }
+
+    #[test]
+    fn check_out_names_the_branch_at_the_commit() {
+        let mut refs = Refs::default();
+        let branch = named(RefKind::Branch, "feat/x");
+        refs.by_commit.insert("a".into(), vec![branch]);
+        let at_branch = refs.actions_for(&commit_with("a", &[]));
+        assert_eq!(at_branch.check_out_label(), "Check out feat/x");
+        let bare = refs.actions_for(&commit_with("b", &[]));
+        assert_eq!(bare.check_out_label(), "Check out");
     }
 }

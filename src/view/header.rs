@@ -4,7 +4,6 @@ use super::notice::Confirm;
 use super::parts::{header_bar, header_divider};
 use super::{GraphView, Status, repository_name};
 use gitclient_core::status::{self, NextAction, Span};
-use gitclient_core::text::count;
 use gpui_kit::component::button::*;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::*;
@@ -101,15 +100,8 @@ impl GraphView {
     /// Runs the header's action, stopping to explain first if it can lose work.
     pub fn start_action(&mut self, action: NextAction, cx: &mut Context<Self>) {
         if let NextAction::ForcePush { replaced, .. } = action {
-            let upstream = self.refs.status.upstream.clone().unwrap_or_default();
-            let branch = self.refs.status.branch.clone().unwrap_or_default();
-            let commits = count(replaced, "commit");
             self.confirm = Some(Confirm {
-                message: format!(
-                    "This replaces {commits} on {upstream}. To undo it, find them with \
-                     `git reflog show {upstream}` and push {branch} back to that commit."
-                )
-                .into(),
+                message: self.refs.status.force_push_warning(replaced).into(),
                 action: "Force push".into(),
                 run: Rc::new(move |this, cx| this.run_action(action.clone(), cx)),
             });
@@ -120,14 +112,8 @@ impl GraphView {
     }
 
     fn run_action(&mut self, action: NextAction, cx: &mut Context<Self>) {
-        let label = match action {
-            NextAction::Pull { .. } => "Pulling",
-            NextAction::Publish { .. } | NextAction::Push { .. } | NextAction::ForcePush { .. } => {
-                "Pushing"
-            }
-        };
         self.run_operation(
-            label,
+            action.progress_label(),
             move |repo| status::run_next_action(repo, &action),
             cx,
         );

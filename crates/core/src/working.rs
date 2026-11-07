@@ -2,6 +2,7 @@
 
 use crate::ops;
 use crate::patch::{self, FilePatch};
+use crate::text::count;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -29,6 +30,89 @@ impl Included {
     /// binary files and mode changes.
     fn is_whole(&self) -> bool {
         self.hunks.len() == self.file.patch.hunks.len()
+    }
+}
+
+/// Which hunks are ticked for the next commit.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Selection {
+    /// By file, then by hunk. A file without hunks has one entry.
+    ticks: Vec<Vec<bool>>,
+}
+
+impl Selection {
+    /// The starting ticks. If anything was staged, that choice carries over by file.
+    pub fn starting(files: &[WorkingFile]) -> Self {
+        let any_staged = files.iter().any(|file| file.staged);
+        let ticks = files
+            .iter()
+            .map(|file| vec![!any_staged || file.staged; file.patch.hunks.len().max(1)])
+            .collect();
+        Self { ticks }
+    }
+
+    /// How many ticks a file has.
+    pub fn hunks(&self, file: usize) -> usize {
+        self.ticks[file].len()
+    }
+
+    pub fn is_on(&self, file: usize, hunk: usize) -> bool {
+        self.ticks[file][hunk]
+    }
+
+    /// Whether a file is ticked all the way, and whether it's ticked only partly.
+    pub fn file_state(&self, file: usize) -> (bool, bool) {
+        let hunks = &self.ticks[file];
+        let on = hunks.iter().filter(|on| **on).count();
+        (on == hunks.len(), on > 0 && on < hunks.len())
+    }
+
+    /// Ticking a file turns all of its hunks on, unless all were on already.
+    pub fn toggle_file(&mut self, file: usize) {
+        let hunks = &mut self.ticks[file];
+        let all_on = hunks.iter().all(|on| *on);
+        hunks.fill(!all_on);
+    }
+
+    pub fn toggle_hunk(&mut self, file: usize, hunk: usize) {
+        let tick = &mut self.ticks[file][hunk];
+        *tick = !*tick;
+    }
+
+    /// Turns the ticks into what [`commit`] wants.
+    pub fn included(&self, files: &[WorkingFile]) -> Vec<Included> {
+        files
+            .iter()
+            .zip(&self.ticks)
+            .filter(|(_, hunks)| hunks.iter().any(|on| *on))
+            .map(|(file, hunks)| Included {
+                file: file.clone(),
+                hunks: (0..file.patch.hunks.len())
+                    .filter(|&hunk| hunks[hunk])
+                    .collect(),
+            })
+            .collect()
+    }
+
+    /// Says how the commit stands, in plain words.
+    pub fn sentence(&self) -> String {
+        let going_in = self
+            .ticks
+            .iter()
+            .filter(|hunks| hunks.iter().any(|on| *on))
+            .count();
+        let left_out: usize = self
+            .ticks
+            .iter()
+            .map(|hunks| hunks.iter().filter(|on| !**on).count())
+            .sum();
+        let files = count(self.ticks.len(), "file");
+        if going_in == 0 {
+            format!("{files} changed, nothing ticked yet")
+        } else {
+            let left_out = count(left_out, "change");
+            format!("{going_in} of {files} going in, {left_out} left out")
+        }
     }
 }
 
@@ -127,6 +211,16 @@ fn stage(repo: &Path, included: &[Included]) -> Result<(), String> {
 /// The kinds of change the commit form offers, in its order.
 pub const COMMIT_TYPES: [&str; 7] = ["feat", "fix", "docs", "refactor", "test", "chore", "ci"];
 
+/// Whether a commit has what it needs to be written.
+pub fn can_commit(included: &[Included], subject: &str) -> bool {
+    !included.is_empty() && !subject.trim().is_empty()
+}
+
+/// Whether a kind of change can be marked as breaking.
+pub fn can_break(kind: &str) -> bool {
+    kind == "feat"
+}
+
 /// Builds a Conventional Commit message.
 pub fn message(kind: &str, breaking: bool, subject: &str, details: &str) -> String {
     let mut message = format!("{}\n", subject_line(kind, breaking, subject));
@@ -140,7 +234,7 @@ pub fn message(kind: &str, breaking: bool, subject: &str, details: &str) -> Stri
 }
 
 pub fn subject_line(kind: &str, breaking: bool, subject: &str) -> String {
-    let mark = if breaking && kind == "feat" { "!" } else { "" };
+    let mark = if breaking && can_break(kind) { "!" } else { "" };
     format!("{kind}{mark}: {}", subject.trim())
 }
 
@@ -388,5 +482,95 @@ mod tests {
         let stable = Version(1, 2, 3);
         assert_eq!(bump("feat", true, stable), Bump::Major(Version(2, 0, 0)));
         assert_eq!(bump("feat", false, stable), Bump::Minor(Version(1, 3, 0)));
+    }
+
+    const TWO_HUNKS: &str = "\
+diff --git a/x b/x
+--- a/x
++++ b/x
+@@ -1 +1 @@
+-a
++b
+@@ -9 +9 @@
+-c
++d
+";
+
+    fn changed(path: &str, staged: bool) -> WorkingFile {
+        let mut patch = patch::parse(TWO_HUNKS).remove(0);
+        patch.path = path.to_owned();
+        WorkingFile {
+            path: path.to_owned(),
+            patch,
+            staged,
+        }
+    }
+
+    #[test]
+    fn everything_starts_ticked_when_nothing_is_staged() {
+        let selection = Selection::starting(&[changed("a", false), changed("b", false)]);
+        assert_eq!(selection.file_state(0), (true, false));
+        assert_eq!(selection.file_state(1), (true, false));
+    }
+
+    #[test]
+    fn staged_files_carry_over_as_the_starting_choice() {
+        let selection = Selection::starting(&[changed("a", true), changed("b", false)]);
+        assert_eq!(selection.file_state(0), (true, false));
+        assert_eq!(selection.file_state(1), (false, false));
+    }
+
+    #[test]
+    fn a_file_with_no_hunks_still_gets_one_tick() {
+        let mut binary = changed("a", false);
+        binary.patch.hunks.clear();
+        let selection = Selection::starting(&[binary]);
+        assert_eq!(selection.hunks(0), 1);
+        assert!(selection.is_on(0, 0));
+    }
+
+    #[test]
+    fn ticking_a_partly_ticked_file_turns_it_all_on() {
+        let mut selection = Selection::starting(&[changed("a", false)]);
+        selection.toggle_hunk(0, 1);
+        assert_eq!(selection.file_state(0), (false, true));
+        selection.toggle_file(0);
+        assert_eq!(selection.file_state(0), (true, false));
+        selection.toggle_file(0);
+        assert_eq!(selection.file_state(0), (false, false));
+    }
+
+    #[test]
+    fn only_ticked_hunks_are_chosen() {
+        let files = [changed("a", false), changed("b", false)];
+        let mut selection = Selection::starting(&files);
+        selection.toggle_hunk(0, 0);
+        selection.toggle_file(1);
+        let parts = selection.included(&files);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].hunks, [1]);
+    }
+
+    #[test]
+    fn the_sentence_counts_what_goes_in_and_what_stays_out() {
+        let files = [changed("a", false), changed("b", false)];
+        let mut selection = Selection::starting(&files);
+        selection.toggle_file(1);
+        selection.toggle_hunk(0, 0);
+        assert_eq!(
+            selection.sentence(),
+            "1 of 2 files going in, 3 changes left out"
+        );
+        selection.toggle_hunk(0, 1);
+        assert_eq!(selection.sentence(), "2 files changed, nothing ticked yet");
+    }
+
+    #[test]
+    fn a_commit_needs_something_ticked_and_a_subject() {
+        let files = [changed("a", false)];
+        let included = Selection::starting(&files).included(&files);
+        assert!(can_commit(&included, "add it"));
+        assert!(!can_commit(&included, "  "));
+        assert!(!can_commit(&[], "add it"));
     }
 }
