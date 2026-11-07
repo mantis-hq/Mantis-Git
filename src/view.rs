@@ -4,6 +4,7 @@
 mod commit_screen;
 mod conflict_screen;
 mod diff;
+mod dock;
 mod header;
 mod inspector;
 mod menu;
@@ -12,6 +13,7 @@ mod parts;
 mod rows;
 mod settings;
 mod sidebar;
+mod terminal;
 mod workspace;
 
 pub use settings::{OpenSettings, Settings, open as open_settings, should_quit};
@@ -52,6 +54,7 @@ actions!(
 pub fn bind_keys(cx: &mut App) {
     workspace::bind_workspace_keys(cx);
     settings::bind_keys(cx);
+    dock::bind_keys(cx);
     // KeyBinding::new has no OS to resolve a `secondary-` modifier against, and panics.
     let (refresh, sidebar) = if cfg!(target_os = "macos") {
         ("cmd-r", "cmd-b")
@@ -109,6 +112,9 @@ pub struct GraphView {
     selection: Selection,
     /// The context menu, while one is open.
     menu: Option<menu::Menu>,
+    /// The row whose refs card is open, and whether the pointer is on the card.
+    hovered_refs: Option<usize>,
+    popover_hovered: bool,
     scroll: UniformListScrollHandle,
     focus: FocusHandle,
     load_task: Option<Task<()>>,
@@ -149,6 +155,8 @@ impl GraphView {
             selected_oid: None,
             selection: Selection::default(),
             menu: None,
+            hovered_refs: None,
+            popover_hovered: false,
             scroll: UniformListScrollHandle::new(),
             focus,
             load_task: None,
@@ -892,5 +900,36 @@ mod tests {
             view.step_menu(1, cx);
             assert_eq!(at(view).as_deref(), Some("Copy name"));
         });
+    }
+
+    #[gpui_kit::test]
+    fn the_refs_card_stays_while_the_pointer_is_on_it_and_closes_once_it_leaves(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, mut cx) = open_view(cx);
+        load(&view, &["a", "b"], &mut cx);
+        view.update(&mut cx, |view, cx| {
+            view.hovered_refs = Some(1);
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        view.update(&mut cx, |view, cx| {
+            view.popover_hovered = true;
+            view.leave_refs(1, cx);
+        });
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(view.read_with(&cx, |v, _| v.hovered_refs), Some(1));
+
+        view.update(&mut cx, |view, cx| {
+            view.popover_hovered = false;
+            view.leave_refs(1, cx);
+        });
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(view.read_with(&cx, |v, _| v.hovered_refs), None);
     }
 }

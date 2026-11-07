@@ -56,6 +56,30 @@ pub(super) fn panel_row(id: impl Into<ElementId>, on: bool, cx: &App) -> Statefu
         .when(!on, |row| row.hover(|style| style.bg(hover)))
 }
 
+/// A 28 px tab in a strip: the active one takes the selected-row fill and Text colour, the
+/// rest are muted.
+pub(super) fn tab(id: impl Into<ElementId>, active: bool, cx: &App) -> Stateful<Div> {
+    let theme = cx.theme();
+    let selected = selected_row(theme);
+    div()
+        .id(id)
+        .h_flex()
+        .h(px(28.))
+        .max_w(px(220.))
+        .pl_3()
+        .pr_1()
+        .gap_1()
+        .items_center()
+        .rounded(px(6.))
+        .cursor_pointer()
+        .text_sm()
+        .when(active, |tab| tab.bg(selected).text_color(theme.foreground))
+        .when(!active, |tab| {
+            tab.text_color(theme.muted_foreground)
+                .hover(|tab| tab.bg(selected.opacity(0.5)))
+        })
+}
+
 /// A path that truncates, with its folder quieter than the file's name.
 pub(super) fn file_path(path: &str, muted: Hsla) -> Div {
     let (folder, name) = split_path(path);

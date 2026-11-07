@@ -157,6 +157,8 @@ impl GraphView {
 
     fn show_menu(&mut self, position: Point<Pixels>, lines: Vec<Line>, cx: &mut Context<Self>) {
         if !lines.is_empty() {
+            self.hovered_refs = None;
+            self.popover_hovered = false;
             self.menu = Some(Menu::new(position, lines));
             cx.notify();
         }

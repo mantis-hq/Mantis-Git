@@ -159,10 +159,12 @@ fn read_new_file(repo: &Path, path: &str) -> FilePatch {
     if size > MAX_SHOWN_FILE {
         return hidden;
     }
-    let output = ops::git(repo)
-        .args(patch::diff_args(&["diff", "--no-index"]))
-        .args(["--", "/dev/null", path])
-        .output();
+    let output = ops::run_unchecked(
+        ops::git(repo)
+            .args(patch::diff_args(&["diff", "--no-index"]))
+            .args(["--", "/dev/null", path]),
+        None,
+    );
     let Ok(output) = output else {
         return hidden;
     };

@@ -11,7 +11,9 @@ testing = ["dep:tempfile"]
 
 [dependencies]
 async-channel = "2"
+portable-pty = "0.9.0"
 tempfile = { version = "3", optional = true }
+vt100 = "0.18.1"
 
 [dev-dependencies]
 tempfile = "3"

@@ -8,6 +8,7 @@ pub mod details;
 pub mod git;
 pub mod graph;
 pub mod identity;
+pub mod log;
 pub mod menu;
 pub mod ops;
 pub mod patch;
@@ -15,6 +16,7 @@ pub mod selection;
 pub mod spotlight;
 pub mod ssh;
 pub mod status;
+pub mod terminal;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod text;
