@@ -44,6 +44,7 @@ impl GraphView {
                         bar.child(div().flex_none().text_sm().text_color(muted).child(label))
                     })
             })
+            .children(self.render_sidebar_toggle(cx))
             .when(has_repo && self.refs.status.remote.is_some(), |bar| {
                 bar.child(
                     Button::new("fetch")

@@ -35,16 +35,17 @@ actions!(
         SelectFirst,
         SelectLast,
         Refresh,
-        OpenRepository
+        OpenRepository,
+        ToggleSidebar
     ]
 );
 
 pub fn bind_keys(cx: &mut App) {
     // KeyBinding::new has no OS to resolve a `secondary-` modifier against, and panics.
-    let (refresh, open) = if cfg!(target_os = "macos") {
-        ("cmd-r", "cmd-o")
+    let (refresh, open, sidebar) = if cfg!(target_os = "macos") {
+        ("cmd-r", "cmd-o", "cmd-b")
     } else {
-        ("ctrl-r", "ctrl-o")
+        ("ctrl-r", "ctrl-o", "ctrl-b")
     };
     let context = Some(KEY_CONTEXT);
     cx.bind_keys([
@@ -59,6 +60,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("f5", Refresh, context),
         KeyBinding::new(refresh, Refresh, context),
         KeyBinding::new(open, OpenRepository, context),
+        KeyBinding::new(sidebar, ToggleSidebar, context),
     ]);
 }
 
@@ -230,6 +232,7 @@ impl GraphView {
         }
         self.load_task = None;
         self.select_head_if_unselected(cx);
+        self.refresh_spotlight();
         cx.notify();
     }
 
@@ -411,6 +414,7 @@ impl GraphView {
 
 impl Render for GraphView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sidebar.window_is_wide = window.viewport_size().width >= sidebar::WIDE_WINDOW;
         let theme = cx.theme();
         let (background, foreground) = (theme.background, theme.foreground);
 
@@ -446,6 +450,7 @@ impl Render for GraphView {
                 this.select(this.entries.len().saturating_sub(1), cx)
             }))
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.reload(cx)))
+            .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| this.toggle_sidebar(cx)))
             .on_action(
                 cx.listener(|this, _: &OpenRepository, _, cx| this.prompt_for_repository(cx)),
             )
@@ -632,6 +637,41 @@ mod tests {
             view.confirm = None;
             view.start_action(NextAction::Push { commits: 1 }, cx);
             assert!(!view.is_confirming());
+        });
+    }
+
+    #[gpui_kit::test]
+    fn the_sidebar_stays_out_of_narrow_windows_until_asked_for(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_view(cx);
+        view.update(&mut cx, |view, cx| {
+            view.sidebar.window_is_wide = false;
+            assert!(!view.sidebar_is_open());
+            view.toggle_sidebar(cx);
+            assert!(view.sidebar_is_open());
+
+            view.sidebar.window_is_wide = true;
+            view.toggle_sidebar(cx);
+            assert!(!view.sidebar_is_open(), "a choice holds at any width");
+        });
+    }
+
+    #[gpui_kit::test]
+    fn spotlighting_twice_turns_it_off_and_a_reload_keeps_it(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_view(cx);
+        load(&view, &["b", "a"], &mut cx);
+        view.update(&mut cx, |view, cx| {
+            view.spotlight("a".into(), cx);
+            let spot = view.sidebar.spotlight.clone().unwrap();
+            assert!(!spot.commit_is_lit(0) && spot.commit_is_lit(1));
+
+            view.spotlight("a".into(), cx);
+            assert!(view.sidebar.spotlight.is_none());
+            view.spotlight("a".into(), cx);
+        });
+        load(&view, &["c", "b", "a"], &mut cx);
+        view.read_with(&cx, |view, _| {
+            let spot = view.sidebar.spotlight.as_ref().unwrap();
+            assert!(spot.commit_is_lit(2) && !spot.commit_is_lit(0));
         });
     }
 
