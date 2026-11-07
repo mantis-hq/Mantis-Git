@@ -372,7 +372,7 @@ mod render {
     fn assert_settings_pages_draw(mode: ThemeMode, suffix: &str) {
         use gitclient::view::Settings;
         use gitclient_core::config::{self, Scope};
-        use gitclient_core::identity::{self, Identity, Match};
+        use gitclient_core::identity::{self, Identity, Match, Profile};
 
         let repo = fixture();
         let dir = tempfile::tempdir().unwrap();
@@ -388,16 +388,25 @@ mod render {
         }
         config::set_alias(&scope, "co", "checkout").unwrap();
         config::set_alias(&scope, "st", "status -sb").unwrap();
-        identity::save(
-            &scope,
-            &Identity {
-                matcher: Match::Host("github-work".into()),
-                name: "Ada Lovelace".into(),
-                email: "ada@work.example".into(),
-                signing_key: String::new(),
-            },
-        )
-        .unwrap();
+        let profile = |name: &str, email: &str| Profile {
+            name: name.into(),
+            email: email.into(),
+            signing_key: String::new(),
+        };
+        config::set(&scope, "user.name", "Pretext").unwrap();
+        let mut identity_named = |label: &str, profile: Profile| {
+            let identity = Identity {
+                id: String::new(),
+                label: label.into(),
+                profile,
+            };
+            identity::save_identity(&scope, &identity).unwrap()
+        };
+        let work = identity_named("Work", profile("Ada Lovelace", "ada@work.example"));
+        let home = identity_named("Home", profile("Ada", "ada@home.example"));
+        identity::add_rule(&scope, &work, &Match::Host("github-work".into())).unwrap();
+        identity::add_rule(&scope, &work, &Match::Folder("~/work/".into())).unwrap();
+        identity::add_rule(&scope, &home, &Match::Host("github-home".into())).unwrap();
         let path = repo.path().to_owned();
         git(
             &path,

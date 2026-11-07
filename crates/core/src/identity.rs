@@ -1,20 +1,29 @@
-//! Identities: a name, email and signing key that apply to the repositories matching a
-//! remote or a folder, so that work and personal commits don't need a switch.
+//! Identities: a name, email and signing key you commit as, kept under a label such as
+//! "Work", and the ways one gets picked.
 //!
-//! Git has no list of identities, only conditional includes. An identity here is one
-//! `includeIf` in the global config pointing at a small file of its own holding the
-//! `[user]` block. Every read and write goes through `git config`, so git decides where
-//! the files live and how the conditions are read.
+//! Git has no identities, only config. Here an identity is a small file of its own,
+//! `identities/<id>.gitconfig` next to the global config, holding a `[user]` block and a
+//! `[gitclient] label`. Three things point at it, and all of them are references, so
+//! editing the identity changes everywhere it is used:
 //!
-//! Everything here blocks, so call it off the UI thread.
+//! - a **rule** in the global config, an `includeIf` for a host, a folder or a remote
+//!   pattern, which picks it for every repository that matches;
+//! - a **pin**, an `include.path` in one repository's own config, which picks it there
+//!   whatever the rules say, since a repository's config is read last;
+//! - nothing, in which case the **default**, the global `user.*`, applies.
+//!
+//! Every read and write goes through `git config`, so git decides where the files live
+//! and how the conditions are read. Everything here blocks, so call it off the UI thread.
 
-use crate::config::{self, Scope, Sources};
+use crate::config::{self, Scope, Sources, Values};
 use std::path::{Path, PathBuf};
 
 const REMOTE: &str = "hasconfig:remote.*.url:";
 const FOLDER: &str = "gitdir:";
 /// Where identity files go, next to the config that includes them.
 const FOLDER_NAME: &str = "identities";
+const EXTENSION: &str = "gitconfig";
+const USER_KEYS: [&str; 3] = ["user.name", "user.email", "user.signingkey"];
 
 /// What an identity applies to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,10 +56,6 @@ impl Match {
             Match::Remote(pattern) => vec![format!("{REMOTE}{pattern}")],
             Match::Folder(path) => vec![format!("{FOLDER}{path}")],
         }
-    }
-
-    fn condition(&self) -> String {
-        self.conditions().swap_remove(0)
     }
 
     /// Reads one condition back. A host's other conditions come out as `Remote` and are
@@ -119,51 +124,178 @@ impl Match {
             _ => None,
         }
     }
-
-    /// The name of the file holding this identity.
-    fn file_name(&self) -> String {
-        let mut slug = String::new();
-        for c in self.condition().chars() {
-            if c.is_ascii_alphanumeric() {
-                slug.push(c.to_ascii_lowercase());
-            } else if !slug.ends_with('-') {
-                slug.push('-');
-            }
-        }
-        let slug: String = slug.trim_matches('-').chars().take(80).collect();
-        format!("{slug}.gitconfig")
-    }
 }
 
 fn include_key(condition: &str) -> String {
     format!("includeIf.{condition}.path")
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Identity {
-    pub matcher: Match,
+/// The part of an identity git cares about.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Profile {
     pub name: String,
     pub email: String,
     pub signing_key: String,
 }
 
-/// Where an include's `path` points: `~` is the home folder, and a relative path is
-/// relative to the config that includes it.
-fn resolve(directory: &Path, path: &str) -> PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
-        return config::home_directory().unwrap_or_default().join(rest);
+impl Profile {
+    pub fn is_empty(&self) -> bool {
+        self.name.is_empty() && self.email.is_empty() && self.signing_key.is_empty()
     }
-    let path = Path::new(path);
-    if path.is_absolute() {
-        path.to_owned()
-    } else {
-        directory.join(path)
+
+    /// The `user.*` of a config, trimmed.
+    fn from_values(values: &Values) -> Profile {
+        let text = |key: &str| values.get(key).unwrap_or("").trim().to_owned();
+        Profile {
+            name: text("user.name"),
+            email: text("user.email"),
+            signing_key: text("user.signingkey"),
+        }
+    }
+
+    fn trimmed(&self) -> Profile {
+        Profile {
+            name: self.name.trim().to_owned(),
+            email: self.email.trim().to_owned(),
+            signing_key: self.signing_key.trim().to_owned(),
+        }
+    }
+
+    /// "Ada <ada@example.com>", for a line of text.
+    pub fn display(&self) -> String {
+        match (self.name.is_empty(), self.email.is_empty()) {
+            (false, false) => format!("{} <{}>", self.name, self.email),
+            (false, true) => self.name.clone(),
+            (true, false) => format!("<{}>", self.email),
+            (true, true) => "no name or email".to_owned(),
+        }
     }
 }
 
-/// The identities set up in `scope`, in the order they were added.
-pub fn list(scope: &Scope) -> Result<Vec<Identity>, String> {
+/// A named profile, which can be used in many places.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Identity {
+    /// The file's name, without its extension. Empty for one not saved yet.
+    pub id: String,
+    pub label: String,
+    pub profile: Profile,
+}
+
+/// "Use this identity for everything matching this."
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rule {
+    pub matcher: Match,
+    pub identity: String,
+}
+
+/// Everything about identities in a config.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Book {
+    /// The global `user.*`, which applies when nothing picks another.
+    pub default: Profile,
+    /// In label order.
+    pub identities: Vec<Identity>,
+    pub rules: Vec<Rule>,
+}
+
+impl Book {
+    pub fn identity(&self, id: &str) -> Option<&Identity> {
+        self.identities.iter().find(|identity| identity.id == id)
+    }
+
+    pub fn rules_for<'a>(&'a self, id: &'a str) -> impl Iterator<Item = &'a Rule> {
+        self.rules.iter().filter(move |rule| rule.identity == id)
+    }
+
+    /// Whether some identity, or the default, already is this profile.
+    pub fn has_profile(&self, profile: &Profile) -> bool {
+        self.default == *profile || self.identities.iter().any(|i| i.profile == *profile)
+    }
+}
+
+/// The id of the identity file a config's `path` points at, whether written as a path
+/// relative to the config, with a `~`, or in full.
+fn id_of(path: &str) -> Option<String> {
+    let path = Path::new(path.trim());
+    let in_folder = path
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|folder| folder == FOLDER_NAME);
+    let is_identity = path.extension().is_some_and(|ext| ext == EXTENSION);
+    if !(in_folder && is_identity) {
+        return None;
+    }
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(str::to_owned)
+}
+
+/// What to write after `path =`: with a `~` where it can, so the config reads the same
+/// from any folder.
+fn include_value(file: &Path) -> String {
+    let text = file.to_string_lossy().replace('\\', "/");
+    if let Some(home) = config::home_directory() {
+        let home = home.to_string_lossy().replace('\\', "/");
+        let prefix = format!("{}/", home.trim_end_matches('/'));
+        if let Some(rest) = text.strip_prefix(&prefix) {
+            return format!("~/{rest}");
+        }
+    }
+    text
+}
+
+/// Where identity files are kept for `scope`. Git says where its config is; with no
+/// config yet there is nothing to ask, so the usual place is used.
+fn identities_folder(scope: &Scope) -> Result<PathBuf, String> {
+    let directory = match config::config_directory(scope) {
+        Ok(directory) => directory,
+        Err(_) if matches!(scope, Scope::Global) => config::home_directory()
+            .map(|home| home.join(".config").join("git"))
+            .ok_or("There is no home folder to keep identities in.")?,
+        Err(message) => return Err(message),
+    };
+    Ok(directory.join(FOLDER_NAME))
+}
+
+fn identity_file(scope: &Scope, id: &str) -> Result<PathBuf, String> {
+    if id.is_empty() || id.contains(['/', '\\']) || id.contains("..") {
+        return Err("That isn't an identity.".to_owned());
+    }
+    Ok(identities_folder(scope)?.join(format!("{id}.{EXTENSION}")))
+}
+
+/// "Work Laptop" becomes "work-laptop".
+fn slug(label: &str) -> String {
+    let mut slug = String::new();
+    for c in label.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    let slug: String = slug.trim_matches('-').chars().take(60).collect();
+    if slug.is_empty() {
+        "identity".to_owned()
+    } else {
+        slug
+    }
+}
+
+/// "work-laptop" read as words: "Work laptop". For files not made here, which have no label.
+fn humanise(id: &str) -> String {
+    let words = id.replace(['-', '_'], " ");
+    let mut chars = words.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+        .unwrap_or_default()
+}
+
+/// Reads the default, the identities and the rules of `scope`.
+pub fn book(scope: &Scope) -> Result<Book, String> {
     let values = config::read(scope)?;
+
     let mut found: Vec<(Match, String)> = Vec::new();
     for (key, path) in values.iter() {
         let Some(condition) = key
@@ -177,84 +309,243 @@ pub fn list(scope: &Scope) -> Result<Vec<Identity>, String> {
         }
     }
     // The extra conditions of a host share its file, and belong to it.
-    let hosts: Vec<String> = found
+    let extras: Vec<(String, String)> = found
         .iter()
         .filter(|(matcher, _)| matches!(matcher, Match::Host(_)))
-        .map(|(_, path)| path.clone())
+        .flat_map(|(matcher, path)| {
+            let extras = matcher.conditions().into_iter().skip(1);
+            extras
+                .map(|condition| (condition, path.clone()))
+                .collect::<Vec<_>>()
+        })
         .collect();
-    found.retain(|(matcher, path)| !(matches!(matcher, Match::Remote(_)) && hosts.contains(path)));
+    found.retain(|(matcher, path)| {
+        let own = (matcher.conditions().swap_remove(0), path.clone());
+        !(matches!(matcher, Match::Remote(_)) && extras.contains(&own))
+    });
+    let rules: Vec<Rule> = found
+        .into_iter()
+        .filter_map(|(matcher, path)| id_of(&path).map(|identity| Rule { matcher, identity }))
+        .collect();
 
     let mut identities = Vec::new();
-    for (matcher, path) in found {
-        let file = resolve(&config::config_directory(scope)?, &path);
-        let own = config::read(&Scope::File(file))?;
-        let text = |key: &str| own.get(key).unwrap_or("").to_owned();
-        identities.push(Identity {
-            matcher,
-            name: text("user.name"),
-            email: text("user.email"),
-            signing_key: text("user.signingkey"),
-        });
+    if let Ok(entries) = std::fs::read_dir(identities_folder(scope)?) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(id) = path
+                .extension()
+                .is_some_and(|ext| ext == EXTENSION)
+                .then(|| path.file_stem().and_then(|s| s.to_str()).map(str::to_owned))
+                .flatten()
+            else {
+                continue;
+            };
+            let own = config::read(&Scope::File(path))?;
+            // A file from before identities had labels is named after what it matched.
+            let label = own
+                .get("gitclient.label")
+                .map(str::trim)
+                .filter(|label| !label.is_empty())
+                .map(str::to_owned)
+                .or_else(|| {
+                    rules
+                        .iter()
+                        .find(|rule| rule.identity == id)
+                        .map(|rule| rule.matcher.pattern().to_owned())
+                })
+                .unwrap_or_else(|| humanise(&id));
+            identities.push(Identity {
+                id,
+                label,
+                profile: Profile::from_values(&own),
+            });
+        }
     }
-    Ok(identities)
+    identities.sort_by_key(|identity| (identity.label.to_lowercase(), identity.id.clone()));
+    let rules = rules
+        .into_iter()
+        .filter(|rule| identities.iter().any(|i| i.id == rule.identity))
+        .collect();
+
+    Ok(Book {
+        default: Profile::from_values(&values),
+        identities,
+        rules,
+    })
 }
 
-/// Adds the identity, or changes the one for the same match.
-pub fn save(scope: &Scope, identity: &Identity) -> Result<(), String> {
-    let matcher = identity.matcher.tidy();
+/// Saves `identity`, making a new one when its id is empty. Returns the id.
+pub fn save_identity(scope: &Scope, identity: &Identity) -> Result<String, String> {
+    let label = identity.label.trim();
+    if label.is_empty() {
+        return Err("Give the identity a name, like Work or Personal.".to_owned());
+    }
+    let profile = identity.profile.trimmed();
+    if profile.is_empty() {
+        return Err("Give the identity a name or an email.".to_owned());
+    }
+    let folder = identities_folder(scope)?;
+    let id = if identity.id.is_empty() {
+        let base = slug(label);
+        let mut id = base.clone();
+        let mut number = 2;
+        while folder.join(format!("{id}.{EXTENSION}")).exists() {
+            id = format!("{base}-{number}");
+            number += 1;
+        }
+        id
+    } else {
+        identity.id.clone()
+    };
+    let file = identity_file(scope, &id)?;
+    std::fs::create_dir_all(&folder)
+        .map_err(|error| format!("Couldn't make {}: {error}", folder.display()))?;
+    let file = Scope::File(file);
+    config::set(&file, "user.name", &profile.name)?;
+    config::set(&file, "user.email", &profile.email)?;
+    config::set(&file, "user.signingkey", &profile.signing_key)?;
+    config::set(&file, "gitclient.label", label)?;
+    Ok(id)
+}
+
+/// Deletes an identity and the rules that picked it. A repository pinned to it falls
+/// back to its rules, since git skips an include whose file isn't there.
+pub fn delete_identity(scope: &Scope, id: &str) -> Result<(), String> {
+    let file = identity_file(scope, id)?;
+    for rule in book(scope)?.rules_for(id) {
+        remove_rule(scope, &rule.matcher)?;
+    }
+    match std::fs::remove_file(&file) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Couldn't delete {}: {error}", file.display())),
+    }
+}
+
+/// Saves the default: the global `user.*`.
+pub fn save_default(scope: &Scope, profile: &Profile) -> Result<(), String> {
+    let profile = profile.trimmed();
+    config::set(scope, "user.name", &profile.name)?;
+    config::set(scope, "user.email", &profile.email)?;
+    config::set(scope, "user.signingkey", &profile.signing_key)
+}
+
+/// Picks identity `id` for everything `matcher` matches, replacing any other that did.
+pub fn add_rule(scope: &Scope, id: &str, matcher: &Match) -> Result<(), String> {
+    let matcher = matcher.tidy();
     if let Some(problem) = matcher.problem() {
         return Err(problem.to_owned());
     }
-    let (name, email, key) = (
-        identity.name.trim(),
-        identity.email.trim(),
-        identity.signing_key.trim(),
-    );
-    if name.is_empty() && email.is_empty() && key.is_empty() {
-        return Err("Give the identity a name or an email.".to_owned());
+    let file = identity_file(scope, id)?;
+    if !file.exists() {
+        return Err("That identity no longer exists.".to_owned());
     }
-
-    let values = config::read(scope)?;
-    let path = values.get(&include_key(&matcher.condition())).map_or_else(
-        || format!("{FOLDER_NAME}/{}", matcher.file_name()),
-        str::to_owned,
-    );
-    // Writing the include first makes git create the config where it wants it, so that
-    // the folder to put the identity in can then be asked for.
+    let value = include_value(&file);
     for condition in matcher.conditions() {
-        config::set(scope, &include_key(&condition), &path)?;
+        config::set(scope, &include_key(&condition), &value)?;
     }
-    let file = resolve(&config::config_directory(scope)?, &path);
-    if let Some(folder) = file.parent() {
-        std::fs::create_dir_all(folder)
-            .map_err(|error| format!("Couldn't make {}: {error}", folder.display()))?;
-    }
-    let file = Scope::File(file);
-    config::set(&file, "user.name", name)?;
-    config::set(&file, "user.email", email)?;
-    config::set(&file, "user.signingkey", key)
+    Ok(())
 }
 
-/// Removes the identity for `matcher`, and its file if this app made it.
-pub fn remove(scope: &Scope, matcher: &Match) -> Result<(), String> {
+/// Stops `matcher` picking an identity.
+pub fn remove_rule(scope: &Scope, matcher: &Match) -> Result<(), String> {
     let matcher = matcher.tidy();
     let values = config::read(scope)?;
-    let path = values
-        .get(&include_key(&matcher.condition()))
-        .map(str::to_owned);
     for condition in matcher.conditions() {
         if values.is_set(&include_key(&condition)) {
             scope.run(&["--remove-section", &format!("includeIf.{condition}")])?;
         }
     }
-    let ours = format!("{FOLDER_NAME}/{}", matcher.file_name());
-    if path.as_deref() == Some(ours.as_str()) {
-        let file = resolve(&config::config_directory(scope)?, &ours);
-        match std::fs::remove_file(&file) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(format!("Couldn't delete {}: {error}", file.display())),
+    Ok(())
+}
+
+/// What a repository should use.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Choice {
+    /// Whatever the rules say, else the default.
+    Automatic,
+    Identity(String),
+}
+
+/// What a repository uses, and why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RepoState {
+    /// The identity this repository's own config points at.
+    pub pinned: Option<String>,
+    /// A name and email set in the repository's own config, outside any identity.
+    pub own: Option<Profile>,
+    pub committing: Committing,
+}
+
+pub fn repo_state(repo: &Path, book: &Book) -> Result<RepoState, String> {
+    let local = Scope::Repository(repo.to_owned());
+    let values = config::read(&local)?;
+    let pinned = values
+        .get_all("include.path")
+        .into_iter()
+        .rev()
+        .filter_map(id_of)
+        .find(|id| book.identity(id).is_some());
+    let own = Some(Profile::from_values(&values)).filter(|own| !own.is_empty());
+    let sources = config::read_sources(&local)?;
+    Ok(RepoState {
+        committing: Committing::from_sources(&sources, book, pinned.as_deref()),
+        pinned,
+        own,
+    })
+}
+
+/// A value to match literally in `git config --unset name <pattern>`.
+fn literal(text: &str) -> String {
+    let mut pattern = String::from("^");
+    for c in text.chars() {
+        if "\\.[]{}()*+?^$|".contains(c) {
+            pattern.push('\\');
         }
+        pattern.push(c);
+    }
+    pattern.push('$');
+    pattern
+}
+
+/// Makes `repo` use `choice`. A name and email the repository had of its own are kept
+/// as an identity first, unless one already is that, since picking would replace them.
+pub fn pick(global: &Scope, repo: &Path, choice: &Choice) -> Result<(), String> {
+    let local = Scope::Repository(repo.to_owned());
+    let values = config::read(&local)?;
+    let book = book(global)?;
+    if let Choice::Identity(id) = choice
+        && book.identity(id).is_none()
+    {
+        return Err("That identity no longer exists.".to_owned());
+    }
+
+    let own = Profile::from_values(&values);
+    if !own.is_empty() && !book.has_profile(&own) {
+        let label = repo
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("This repository");
+        save_identity(
+            global,
+            &Identity {
+                id: String::new(),
+                label: label.to_owned(),
+                profile: own,
+            },
+        )?;
+    }
+    for key in USER_KEYS {
+        config::unset(&local, key)?;
+    }
+    for path in values.get_all("include.path") {
+        if id_of(path).is_some() {
+            local.run(&["--unset", "include.path", &literal(path)])?;
+        }
+    }
+    if let Choice::Identity(id) = choice {
+        let value = include_value(&identity_file(global, id)?);
+        local.run(&["--add", "include.path", &value])?;
     }
     Ok(())
 }
@@ -269,10 +560,12 @@ pub struct Committing {
 }
 
 impl Committing {
-    pub fn from_sources(sources: &Sources, identities: &[Identity]) -> Committing {
+    pub fn from_sources(sources: &Sources, book: &Book, pinned: Option<&str>) -> Committing {
         let name = sources.get("user.name");
         let email = sources.get("user.email");
-        let place = |source: Option<&config::Source>| source.map(|s| origin_words(s, identities));
+        let place = |source: Option<&config::Source>| {
+            source.map(|source| origin_words(source, book, pinned))
+        };
         let from = match (place(name), place(email)) {
             (Some(name), Some(email)) if name != email => {
                 format!("{name} for the name and {email} for the email")
@@ -305,38 +598,33 @@ impl Committing {
     }
 }
 
-/// Who commits made in `repo` are attributed to. `global` is where identities are kept.
-pub fn committing_as(repo: &Path, global: &Scope) -> Result<Committing, String> {
-    let sources = config::read_sources(&Scope::Repository(repo.to_owned()))?;
-    // Without a readable list of identities, the answer is still right, just less specific.
-    let identities = list(global).unwrap_or_default();
-    Ok(Committing::from_sources(&sources, &identities))
-}
-
-fn origin_words(source: &config::Source, identities: &[Identity]) -> String {
-    let file = source
+fn origin_words(source: &config::Source, book: &Book, pinned: Option<&str>) -> String {
+    let identity = source
         .origin
         .strip_prefix("file:")
-        .map(Path::new)
-        .filter(|_| source.scope != "local");
-    if let Some(file) = file {
-        let in_identities = file
-            .parent()
-            .and_then(Path::file_name)
-            .is_some_and(|folder| folder == FOLDER_NAME);
-        let name = file.file_name().and_then(|name| name.to_str());
-        if in_identities
-            && let Some(identity) = identities
-                .iter()
-                .find(|identity| Some(identity.matcher.file_name().as_str()) == name)
-        {
-            return format!("the identity for {}", identity.matcher.describe());
+        .and_then(id_of)
+        .and_then(|id| book.identity(&id));
+    if let Some(identity) = identity {
+        let label = &identity.label;
+        if pinned == Some(identity.id.as_str()) {
+            return format!("the identity {label}, chosen for this repository");
         }
+        let mut rules = book.rules_for(&identity.id);
+        return match (rules.next(), rules.next()) {
+            (Some(rule), None) => {
+                format!(
+                    "the identity {label}, because of {}",
+                    rule.matcher.describe()
+                )
+            }
+            (Some(_), Some(_)) => format!("the identity {label}, because of one of its rules"),
+            _ => format!("the identity {label}"),
+        };
     }
     match source.scope.as_str() {
         "system" => "the system config",
         "global" => "your global config",
-        "local" => "this repository's config",
+        "local" => "this repository's own config",
         "worktree" => "this worktree's config",
         _ => "the command line",
     }
@@ -354,222 +642,424 @@ mod tests {
         (dir, scope)
     }
 
-    fn work() -> Identity {
-        Identity {
-            matcher: Match::Host("work".into()),
-            name: "Ada Lovelace".into(),
-            email: "ada@work.example".into(),
+    fn profile(name: &str, email: &str) -> Profile {
+        Profile {
+            name: name.into(),
+            email: email.into(),
             signing_key: String::new(),
         }
     }
 
-    #[test]
-    fn identities_round_trip_and_keep_their_case() {
-        let (_dir, scope) = scope();
-        let folder = Identity {
-            matcher: Match::Folder("~/Work".into()),
-            ..work()
-        };
-        save(&scope, &work()).unwrap();
-        save(&scope, &folder).unwrap();
+    fn work() -> Identity {
+        Identity {
+            id: String::new(),
+            label: "Work".into(),
+            profile: profile("Ada Lovelace", "ada@work.example"),
+        }
+    }
 
-        let listed = list(&scope).unwrap();
-        assert_eq!(listed.len(), 2);
-        assert_eq!(listed[0], work());
-        assert_eq!(listed[1].matcher, Match::Folder("~/Work/".into()));
-        assert_eq!(listed[1].email, "ada@work.example");
+    /// Runs git in `dir`, with `scope`'s file as the global config, so that git itself
+    /// decides what the includes and conditions mean.
+    fn ask(dir: &Path, scope: &Scope, args: &[&str]) -> String {
+        let Scope::File(file) = scope else { panic!() };
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .env("GIT_CONFIG_GLOBAL", file)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .args(args)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    /// A new repository, not the shared fixture, which keeps its own email in the
+    /// repository and so would rightly win over any include.
+    fn repo(scope: &Scope, remote: Option<&str>) -> TempDir {
+        let repo = TempDir::new().unwrap();
+        ask(repo.path(), scope, &["init", "-q"]);
+        if let Some(url) = remote {
+            ask(repo.path(), scope, &["remote", "add", "origin", url]);
+        }
+        repo
+    }
+
+    fn email_in(repo: &TempDir, scope: &Scope) -> String {
+        ask(repo.path(), scope, &["config", "user.email"])
     }
 
     #[test]
-    fn saving_again_changes_the_identity_instead_of_adding_one() {
+    fn identities_are_saved_by_label_and_listed_in_label_order() {
+        let (dir, scope) = scope();
+        let id = save_identity(&scope, &work()).unwrap();
+        assert_eq!(id, "work");
+        let personal = Identity {
+            label: "Personal".into(),
+            profile: profile("Ada", "ada@home.example"),
+            ..work()
+        };
+        save_identity(&scope, &personal).unwrap();
+        // The same label again gets a file of its own.
+        assert_eq!(save_identity(&scope, &work()).unwrap(), "work-2");
+
+        let book = book(&scope).unwrap();
+        let labels: Vec<_> = book.identities.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(labels, ["Personal", "Work", "Work"]);
+        assert_eq!(book.identity("work").unwrap().profile, work().profile);
+        assert!(dir.path().join("identities/work.gitconfig").exists());
+    }
+
+    #[test]
+    fn saving_an_existing_identity_changes_it_in_place() {
         let (_dir, scope) = scope();
-        save(&scope, &work()).unwrap();
-        save(
+        let id = save_identity(&scope, &work()).unwrap();
+        let renamed = Identity {
+            id: id.clone(),
+            label: "Day job".into(),
+            profile: Profile {
+                signing_key: "ABC".into(),
+                ..profile("Ada", "new@work.example")
+            },
+        };
+        assert_eq!(save_identity(&scope, &renamed).unwrap(), id);
+        let book = book(&scope).unwrap();
+        assert_eq!(book.identities.len(), 1);
+        assert_eq!(book.identities[0].label, "Day job");
+        assert_eq!(book.identities[0].profile.email, "new@work.example");
+        assert_eq!(book.identities[0].profile.signing_key, "ABC");
+    }
+
+    #[test]
+    fn an_identity_needs_a_label_and_something_to_say() {
+        let (_dir, scope) = scope();
+        let blank = Profile::default();
+        let no_label = Identity {
+            label: "  ".into(),
+            ..work()
+        };
+        let empty = Identity {
+            profile: blank,
+            ..work()
+        };
+        assert!(save_identity(&scope, &no_label).is_err());
+        assert!(save_identity(&scope, &empty).is_err());
+        assert!(book(&scope).unwrap().identities.is_empty());
+    }
+
+    #[test]
+    fn the_default_is_the_global_user_and_is_edited_like_an_identity() {
+        let (_dir, scope) = scope();
+        save_default(&scope, &profile("Pretext", "p@example.com")).unwrap();
+        assert_eq!(
+            book(&scope).unwrap().default,
+            profile("Pretext", "p@example.com")
+        );
+        save_default(&scope, &profile("Pretext", "")).unwrap();
+        assert_eq!(book(&scope).unwrap().default, profile("Pretext", ""));
+    }
+
+    #[test]
+    fn one_identity_can_have_many_rules_and_git_applies_each() {
+        let (dir, scope) = scope();
+        let id = save_identity(&scope, &work()).unwrap();
+        add_rule(&scope, &id, &Match::Host("work".into())).unwrap();
+        add_rule(&scope, &id, &Match::Host("github-work".into())).unwrap();
+        let folder = dir.path().join("Work Stuff");
+        std::fs::create_dir_all(&folder).unwrap();
+        let folder_text = folder.display().to_string().replace('\\', "/");
+        add_rule(&scope, &id, &Match::Folder(folder_text)).unwrap();
+
+        let book = book(&scope).unwrap();
+        assert_eq!(book.rules.len(), 3, "{:?}", book.rules);
+        assert!(book.rules.iter().all(|rule| rule.identity == "work"));
+
+        for url in [
+            "git@work:team/app.git",
+            "ssh://git@github-work/team/app.git",
+        ] {
+            let repo = repo(&scope, Some(url));
+            assert_eq!(email_in(&repo, &scope), "ada@work.example", "{url}");
+        }
+        let repo_elsewhere = repo(&scope, Some("git@home:me/app.git"));
+        assert_eq!(email_in(&repo_elsewhere, &scope), "");
+        let inside = folder.join("app");
+        std::fs::create_dir_all(&inside).unwrap();
+        ask(&inside, &scope, &["init", "-q"]);
+        assert_eq!(
+            ask(&inside, &scope, &["config", "user.email"]),
+            "ada@work.example"
+        );
+    }
+
+    #[test]
+    fn a_rule_is_handed_to_another_identity_by_adding_it_there() {
+        let (_dir, scope) = scope();
+        let one = save_identity(&scope, &work()).unwrap();
+        let two = save_identity(
             &scope,
             &Identity {
-                email: "new@work.example".into(),
-                signing_key: "ABC".into(),
+                label: "Other".into(),
+                profile: profile("Ada", "other@example.com"),
                 ..work()
             },
         )
         .unwrap();
-        let listed = list(&scope).unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].email, "new@work.example");
-        assert_eq!(listed[0].signing_key, "ABC");
+        add_rule(&scope, &one, &Match::Host("work".into())).unwrap();
+        add_rule(&scope, &two, &Match::Host("work".into())).unwrap();
+        let book = book(&scope).unwrap();
+        assert_eq!(book.rules.len(), 1);
+        assert_eq!(book.rules[0].identity, "other");
+        let repo = repo(&scope, Some("git@work:team/app.git"));
+        assert_eq!(email_in(&repo, &scope), "other@example.com");
     }
 
     #[test]
-    fn removing_deletes_the_include_and_its_file() {
+    fn rules_are_validated_and_removed_whole() {
         let (dir, scope) = scope();
-        save(&scope, &work()).unwrap();
-        let folder = dir.path().join(FOLDER_NAME);
-        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 1);
-
-        remove(&scope, &work().matcher).unwrap();
-        assert!(list(&scope).unwrap().is_empty());
-        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 0);
-        let config = std::fs::read_to_string(dir.path().join("config")).unwrap();
-        assert!(!config.contains("includeIf"), "{config}");
-    }
-
-    #[test]
-    fn an_identity_needs_a_match_and_something_to_say() {
-        let (_dir, scope) = scope();
-        let blank = |matcher| Identity {
-            matcher,
-            name: String::new(),
-            email: String::new(),
-            signing_key: String::new(),
-        };
-        assert!(save(&scope, &blank(Match::Host("x".into()))).is_err());
-        for matcher in [
+        let id = save_identity(&scope, &work()).unwrap();
+        for bad in [
             Match::Remote("  ".into()),
             Match::Host(String::new()),
             Match::Host("git@work".into()),
             Match::Host("a/b".into()),
             Match::Folder(" ".into()),
         ] {
-            let identity = Identity {
-                matcher: matcher.clone(),
-                ..work()
-            };
-            assert!(save(&scope, &identity).is_err(), "{matcher:?}");
+            assert!(add_rule(&scope, &id, &bad).is_err(), "{bad:?}");
         }
-        assert!(list(&scope).unwrap().is_empty());
-    }
+        assert!(add_rule(&scope, "nobody", &Match::Host("x".into())).is_err());
+        assert!(add_rule(&scope, "../x", &Match::Host("x".into())).is_err());
 
-    /// Asks git, in a new repository with `remote`, what email the identities give.
-    fn email_for(scope: &Scope, remote: Option<&str>) -> String {
-        // Not the shared fixture, which keeps its own email in the repository and so
-        // would rightly win over any include.
-        let repo = TempDir::new().unwrap();
-        let Scope::File(file) = scope else { panic!() };
-        let ask = |args: &[&str]| {
-            let output = std::process::Command::new("git")
-                .arg("-C")
-                .arg(repo.path())
-                // Point git's global config at the file, so that git itself decides
-                // whether the condition applies.
-                .env("GIT_CONFIG_GLOBAL", file)
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .args(args)
-                .output()
-                .unwrap();
-            String::from_utf8_lossy(&output.stdout).trim().to_owned()
-        };
-        ask(&["init", "-q"]);
-        if let Some(url) = remote {
-            ask(&["remote", "add", "origin", url]);
-        }
-        ask(&["config", "user.email"])
+        add_rule(&scope, &id, &Match::Host("work".into())).unwrap();
+        add_rule(&scope, &id, &Match::Remote("https://example.com/**".into())).unwrap();
+        assert_eq!(book(&scope).unwrap().rules.len(), 2);
+
+        remove_rule(&scope, &Match::Host("work".into())).unwrap();
+        let config = std::fs::read_to_string(dir.path().join("config")).unwrap();
+        assert!(!config.contains("@work"), "{config}");
+        assert_eq!(book(&scope).unwrap().rules.len(), 1);
+        let repo = repo(&scope, Some("git@work:team/app.git"));
+        assert_eq!(email_in(&repo, &scope), "");
     }
 
     #[test]
-    fn a_host_matches_every_way_of_writing_its_remote() {
-        let (_dir, scope) = scope();
-        save(&scope, &work()).unwrap();
-        for url in [
-            "git@work:team/app.git",
-            "git@work:app.git",
-            "work:team/app.git",
-            "ssh://git@work/team/app.git",
-            "ssh://work/team/app.git",
-        ] {
-            let expected = if url.starts_with("work:") {
-                // No user at all: not something `*@` can match, and rare.
-                ""
-            } else {
-                "ada@work.example"
-            };
-            assert_eq!(email_for(&scope, Some(url)), expected, "{url}");
-        }
-        for url in [
-            "git@work2:team/app.git",
-            "git@home:me/app.git",
-            "https://work/team/app.git",
-        ] {
-            assert_eq!(email_for(&scope, Some(url)), "", "{url}");
-        }
-        assert_eq!(email_for(&scope, None), "", "no remote, no match");
-    }
-
-    #[test]
-    fn a_raw_remote_pattern_and_a_folder_work_too() {
+    fn deleting_an_identity_removes_its_file_and_its_rules() {
         let (dir, scope) = scope();
-        let pattern = Identity {
-            matcher: Match::Remote("https://example.com/**".into()),
-            ..work()
-        };
-        save(&scope, &pattern).unwrap();
-        assert_eq!(
-            email_for(&scope, Some("https://example.com/me/app")),
-            "ada@work.example"
-        );
-        assert_eq!(email_for(&scope, Some("https://other.org/me/app")), "");
-
-        // Only one entry for each, whatever the number of conditions behind it.
-        save(&scope, &work()).unwrap();
-        assert_eq!(list(&scope).unwrap().len(), 2);
-
-        let folder = dir.path().join("Work Stuff");
-        let folder_identity = Identity {
-            matcher: Match::Folder(folder.display().to_string().replace('\\', "/")),
-            ..work()
-        };
-        save(&scope, &folder_identity).unwrap();
-        assert_eq!(list(&scope).unwrap().len(), 3);
-    }
-
-    #[test]
-    fn removing_a_host_removes_all_of_its_conditions() {
-        let (dir, scope) = scope();
-        save(&scope, &work()).unwrap();
-        remove(&scope, &work().matcher).unwrap();
+        let id = save_identity(&scope, &work()).unwrap();
+        add_rule(&scope, &id, &Match::Host("work".into())).unwrap();
+        delete_identity(&scope, &id).unwrap();
+        let book = book(&scope).unwrap();
+        assert!(book.identities.is_empty() && book.rules.is_empty());
+        assert!(!dir.path().join("identities/work.gitconfig").exists());
         let config = std::fs::read_to_string(dir.path().join("config")).unwrap();
         assert!(!config.contains("includeIf"), "{config}");
-        assert_eq!(email_for(&scope, Some("git@work:team/app.git")), "");
+        assert!(delete_identity(&scope, "../config").is_err());
     }
 
     #[test]
-    fn committing_says_where_the_name_comes_from() {
+    fn identities_from_before_labels_still_show_with_their_rule() {
         let (dir, scope) = scope();
-        save(&scope, &work()).unwrap();
-        let identities = list(&scope).unwrap();
-        let file = dir
-            .path()
-            .join(FOLDER_NAME)
-            .join(work().matcher.file_name());
-        let config = dir.path().join("config");
+        std::fs::create_dir_all(dir.path().join("identities")).unwrap();
+        std::fs::write(
+            dir.path()
+                .join("identities/hasconfig-remote-url-test.gitconfig"),
+            "[user]\n\temail = old@example.com\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("config"),
+            "[includeIf \"hasconfig:remote.*.url:*@test:*\"]\n\
+             \tpath = identities/hasconfig-remote-url-test.gitconfig\n\
+             [includeIf \"hasconfig:remote.*.url:*@test:*/**\"]\n\
+             \tpath = identities/hasconfig-remote-url-test.gitconfig\n",
+        )
+        .unwrap();
+        let book = book(&scope).unwrap();
+        assert_eq!(book.identities.len(), 1);
+        assert_eq!(book.identities[0].label, "test", "named after its rule");
+        assert_eq!(book.rules.len(), 1, "the host's extra conditions fold in");
+        assert_eq!(book.rules[0].matcher, Match::Host("test".into()));
+    }
+
+    #[test]
+    fn pinning_picks_an_identity_in_one_repository_over_the_rules() {
+        let (_dir, scope) = scope();
+        let work_id = save_identity(&scope, &work()).unwrap();
+        let home_id = save_identity(
+            &scope,
+            &Identity {
+                label: "Home".into(),
+                profile: profile("Ada", "ada@home.example"),
+                ..work()
+            },
+        )
+        .unwrap();
+        add_rule(&scope, &work_id, &Match::Host("work".into())).unwrap();
+        let repo = repo(&scope, Some("git@work:team/app.git"));
+        assert_eq!(email_in(&repo, &scope), "ada@work.example", "by its rule");
+
+        pick(&scope, repo.path(), &Choice::Identity(home_id.clone())).unwrap();
+        assert_eq!(email_in(&repo, &scope), "ada@home.example", "pinned wins");
+        let state = repo_state(repo.path(), &book(&scope).unwrap()).unwrap();
+        assert_eq!(state.pinned.as_deref(), Some("home"));
+        assert_eq!(state.own, None);
+
+        // Picking another replaces the pin instead of adding to it.
+        pick(&scope, repo.path(), &Choice::Identity(work_id)).unwrap();
+        assert_eq!(email_in(&repo, &scope), "ada@work.example");
+        let local = std::fs::read_to_string(repo.path().join(".git/config")).unwrap();
+        assert_eq!(local.matches("[include]").count(), 1, "{local}");
+        assert!(local.contains("identities/work.gitconfig"), "{local}");
+        assert!(!local.contains("home.gitconfig"), "{local}");
+
+        pick(&scope, repo.path(), &Choice::Automatic).unwrap();
+        let local = std::fs::read_to_string(repo.path().join(".git/config")).unwrap();
+        assert!(!local.contains("identities"), "{local}");
+        assert_eq!(
+            email_in(&repo, &scope),
+            "ada@work.example",
+            "the rule again"
+        );
+    }
+
+    #[test]
+    fn editing_an_identity_changes_every_repository_pinned_to_it() {
+        let (_dir, scope) = scope();
+        let id = save_identity(&scope, &work()).unwrap();
+        let (one, two) = (repo(&scope, None), repo(&scope, None));
+        for repo in [&one, &two] {
+            pick(&scope, repo.path(), &Choice::Identity(id.clone())).unwrap();
+        }
+        save_identity(
+            &scope,
+            &Identity {
+                id,
+                profile: profile("Ada", "changed@work.example"),
+                ..work()
+            },
+        )
+        .unwrap();
+        for repo in [&one, &two] {
+            assert_eq!(email_in(repo, &scope), "changed@work.example");
+        }
+    }
+
+    #[test]
+    fn a_repository_own_name_is_kept_as_an_identity_when_it_is_replaced() {
+        let (_dir, scope) = scope();
+        let other = save_identity(&scope, &work()).unwrap();
+        let repo = repo(&scope, None);
+        ask(repo.path(), &scope, &["config", "user.name", "Local Ada"]);
+        ask(
+            repo.path(),
+            &scope,
+            &["config", "user.email", "local@example.com"],
+        );
+        let state = repo_state(repo.path(), &book(&scope).unwrap()).unwrap();
+        assert_eq!(state.own, Some(profile("Local Ada", "local@example.com")));
+
+        pick(&scope, repo.path(), &Choice::Identity(other)).unwrap();
+        assert_eq!(email_in(&repo, &scope), "ada@work.example");
+        let book = book(&scope).unwrap();
+        let kept = book
+            .identities
+            .iter()
+            .find(|i| i.profile.email == "local@example.com")
+            .expect("the repository's own identity was kept");
+        assert!(kept.label.starts_with('.') || !kept.label.is_empty());
+
+        // Going back to it is one click, and doesn't keep it twice.
+        let kept_id = kept.id.clone();
+        pick(&scope, repo.path(), &Choice::Identity(kept_id)).unwrap();
+        assert_eq!(email_in(&repo, &scope), "local@example.com");
+        assert_eq!(book_len(&scope), 2);
+        pick(&scope, repo.path(), &Choice::Automatic).unwrap();
+        assert_eq!(book_len(&scope), 2);
+    }
+
+    fn book_len(scope: &Scope) -> usize {
+        book(scope).unwrap().identities.len()
+    }
+
+    #[test]
+    fn a_profile_the_default_already_is_is_not_kept_again() {
+        let (_dir, scope) = scope();
+        save_default(&scope, &profile("Pretext", "p@example.com")).unwrap();
+        let repo = repo(&scope, None);
+        ask(repo.path(), &scope, &["config", "user.name", "Pretext"]);
+        ask(
+            repo.path(),
+            &scope,
+            &["config", "user.email", "p@example.com"],
+        );
+        pick(&scope, repo.path(), &Choice::Automatic).unwrap();
+        assert_eq!(book_len(&scope), 0);
+        assert_eq!(email_in(&repo, &scope), "p@example.com");
+    }
+
+    #[test]
+    fn picking_a_missing_identity_fails_and_changes_nothing() {
+        let (_dir, scope) = scope();
+        let repo = repo(&scope, None);
+        ask(
+            repo.path(),
+            &scope,
+            &["config", "user.email", "keep@example.com"],
+        );
+        assert!(pick(&scope, repo.path(), &Choice::Identity("gone".into())).is_err());
+        assert_eq!(email_in(&repo, &scope), "keep@example.com");
+    }
+
+    #[test]
+    fn committing_says_which_identity_and_why() {
+        let (dir, scope) = scope();
+        let id = save_identity(&scope, &work()).unwrap();
+        add_rule(&scope, &id, &Match::Host("work".into())).unwrap();
+        let book = book(&scope).unwrap();
+        let file = dir.path().join("identities/work.gitconfig");
         let line = |scope: &str, origin: &Path, entry: &str| {
             format!("{scope}\0file:{}\0{entry}\0", origin.display())
         };
+        let config = dir.path().join("config");
         let output = [
             line("global", &config, "user.name\nPretext"),
             line("global", &file, "user.email\nada@work.example"),
         ]
         .concat();
-        let committing = Committing::from_sources(&config::parse_sources(&output), &identities);
-        assert_eq!(committing.name.as_deref(), Some("Pretext"));
-        assert_eq!(committing.email.as_deref(), Some("ada@work.example"));
+        let sources = config::parse_sources(&output);
+
+        let by_rule = Committing::from_sources(&sources, &book, None);
+        assert_eq!(by_rule.email.as_deref(), Some("ada@work.example"));
         assert_eq!(
-            committing.from,
-            "your global config for the name and the identity for the host work for the email"
+            by_rule.from,
+            "your global config for the name and the identity Work, because of the host work \
+             for the email"
+        );
+        let pinned = Committing::from_sources(&sources, &book, Some("work"));
+        assert!(
+            pinned.from.contains("chosen for this repository"),
+            "{}",
+            pinned.from
         );
     }
 
     #[test]
     fn with_nothing_set_the_sentence_says_commits_cannot_be_made() {
-        let none = Committing::from_sources(&Sources::default(), &[]);
+        let none = Committing::from_sources(&Sources::default(), &Book::default(), None);
         assert!(none.sentence().starts_with("No name or email"));
     }
 
     #[test]
-    fn identity_files_get_readable_unique_names() {
-        let a = Match::Host("work".into()).file_name();
-        let b = Match::Folder("~/work/".into()).file_name();
-        assert_eq!(a, "hasconfig-remote-url-work.gitconfig");
-        assert_ne!(a, b);
-        assert_ne!(a, Match::Host("work2".into()).file_name());
+    fn ids_and_labels_read_well() {
+        assert_eq!(slug("Work Laptop!"), "work-laptop");
+        assert_eq!(slug("  "), "identity");
+        assert_eq!(humanise("work-laptop"), "Work laptop");
+        assert_eq!(
+            id_of("~/.config/git/identities/work.gitconfig").as_deref(),
+            Some("work")
+        );
+        assert_eq!(id_of("identities/work.gitconfig").as_deref(), Some("work"));
+        assert_eq!(id_of("/etc/gitconfig.d/other.gitconfig"), None);
+        assert_eq!(literal("~/a.b"), "^~/a\\.b$");
+        assert_eq!(profile("Ada", "a@x").display(), "Ada <a@x>");
     }
 }

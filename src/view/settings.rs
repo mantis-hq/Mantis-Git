@@ -9,7 +9,7 @@ use super::parts::{checkbox, header_bar, panel_row, section_label, title};
 use super::repository_name;
 use crate::theme::{selected_row, tokens};
 use gitclient_core::config::{self, Kind, Scope, Setting, Sources, Values, Version};
-use gitclient_core::identity::{self, Committing, Identity, Match};
+use gitclient_core::identity::{self, Book, Choice, Identity, Match, Profile, RepoState};
 use gitclient_core::ssh::{self, Host, RemoteHost};
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -155,19 +155,21 @@ struct Snapshot {
     git: Result<Version, String>,
     values: Result<Values, String>,
     sources: Sources,
-    identities: Vec<Identity>,
-    committing: Option<Result<Committing, String>>,
+    book: Book,
+    repo_state: Option<Result<RepoState, String>>,
 }
 
 fn snapshot(base: Scope, active: Scope, repo: Option<PathBuf>) -> Snapshot {
+    let book = identity::book(&base).unwrap_or_default();
+    let repo_state = repo
+        .as_deref()
+        .map(|repo| identity::repo_state(repo, &book));
     Snapshot {
         git: config::git_version(),
         values: config::read(&active),
         sources: config::read_sources(&active).unwrap_or_default(),
-        identities: identity::list(&base).unwrap_or_default(),
-        committing: repo
-            .as_deref()
-            .map(|repo| identity::committing_as(repo, &base)),
+        book,
+        repo_state,
     }
 }
 
@@ -205,12 +207,24 @@ struct AliasRow {
     _events: Subscription,
 }
 
+/// The default, or one identity, with the inputs that edit it.
 struct IdentityRow {
-    matcher: Match,
+    /// `None` for the default.
+    id: Option<String>,
+    label: Entity<InputState>,
     name: Entity<InputState>,
     email: Entity<InputState>,
     key: Entity<InputState>,
+    /// What a new rule for this identity matches on.
+    rule: Entity<InputState>,
+    rule_kind: NewKind,
+    adding_rule: bool,
     _events: Vec<Subscription>,
+}
+
+/// Names a row's inputs in `dirty`, which says whether the user typed in them.
+fn identity_key(id: Option<&str>) -> String {
+    format!("identity:{}", id.unwrap_or("default"))
 }
 
 pub struct Settings {
@@ -224,20 +238,21 @@ pub struct Settings {
     values: Option<Values>,
     sources: Sources,
     load_error: Option<String>,
-    identities: Vec<Identity>,
-    committing: Option<Result<Committing, String>>,
+    book: Book,
+    repo_state: Option<Result<RepoState, String>>,
     ssh: Option<SshInfo>,
     fields: Vec<TextField>,
     aliases: Vec<AliasRow>,
     identity_rows: Vec<IdentityRow>,
     new_name: Entity<InputState>,
     new_command: Entity<InputState>,
-    new_kind: NewKind,
-    new_match: Entity<InputState>,
+    new_label: Entity<InputState>,
     new_identity_name: Entity<InputState>,
     new_identity_email: Entity<InputState>,
     new_identity_key: Entity<InputState>,
     feedback: Feedback,
+    /// Inputs the user has typed in since they were last saved or filled in.
+    dirty: std::collections::HashSet<String>,
     _new_inputs: Vec<Subscription>,
 }
 
@@ -271,7 +286,7 @@ impl Settings {
                     &input,
                     window,
                     move |this, _, event: &InputEvent, window, cx| {
-                        if commits(event) {
+                        if this.edited(&format!("text:{key}"), event) {
                             this.commit_text(key, window, cx);
                         }
                     },
@@ -286,7 +301,7 @@ impl Settings {
 
         let new_name = field("co", "", window, cx);
         let new_command = field("checkout", "", window, cx);
-        let new_match = field(NewKind::Host.placeholder(), "", window, cx);
+        let new_label = field("Work", "", window, cx);
         let new_identity_name = field("Name", "", window, cx);
         let new_identity_email = field("Email", "", window, cx);
         let new_identity_key = field("Signing key (optional)", "", window, cx);
@@ -304,7 +319,7 @@ impl Settings {
             ));
         }
         for input in [
-            &new_match,
+            &new_label,
             &new_identity_name,
             &new_identity_email,
             &new_identity_key,
@@ -330,20 +345,20 @@ impl Settings {
             values: None,
             sources: Sources::default(),
             load_error: None,
-            identities: Vec::new(),
-            committing: None,
+            book: Book::default(),
+            repo_state: None,
             ssh: None,
             fields,
             aliases: Vec::new(),
             identity_rows: Vec::new(),
             new_name,
             new_command,
-            new_kind: NewKind::Host,
-            new_match,
+            new_label,
             new_identity_name,
             new_identity_email,
             new_identity_key,
             feedback: Feedback::None,
+            dirty: Default::default(),
             _new_inputs: new_inputs,
         };
         this.load(window, cx);
@@ -476,8 +491,8 @@ impl Settings {
     fn apply(&mut self, snapshot: Snapshot, window: &mut Window, cx: &mut Context<Self>) {
         self.git = Some(snapshot.git);
         self.sources = snapshot.sources;
-        self.committing = snapshot.committing;
-        self.apply_identities(snapshot.identities, window, cx);
+        self.repo_state = snapshot.repo_state;
+        self.apply_identities(snapshot.book, window, cx);
         match snapshot.values {
             Ok(values) => {
                 self.apply_values(values, window, cx);
@@ -491,7 +506,8 @@ impl Settings {
     fn apply_values(&mut self, values: Values, window: &mut Window, cx: &mut Context<Self>) {
         for field in &self.fields {
             let shown = values.get(field.key).unwrap_or("").to_owned();
-            sync(&field.input, shown, window, cx);
+            let typed_in = self.dirty.contains(&format!("text:{}", field.key));
+            sync(&field.input, shown, typed_in, window, cx);
         }
 
         let wanted = values.aliases();
@@ -499,7 +515,10 @@ impl Settings {
             .retain(|row| wanted.iter().any(|alias| alias.name == row.name));
         for alias in wanted {
             match self.aliases.iter().find(|row| row.name == alias.name) {
-                Some(row) => sync(&row.input, alias.command, window, cx),
+                Some(row) => {
+                    let typed_in = self.dirty.contains(&format!("alias:{}", row.name));
+                    sync(&row.input, alias.command, typed_in, window, cx);
+                }
                 None => {
                     let input = field("What git runs", &alias.command, window, cx);
                     let name = alias.name.clone();
@@ -507,7 +526,7 @@ impl Settings {
                         &input,
                         window,
                         move |this, _, event: &InputEvent, window, cx| {
-                            if commits(event) {
+                            if this.edited(&format!("alias:{name}"), event) {
                                 this.commit_alias(&name, window, cx);
                             }
                         },
@@ -524,53 +543,80 @@ impl Settings {
         self.values = Some(values);
     }
 
-    fn apply_identities(
-        &mut self,
-        identities: Vec<Identity>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.identity_rows
-            .retain(|row| identities.iter().any(|i| i.matcher == row.matcher));
-        for identity in &identities {
-            match self
-                .identity_rows
-                .iter()
-                .find(|row| row.matcher == identity.matcher)
-            {
-                Some(row) => {
-                    sync(&row.name, identity.name.clone(), window, cx);
-                    sync(&row.email, identity.email.clone(), window, cx);
-                    sync(&row.key, identity.signing_key.clone(), window, cx);
-                }
-                None => {
-                    let name = field("Name", &identity.name, window, cx);
-                    let email = field("Email", &identity.email, window, cx);
-                    let key = field("Signing key (optional)", &identity.signing_key, window, cx);
-                    let mut events = Vec::new();
-                    for input in [&name, &email, &key] {
-                        let matcher = identity.matcher.clone();
-                        events.push(cx.subscribe_in(
-                            input,
-                            window,
-                            move |this, _, event: &InputEvent, window, cx| {
-                                if commits(event) {
-                                    this.commit_identity(&matcher, window, cx);
-                                }
-                            },
-                        ));
-                    }
-                    self.identity_rows.push(IdentityRow {
-                        matcher: identity.matcher.clone(),
-                        name,
-                        email,
-                        key,
-                        _events: events,
-                    });
-                }
-            }
+    /// Shows the default and the identities, as rows. A row being typed in keeps what
+    /// is in it.
+    fn apply_identities(&mut self, book: Book, window: &mut Window, cx: &mut Context<Self>) {
+        let mut wanted: Vec<(Option<String>, String, Profile)> =
+            vec![(None, "Default".to_owned(), book.default.clone())];
+        for identity in &book.identities {
+            wanted.push((
+                Some(identity.id.clone()),
+                identity.label.clone(),
+                identity.profile.clone(),
+            ));
         }
-        self.identities = identities;
+        self.identity_rows
+            .retain(|row| wanted.iter().any(|(id, ..)| *id == row.id));
+
+        for (id, label, profile) in &wanted {
+            let typed_in = self.dirty.contains(&identity_key(id.as_deref()));
+            if let Some(row) = self.identity_rows.iter().find(|row| row.id == *id) {
+                sync(&row.label, label.clone(), typed_in, window, cx);
+                sync(&row.name, profile.name.clone(), typed_in, window, cx);
+                sync(&row.email, profile.email.clone(), typed_in, window, cx);
+                sync(&row.key, profile.signing_key.clone(), typed_in, window, cx);
+                continue;
+            }
+            let label_input = field("What to call it", label, window, cx);
+            let name = field("Name", &profile.name, window, cx);
+            let email = field("Email", &profile.email, window, cx);
+            let key = field("Signing key (optional)", &profile.signing_key, window, cx);
+            let rule = field(NewKind::Host.placeholder(), "", window, cx);
+            let mut events = Vec::new();
+            for input in [&label_input, &name, &email, &key] {
+                let id = id.clone();
+                events.push(cx.subscribe_in(
+                    input,
+                    window,
+                    move |this, _, event: &InputEvent, window, cx| {
+                        if this.edited(&identity_key(id.as_deref()), event) {
+                            this.commit_identity(id.clone(), window, cx);
+                        }
+                    },
+                ));
+            }
+            if let Some(id) = id.clone() {
+                events.push(cx.subscribe_in(
+                    &rule,
+                    window,
+                    move |this, _, event: &InputEvent, window, cx| {
+                        if matches!(event, InputEvent::PressEnter { .. }) {
+                            this.add_rule(&id, window, cx);
+                        }
+                        cx.notify();
+                    },
+                ));
+            }
+            self.identity_rows.push(IdentityRow {
+                id: id.clone(),
+                label: label_input,
+                name,
+                email,
+                key,
+                rule,
+                rule_kind: NewKind::Host,
+                adding_rule: false,
+                _events: events,
+            });
+        }
+        // The default first, then in the order of the book.
+        self.identity_rows.sort_by_key(|row| {
+            wanted
+                .iter()
+                .position(|(id, ..)| *id == row.id)
+                .unwrap_or(usize::MAX)
+        });
+        self.book = book;
     }
 
     fn write(
@@ -589,6 +635,20 @@ impl Settings {
             window,
             cx,
         );
+    }
+
+    /// Notes what happened to an input, and says whether to save it now. Only text the
+    /// user typed is ever saved: an input that was merely focused and left, which may
+    /// not even have been filled in yet, must not overwrite what the file holds.
+    fn edited(&mut self, id: &str, event: &InputEvent) -> bool {
+        match event {
+            InputEvent::Change => {
+                self.dirty.insert(id.to_owned());
+                false
+            }
+            event if commits(event) => self.dirty.remove(id),
+            _ => false,
+        }
     }
 
     fn commit_text(&mut self, key: &'static str, window: &mut Window, cx: &mut Context<Self>) {
@@ -662,49 +722,70 @@ impl Settings {
         );
     }
 
-    fn commit_identity(&mut self, matcher: &Match, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self
-            .identity_rows
-            .iter()
-            .find(|row| row.matcher == *matcher)
-        else {
+    /// Saves what was typed for the default (`None`) or an identity. The label of the
+    /// default is fixed.
+    fn commit_identity(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(row) = self.identity_rows.iter().find(|row| row.id == id) else {
             return;
         };
-        let typed = Identity {
-            matcher: matcher.clone(),
+        let profile = Profile {
             name: row.name.read(cx).value().trim().to_owned(),
             email: row.email.read(cx).value().trim().to_owned(),
             signing_key: row.key.read(cx).value().trim().to_owned(),
         };
-        if self.identities.contains(&typed) {
-            return;
+        let label = row.label.read(cx).value().trim().to_owned();
+        match id {
+            None => {
+                if profile == self.book.default {
+                    return;
+                }
+                let saved = format!("Saved the default, {}.", profile.display());
+                self.change(
+                    saved,
+                    move |_, base| identity::save_default(base, &profile),
+                    None,
+                    window,
+                    cx,
+                );
+            }
+            Some(id) => {
+                let unchanged = self
+                    .book
+                    .identity(&id)
+                    .is_some_and(|known| known.label == label && known.profile == profile);
+                if unchanged {
+                    return;
+                }
+                let saved = format!("Saved {label}.");
+                let identity = Identity { id, label, profile };
+                self.change(
+                    saved,
+                    move |_, base| identity::save_identity(base, &identity).map(drop),
+                    None,
+                    window,
+                    cx,
+                );
+            }
         }
-        let saved = format!("Saved the identity for {}.", matcher.describe());
-        self.change(
-            saved,
-            move |_, base| identity::save(base, &typed),
-            None,
-            window,
-            cx,
-        );
     }
 
     fn add_identity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let typed = Identity {
-            matcher: self
-                .new_kind
-                .matcher(self.new_match.read(cx).value().trim().to_owned()),
-            name: self.new_identity_name.read(cx).value().trim().to_owned(),
-            email: self.new_identity_email.read(cx).value().trim().to_owned(),
-            signing_key: self.new_identity_key.read(cx).value().trim().to_owned(),
+        let identity = Identity {
+            id: String::new(),
+            label: self.new_label.read(cx).value().trim().to_owned(),
+            profile: Profile {
+                name: self.new_identity_name.read(cx).value().trim().to_owned(),
+                email: self.new_identity_email.read(cx).value().trim().to_owned(),
+                signing_key: self.new_identity_key.read(cx).value().trim().to_owned(),
+            },
         };
-        let saved = format!("Added an identity for {}.", typed.matcher.tidy().describe());
+        let saved = format!("Added the identity {}.", identity.label);
         self.change(
             saved,
-            move |_, base| identity::save(base, &typed),
+            move |_, base| identity::save_identity(base, &identity).map(drop),
             Some(|this, window, cx| {
                 for input in [
-                    &this.new_match,
+                    &this.new_label,
                     &this.new_identity_name,
                     &this.new_identity_email,
                     &this.new_identity_key,
@@ -717,12 +798,126 @@ impl Settings {
         );
     }
 
-    fn remove_identity(&mut self, matcher: &Match, window: &mut Window, cx: &mut Context<Self>) {
-        let matcher = matcher.clone();
-        let saved = format!("Removed the identity for {}.", matcher.describe());
+    fn delete_identity(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let label = self
+            .book
+            .identity(id)
+            .map_or_else(|| id.to_owned(), |identity| identity.label.clone());
+        let id = id.to_owned();
+        let saved = format!("Removed {label}, and the rules that picked it.");
         self.change(
             saved,
-            move |_, base| identity::remove(base, &matcher),
+            move |_, base| identity::delete_identity(base, &id),
+            None,
+            window,
+            cx,
+        );
+    }
+
+    fn show_rule_form(&mut self, id: &str, shown: bool, cx: &mut Context<Self>) {
+        if let Some(row) = self
+            .identity_rows
+            .iter_mut()
+            .find(|row| row.id.as_deref() == Some(id))
+        {
+            row.adding_rule = shown;
+            cx.notify();
+        }
+    }
+
+    fn set_rule_kind(
+        &mut self,
+        id: &str,
+        kind: NewKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(row) = self
+            .identity_rows
+            .iter_mut()
+            .find(|row| row.id.as_deref() == Some(id))
+        {
+            row.rule_kind = kind;
+            row.rule.update(cx, |input, cx| {
+                input.set_placeholder(kind.placeholder(), window, cx)
+            });
+            cx.notify();
+        }
+    }
+
+    fn add_rule(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(row) = self
+            .identity_rows
+            .iter()
+            .find(|row| row.id.as_deref() == Some(id))
+        else {
+            return;
+        };
+        let matcher = row
+            .rule_kind
+            .matcher(row.rule.read(cx).value().trim().to_owned());
+        let label = self
+            .book
+            .identity(id)
+            .map_or_else(|| id.to_owned(), |identity| identity.label.clone());
+        let saved = format!("{label} is now picked for {}.", matcher.tidy().describe());
+        let id = id.to_owned();
+        self.change(
+            saved,
+            move |_, base| identity::add_rule(base, &id, &matcher),
+            Some(|this, window, cx| {
+                for row in &mut this.identity_rows {
+                    row.adding_rule = false;
+                    row.rule
+                        .update(cx, |input, cx| input.set_value("", window, cx));
+                }
+            }),
+            window,
+            cx,
+        );
+    }
+
+    fn remove_rule(&mut self, matcher: &Match, window: &mut Window, cx: &mut Context<Self>) {
+        let matcher = matcher.clone();
+        let saved = format!("No identity is picked for {} any more.", matcher.describe());
+        self.change(
+            saved,
+            move |_, base| identity::remove_rule(base, &matcher),
+            None,
+            window,
+            cx,
+        );
+    }
+
+    /// Makes the open repository use `choice`.
+    fn pick_identity(&mut self, choice: Choice, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let name = repository_name(&repo);
+        let kept = match &self.repo_state {
+            Some(Ok(state)) => state
+                .own
+                .as_ref()
+                .is_some_and(|own| !self.book.has_profile(own)),
+            _ => false,
+        };
+        let mut saved = match &choice {
+            Choice::Automatic => format!("{name} now follows the rules."),
+            Choice::Identity(id) => {
+                let label = self
+                    .book
+                    .identity(id)
+                    .map_or(id.as_str(), |identity| identity.label.as_str());
+                format!("{name} now commits as {label}.")
+            }
+        };
+        if kept {
+            saved += " Its own name and email were kept as an identity.";
+        }
+        self.change(
+            saved,
+            move |_, base| identity::pick(base, &repo, &choice),
             None,
             window,
             cx,
@@ -739,7 +934,7 @@ impl Settings {
                         self.scope().name()
                     ),
                     Page::Identities => {
-                        "Identities are kept in your global git config and save as you make them."
+                        "Identities are kept next to your global git config and save as you make them."
                             .to_owned()
                     }
                     Page::Ssh => "What ssh will do for each host. Read only.".to_owned(),
@@ -1177,157 +1372,319 @@ impl Settings {
     }
 
     fn render_identities(&self, cx: &mut Context<Self>) -> AnyElement {
-        let muted = cx.theme().muted_foreground;
-        let page = div()
-            .v_flex()
-            .w_full()
-            .max_w(PAGE_WIDTH)
-            .gap_6()
-            .child(self.page_head(
+        let page = div().v_flex().w_full().max_w(PAGE_WIDTH).gap_6().child(
+            self.page_head(
                 "Identities",
-                "Give the repositories on one SSH host, or in one folder, their own name, email and signing key.",
+                "Who you commit as. Make one for each, then pick it for a repository or let rules choose.",
                 cx,
-            ));
+            ),
+        );
         if let Some(Err(message)) = &self.git {
             return page
                 .child(self.render_no_git(message, cx))
                 .into_any_element();
         }
-
-        // Who the open repository commits as, and why.
-        let now = match (&self.repo, &self.committing) {
-            (None, _) => "Open a repository to see who it commits as.".to_owned(),
-            (_, Some(Ok(committing))) => committing.sentence(),
-            (_, Some(Err(message))) => message.clone(),
-            (_, None) => "Reading…".to_owned(),
-        };
-        let heading = self
-            .repo
-            .as_deref()
-            .map_or_else(|| "Right now".to_owned(), repository_name);
-        let page = page.child(self.render_group(
-            &heading,
-            vec![
-                div()
-                    .px_4()
-                    .py_3()
-                    .text_size(px(14.))
-                    .line_height(px(20.))
-                    .child(now)
-                    .into_any_element(),
-            ],
-            cx,
-        ));
-
-        let mut rows: Vec<AnyElement> = Vec::new();
-        if self.identity_rows.is_empty() {
-            rows.push(
-                div()
-                    .px_4()
-                    .py_3()
-                    .text_size(px(13.))
-                    .line_height(px(18.))
-                    .text_color(muted)
-                    .child("No identities yet. Add one below. A repository's own config still wins over them.")
-                    .into_any_element(),
-            );
-        }
-        for (index, row) in self.identity_rows.iter().enumerate() {
-            let matcher = row.matcher.clone();
-            let label = |text: &'static str, input: &Entity<InputState>| {
-                div()
-                    .v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap_1()
-                    .child(section_label(muted).child(text))
-                    .child(Input::new(input))
-            };
-            rows.push(
-                div()
-                    .v_flex()
-                    .px_4()
-                    .py_3()
-                    .gap_2()
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(14.))
-                                    .child(sentence_case(&row.matcher.describe())),
-                            )
-                            .child(
-                                Button::new(("remove-identity", index))
-                                    .ghost()
-                                    .compact()
-                                    .label("Remove")
-                                    .tooltip("Stop using this identity")
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.remove_identity(&matcher, window, cx)
-                                    })),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_3()
-                            .child(label("Name", &row.name))
-                            .child(label("Email", &row.email))
-                            .child(label("Signing key", &row.key)),
-                    )
-                    .into_any_element(),
-            );
-        }
-        let page = page.child(self.render_group("Your identities", rows, cx));
-        page.child(self.render_new_identity(cx)).into_any_element()
+        let rows: Vec<AnyElement> = self
+            .identity_rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| self.render_identity(index, row, cx))
+            .collect();
+        page.child(self.render_picker(cx))
+            .child(self.render_group("Your identities", rows, cx))
+            .child(self.render_new_identity(cx))
+            .into_any_element()
     }
 
-    fn render_new_identity(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// The open repository's identity, and one click to change it.
+    fn render_picker(&self, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
-        let kinds = NewKind::ALL
-            .into_iter()
-            .enumerate()
-            .map(|(index, (kind, name))| {
-                chip(("new-kind", index), name, self.new_kind == kind, cx).on_click(cx.listener(
-                    move |this, _, window, cx| {
-                        this.new_kind = kind;
-                        this.new_match.update(cx, |input, cx| {
-                            input.set_placeholder(kind.placeholder(), window, cx)
-                        });
-                        cx.notify();
-                    },
-                ))
-            });
-        let kinds: Vec<_> = kinds.collect();
-
-        // Names ssh knows, to pick from instead of typing.
-        let known: Vec<String> = match (self.new_kind, &self.ssh) {
-            (NewKind::Host, Some(info)) => {
-                info.hosts.iter().map(|host| host.alias.clone()).collect()
-            }
-            _ => Vec::new(),
+        let quiet = |text: String| {
+            div()
+                .text_size(px(13.))
+                .line_height(px(18.))
+                .text_color(muted)
+                .child(text)
         };
-        let known: Vec<AnyElement> = known
-            .into_iter()
-            .enumerate()
-            .map(|(index, alias)| {
-                let pick = alias.clone();
-                chip(("known-host", index), &alias, false, cx)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        let pick = pick.clone();
-                        this.new_match
-                            .update(cx, |input, cx| input.set_value(pick, window, cx));
+        let Some(repo) = self.repo.as_deref() else {
+            return self.render_group(
+                "Right now",
+                vec![
+                    div()
+                        .px_4()
+                        .py_3()
+                        .child(quiet(
+                            "Open a repository to choose who it commits as.".to_owned(),
+                        ))
+                        .into_any_element(),
+                ],
+                cx,
+            );
+        };
+        let body = match &self.repo_state {
+            Some(Ok(state)) => {
+                let (own, pinned) = (state.own.as_ref(), state.pinned.as_deref());
+                let mut chips = vec![
+                    chip(
+                        "pick-automatic",
+                        "Automatic",
+                        own.is_none() && pinned.is_none(),
+                        cx,
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.pick_identity(Choice::Automatic, window, cx)
                     }))
+                    .into_any_element(),
+                ];
+                for (index, identity) in self.book.identities.iter().enumerate() {
+                    let id = identity.id.clone();
+                    let on = own.is_none() && pinned == Some(identity.id.as_str());
+                    chips.push(
+                        chip(("pick-identity", index), &identity.label, on, cx)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.pick_identity(Choice::Identity(id.clone()), window, cx)
+                            }))
+                            .into_any_element(),
+                    );
+                }
+                if own.is_some() {
+                    chips.push(
+                        chip("pick-own", "This repository's own", true, cx).into_any_element(),
+                    );
+                }
+                let hint = if own.is_some() {
+                    "Set in this repository's own config. Picking another replaces it, and keeps it as an identity."
+                } else if pinned.is_some() {
+                    "Chosen for this repository only. Automatic goes back to the rules."
+                } else {
+                    "Rules pick an identity by host or folder. With no match, the Default applies."
+                };
+                div()
+                    .v_flex()
+                    .px_4()
+                    .py_3()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .line_height(px(20.))
+                            .child(state.committing.sentence()),
+                    )
+                    .child(div().flex().flex_wrap().gap_1().children(chips))
+                    .child(quiet(hint.to_owned()))
+                    .into_any_element()
+            }
+            Some(Err(message)) => div()
+                .px_4()
+                .py_3()
+                .child(quiet(message.clone()))
+                .into_any_element(),
+            None => div()
+                .px_4()
+                .py_3()
+                .child(quiet("Reading…".to_owned()))
+                .into_any_element(),
+        };
+        self.render_group(&repository_name(repo), vec![body], cx)
+    }
+
+    /// One identity: its name, email and key, and where it is used automatically.
+    fn render_identity(
+        &self,
+        index: usize,
+        row: &IdentityRow,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let id = row.id.clone();
+        let labelled = |text: &'static str, input: &Entity<InputState>| {
+            div()
+                .v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_1()
+                .child(section_label(muted).child(text))
+                .child(Input::new(input))
+        };
+        let head = match &id {
+            None => div()
+                .v_flex()
+                .flex_1()
+                .min_w_0()
+                .child(div().text_size(px(14.)).font_semibold().child("Default"))
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .line_height(px(18.))
+                        .text_color(muted)
+                        .child("Your global name and email, used when no rule or choice picks another."),
+                ),
+            Some(id) => {
+                let id = id.clone();
+                div()
+                    .h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_3()
+                    .child(div().flex_1().min_w_0().child(Input::new(&row.label)))
+                    .child(
+                        Button::new(("remove-identity", index))
+                            .ghost()
+                            .compact()
+                            .label("Remove")
+                            .tooltip("Delete this identity and its rules")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.delete_identity(&id, window, cx)
+                            })),
+                    )
+            }
+        };
+        let card = div()
+            .v_flex()
+            .px_4()
+            .py_3()
+            .gap_3()
+            .child(div().h_flex().child(head))
+            .child(
+                div()
+                    .h_flex()
+                    .gap_3()
+                    .child(labelled("Name", &row.name))
+                    .child(labelled("Email", &row.email))
+                    .child(labelled("Signing key", &row.key)),
+            );
+        match id {
+            None => card.into_any_element(),
+            Some(id) => card
+                .child(self.render_rules(index, row, &id, cx))
+                .into_any_element(),
+        }
+    }
+
+    /// Where an identity is picked automatically, and a way to add to that.
+    fn render_rules(
+        &self,
+        index: usize,
+        row: &IdentityRow,
+        id: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let (muted, selected, quiet) = (
+            theme.muted_foreground,
+            selected_row(theme),
+            theme.secondary_foreground,
+        );
+        let rules: Vec<Match> = self
+            .book
+            .rules_for(id)
+            .map(|rule| rule.matcher.clone())
+            .collect();
+        let shown: Vec<AnyElement> = rules
+            .iter()
+            .enumerate()
+            .map(|(position, matcher)| {
+                let stop = matcher.clone();
+                div()
+                    .h_flex()
+                    .h(px(26.))
+                    .pl_2()
+                    .gap_1()
+                    .rounded(px(6.))
+                    .bg(selected)
+                    .text_size(px(13.))
+                    .text_color(quiet)
+                    .child(sentence_case(&matcher.describe()))
+                    .child(
+                        Button::new(("remove-rule", index * 100 + position))
+                            .ghost()
+                            .compact()
+                            .label("×")
+                            .tooltip("Stop picking this identity for that")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.remove_rule(&stop, window, cx)
+                            })),
+                    )
                     .into_any_element()
             })
             .collect();
 
-        let help = match self.new_kind {
+        let mut area = div()
+            .v_flex()
+            .gap_2()
+            .child(section_label(muted).child("Picked automatically for"));
+        area = if shown.is_empty() {
+            area.child(
+                div()
+                    .text_size(px(13.))
+                    .line_height(px(18.))
+                    .text_color(muted)
+                    .child("Nothing yet. Pick it by hand for a repository, or add a rule."),
+            )
+        } else {
+            area.child(div().flex().flex_wrap().gap_1().children(shown))
+        };
+
+        if !row.adding_rule {
+            let open = id.to_owned();
+            return area
+                .child(
+                    div().h_flex().child(
+                        Button::new(("add-rule", index))
+                            .ghost()
+                            .compact()
+                            .label("Add a rule")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.show_rule_form(&open, true, cx)
+                            })),
+                    ),
+                )
+                .into_any_element();
+        }
+
+        let kinds: Vec<AnyElement> =
+            NewKind::ALL
+                .into_iter()
+                .enumerate()
+                .map(|(position, (kind, name))| {
+                    let id = id.to_owned();
+                    chip(
+                        ("rule-kind", index * 10 + position),
+                        name,
+                        row.rule_kind == kind,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.set_rule_kind(&id, kind, window, cx)
+                    }))
+                    .into_any_element()
+                })
+                .collect();
+        let known: Vec<AnyElement> = match (row.rule_kind, &self.ssh) {
+            (NewKind::Host, Some(info)) => info
+                .hosts
+                .iter()
+                .filter(|host| !rules.contains(&Match::Host(host.alias.clone())))
+                .enumerate()
+                .map(|(position, host)| {
+                    let pick = host.alias.clone();
+                    let input = row.rule.clone();
+                    chip(
+                        ("rule-host", index * 100 + position),
+                        &host.alias,
+                        false,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |_, _, window, cx| {
+                        let pick = pick.clone();
+                        input.update(cx, |input, cx| input.set_value(pick, window, cx));
+                    }))
+                    .into_any_element()
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let help = match row.rule_kind {
             NewKind::Host => {
                 "The name after @ in a remote like git@github-work:team/app.git, as in your ssh config."
             }
@@ -1336,7 +1693,60 @@ impl Settings {
                 "A pattern for the remote's URL. * stops at a slash and ** after a slash goes on."
             }
         };
-        let ready = !self.new_match.read(cx).value().trim().is_empty()
+        let ready = !row.rule.read(cx).value().trim().is_empty();
+        let (add, cancel) = (id.to_owned(), id.to_owned());
+        area.child(div().h_flex().gap_1().children(kinds))
+            .child(Input::new(&row.rule))
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .line_height(px(18.))
+                    .text_color(muted)
+                    .child(help),
+            )
+            .when(!known.is_empty(), |area| {
+                area.child(div().flex().flex_wrap().gap_1().children(known))
+            })
+            .child(
+                div()
+                    .h_flex()
+                    .justify_end()
+                    .gap_1()
+                    .child(
+                        Button::new(("cancel-rule", index))
+                            .ghost()
+                            .compact()
+                            .label("Cancel")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.show_rule_form(&cancel, false, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(("save-rule", index))
+                            .ghost()
+                            .compact()
+                            .label("Add rule")
+                            .disabled(!ready)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.add_rule(&add, window, cx)
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_new_identity(&self, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let labelled = |text: &'static str, input: &Entity<InputState>| {
+            div()
+                .v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_1()
+                .child(section_label(muted).child(text))
+                .child(Input::new(input))
+        };
+        let ready = !self.new_label.read(cx).value().trim().is_empty()
             && [
                 &self.new_identity_name,
                 &self.new_identity_email,
@@ -1344,7 +1754,6 @@ impl Settings {
             ]
             .iter()
             .any(|input| !input.read(cx).value().trim().is_empty());
-        let column = |input: &Entity<InputState>| div().flex_1().min_w_0().child(Input::new(input));
         self.render_group(
             "Add an identity",
             vec![
@@ -1353,25 +1762,14 @@ impl Settings {
                     .px_4()
                     .py_3()
                     .gap_3()
-                    .child(div().h_flex().gap_1().children(kinds))
-                    .child(Input::new(&self.new_match))
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .line_height(px(18.))
-                            .text_color(muted)
-                            .child(help),
-                    )
-                    .when(!known.is_empty(), |card| {
-                        card.child(div().flex().flex_wrap().gap_1().children(known))
-                    })
+                    .child(labelled("What to call it", &self.new_label))
                     .child(
                         div()
                             .h_flex()
                             .gap_3()
-                            .child(column(&self.new_identity_name))
-                            .child(column(&self.new_identity_email))
-                            .child(column(&self.new_identity_key)),
+                            .child(labelled("Name", &self.new_identity_name))
+                            .child(labelled("Email", &self.new_identity_email))
+                            .child(labelled("Signing key", &self.new_identity_key)),
                     )
                     .child(
                         div().h_flex().justify_end().child(
@@ -1526,10 +1924,13 @@ impl Settings {
             info.hosts
                 .iter()
                 .map(|host| {
+                    let matcher = Match::Host(host.alias.clone());
                     let identity = self
-                        .identities
+                        .book
+                        .rules
                         .iter()
-                        .find(|identity| identity.matcher == Match::Host(host.alias.clone()));
+                        .find(|rule| rule.matcher == matcher)
+                        .and_then(|rule| self.book.identity(&rule.identity));
                     div()
                         .v_flex()
                         .px_4()
@@ -1548,7 +1949,11 @@ impl Settings {
                                 .text_size(px(13.))
                                 .line_height(px(18.))
                                 .text_color(muted)
-                                .child(format!("Commits as {} <{}>", identity.name, identity.email))
+                                .child(format!(
+                                    "Commits as {}, {}",
+                                    identity.label,
+                                    identity.profile.display()
+                                ))
                         }))
                         .into_any_element()
                 })
@@ -1607,10 +2012,19 @@ fn commits(event: &InputEvent) -> bool {
     matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur)
 }
 
-/// Puts `text` in `input`, unless it is being typed in or already says that.
-fn sync(input: &Entity<InputState>, text: String, window: &mut Window, cx: &mut Context<Settings>) {
-    let focused = input.read(cx).focus_handle(cx).is_focused(window);
-    if !focused && input.read(cx).value().as_ref() != text {
+/// Puts `text` in `input`, unless the user has typed in it or it already says that.
+///
+/// What counts is whether it was edited, not whether it has focus: an input that had
+/// focus before its value arrived must still be filled in. Otherwise leaving it would
+/// "save" the empty box over the real value.
+fn sync(
+    input: &Entity<InputState>,
+    text: String,
+    typed_in: bool,
+    window: &mut Window,
+    cx: &mut Context<Settings>,
+) {
+    if !typed_in && input.read(cx).value().as_ref() != text {
         input.update(cx, |input, cx| input.set_value(text, window, cx));
     }
 }
@@ -1641,9 +2055,10 @@ fn chip(id: impl Into<ElementId>, label: &str, on: bool, cx: &App) -> Stateful<D
 
 #[cfg(test)]
 mod tests {
-    use super::{Feedback, Match, NewKind, Scope, Settings, Target, config, identity};
+    use super::{Feedback, Match, Scope, Settings, Target, config, identity};
     use gitclient_core::testing::Repo;
-    use gpui_kit::{Entity, TestAppContext, VisualTestContext};
+    use gpui_kit::component::input::InputEvent;
+    use gpui_kit::{Entity, Focusable as _, TestAppContext, VisualTestContext};
     use std::path::PathBuf;
 
     fn open(
@@ -1770,45 +2185,237 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn identities_are_added_shown_and_removed(cx: &mut TestAppContext) {
+    fn leaving_an_input_that_was_never_typed_in_does_not_erase_the_value(cx: &mut TestAppContext) {
         let (_dir, scope) = file_scope();
+        config::set(&scope, "user.name", "Ada").unwrap();
+        config::set(&scope, "user.email", "ada@example.com").unwrap();
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let window = {
+            let scope = scope.clone();
+            cx.add_window(move |window, cx| Settings::new(None, scope, window, cx))
+        };
+        let view = window.root(cx).unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        // The first field has focus before the config has been read, as when the window
+        // opens, so it is still empty when focus moves on.
+        view.update_in(&mut cx, |view, window, cx| {
+            let input = view.fields[0].input.clone();
+            let focus = input.read(cx).focus_handle(cx);
+            window.focus(&focus, cx);
+        });
+        settle(&mut cx);
+
+        let shown = view.read_with(&cx, |view, cx| {
+            view.fields[0].input.read(cx).value().to_string()
+        });
+        assert_eq!(shown, "Ada", "a focused input is still filled in");
+
+        // Even an empty box, left alone, saves nothing.
+        view.update_in(&mut cx, |view, window, cx| {
+            let input = view.fields[0].input.clone();
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        });
+        for field in ["user.name", "user.email"] {
+            let input = view.read_with(&cx, |view, _| {
+                view.fields
+                    .iter()
+                    .find(|f| f.key == field)
+                    .unwrap()
+                    .input
+                    .clone()
+            });
+            input.update(&mut cx, |_, cx| cx.emit(InputEvent::Blur));
+        }
+        settle(&mut cx);
+        let values = config::read(&scope).unwrap();
+        assert_eq!(values.get("user.name"), Some("Ada"));
+        assert_eq!(values.get("user.email"), Some("ada@example.com"));
+    }
+
+    #[gpui_kit::test]
+    fn text_that_was_typed_is_saved_when_the_input_is_left(cx: &mut TestAppContext) {
+        let (_dir, scope) = file_scope();
+        config::set(&scope, "user.name", "Ada").unwrap();
         let (view, mut cx) = open(None, scope.clone(), cx);
 
+        let input = view.read_with(&cx, |view, _| view.fields[0].input.clone());
         view.update_in(&mut cx, |view, window, cx| {
-            view.new_kind = NewKind::Host;
+            assert_eq!(view.fields[0].key, "user.name");
+            let input = view.fields[0].input.clone();
+            input.update(cx, |input, cx| input.set_value("Grace", window, cx));
+        });
+        // `set_value` is silent, as it is for the app; typing is what says "Change".
+        input.update(&mut cx, |_, cx| cx.emit(InputEvent::Change));
+        input.update(&mut cx, |_, cx| cx.emit(InputEvent::Blur));
+        settle(&mut cx);
+        assert_eq!(
+            config::read(&scope).unwrap().get("user.name"),
+            Some("Grace")
+        );
+
+        // Clearing it on purpose does remove it.
+        view.update_in(&mut cx, |view, window, cx| {
+            let input = view.fields[0].input.clone();
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        });
+        input.update(&mut cx, |_, cx| cx.emit(InputEvent::Change));
+        input.update(&mut cx, |_, cx| cx.emit(InputEvent::Blur));
+        settle(&mut cx);
+        assert!(!config::read(&scope).unwrap().is_set("user.name"));
+    }
+
+    /// Fills in the add-identity form.
+    fn type_identity(
+        view: &Entity<Settings>,
+        cx: &mut VisualTestContext,
+        label: &str,
+        name: &str,
+        email: &str,
+    ) {
+        view.update_in(cx, |view, window, cx| {
             for (input, text) in [
-                (&view.new_match, "work"),
-                (&view.new_identity_name, "Ada Lovelace"),
-                (&view.new_identity_email, "ada@work.example"),
+                (&view.new_label, label),
+                (&view.new_identity_name, name),
+                (&view.new_identity_email, email),
             ] {
                 input.update(cx, |input, cx| input.set_value(text, window, cx));
             }
             view.add_identity(window, cx);
         });
-        settle(&mut cx);
+        settle(cx);
+    }
 
-        let listed = identity::list(&scope).unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].matcher, Match::Host("work".into()));
+    #[gpui_kit::test]
+    fn the_default_is_listed_first_as_an_identity_and_edits_the_global_name(
+        cx: &mut TestAppContext,
+    ) {
+        let (_dir, scope) = file_scope();
+        config::set(&scope, "user.name", "Pretext").unwrap();
+        config::set(&scope, "user.email", "p@example.com").unwrap();
+        let (view, mut cx) = open(None, scope.clone(), cx);
         view.read_with(&cx, |view, cx| {
-            assert_eq!(view.identity_rows.len(), 1, "it is on the page");
+            assert_eq!(view.identity_rows.len(), 1);
+            let row = &view.identity_rows[0];
+            assert_eq!(row.id, None, "the default is the first row");
+            assert_eq!(row.email.read(cx).value().as_ref(), "p@example.com");
+        });
+
+        // Typing a new email into the default saves the global one.
+        let email = view.read_with(&cx, |view, _| view.identity_rows[0].email.clone());
+        view.update_in(&mut cx, |_, window, cx| {
+            email.update(cx, |input, cx| {
+                input.set_value("new@example.com", window, cx)
+            });
+        });
+        email.update(&mut cx, |_, cx| cx.emit(InputEvent::Change));
+        email.update(&mut cx, |_, cx| cx.emit(InputEvent::Blur));
+        settle(&mut cx);
+        let values = config::read(&scope).unwrap();
+        assert_eq!(values.get("user.email"), Some("new@example.com"));
+        assert_eq!(values.get("user.name"), Some("Pretext"), "the rest is kept");
+    }
+
+    #[gpui_kit::test]
+    fn identities_are_added_given_rules_and_removed_with_them(cx: &mut TestAppContext) {
+        let (_dir, scope) = file_scope();
+        let (view, mut cx) = open(None, scope.clone(), cx);
+        type_identity(&view, &mut cx, "Work", "Ada Lovelace", "ada@work.example");
+
+        let book = identity::book(&scope).unwrap();
+        assert_eq!(book.identities.len(), 1);
+        assert_eq!(book.identities[0].label, "Work");
+        view.read_with(&cx, |view, cx| {
+            assert_eq!(view.identity_rows.len(), 2, "the default and Work");
+            assert_eq!(view.identity_rows[1].id.as_deref(), Some("work"));
             assert_eq!(
-                view.identity_rows[0].email.read(cx).value().as_ref(),
-                "ada@work.example"
-            );
-            assert_eq!(
-                view.new_match.read(cx).value().as_ref(),
+                view.new_label.read(cx).value().as_ref(),
                 "",
                 "the form empties"
             );
         });
 
+        // A rule for a host, typed in the identity's own card.
         view.update_in(&mut cx, |view, window, cx| {
-            view.remove_identity(&Match::Host("work".into()), window, cx);
+            view.show_rule_form("work", true, cx);
+            let rule = view.identity_rows[1].rule.clone();
+            rule.update(cx, |input, cx| input.set_value("github-work", window, cx));
+            view.add_rule("work", window, cx);
         });
         settle(&mut cx);
-        assert!(identity::list(&scope).unwrap().is_empty());
-        view.read_with(&cx, |view, _| assert!(view.identity_rows.is_empty()));
+        let rules = identity::book(&scope).unwrap().rules;
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].matcher, Match::Host("github-work".into()));
+        view.read_with(&cx, |view, _| {
+            assert!(!view.identity_rows[1].adding_rule, "the form closes");
+        });
+
+        view.update_in(&mut cx, |view, window, cx| {
+            view.remove_rule(&Match::Host("github-work".into()), window, cx);
+        });
+        settle(&mut cx);
+        assert!(identity::book(&scope).unwrap().rules.is_empty());
+
+        view.update_in(&mut cx, |view, window, cx| {
+            view.delete_identity("work", window, cx);
+        });
+        settle(&mut cx);
+        assert!(identity::book(&scope).unwrap().identities.is_empty());
+        view.read_with(&cx, |view, _| assert_eq!(view.identity_rows.len(), 1));
+    }
+
+    #[gpui_kit::test]
+    fn a_repository_is_switched_between_identities_in_one_step(cx: &mut TestAppContext) {
+        let repo = Repo::new();
+        let (_dir, scope) = file_scope();
+        let (view, mut cx) = open(Some(repo.path().to_owned()), scope.clone(), cx);
+        type_identity(&view, &mut cx, "Work", "Ada Lovelace", "ada@work.example");
+        type_identity(&view, &mut cx, "Home", "Ada", "ada@home.example");
+
+        let pinned = |cx: &VisualTestContext| {
+            view.read_with(cx, |view, _| match &view.repo_state {
+                Some(Ok(state)) => state.pinned.clone(),
+                other => panic!("no state: {other:?}"),
+            })
+        };
+        assert_eq!(pinned(&cx), None, "automatic at first");
+
+        view.update_in(&mut cx, |view, window, cx| {
+            view.pick_identity(
+                gitclient_core::identity::Choice::Identity("work".into()),
+                window,
+                cx,
+            );
+        });
+        settle(&mut cx);
+        assert_eq!(pinned(&cx).as_deref(), Some("work"));
+        view.read_with(&cx, |view, _| {
+            assert!(matches!(&view.feedback, Feedback::Saved(m) if m.contains("Work")));
+        });
+
+        view.update_in(&mut cx, |view, window, cx| {
+            view.pick_identity(
+                gitclient_core::identity::Choice::Identity("home".into()),
+                window,
+                cx,
+            );
+        });
+        settle(&mut cx);
+        assert_eq!(
+            pinned(&cx).as_deref(),
+            Some("home"),
+            "replaced, not added to"
+        );
+
+        view.update_in(&mut cx, |view, window, cx| {
+            view.pick_identity(gitclient_core::identity::Choice::Automatic, window, cx);
+        });
+        settle(&mut cx);
+        assert_eq!(pinned(&cx), None);
     }
 
     #[gpui_kit::test]
@@ -1816,20 +2423,15 @@ mod tests {
         let (_dir, scope) = file_scope();
         let (view, mut cx) = open(None, scope.clone(), cx);
 
-        view.update_in(&mut cx, |view, window, cx| {
-            view.new_kind = NewKind::Host;
-            // A host with a slash in it, which can't be matched on.
-            view.new_match
-                .update(cx, |input, cx| input.set_value("a/b", window, cx));
-            view.new_identity_email
-                .update(cx, |input, cx| input.set_value("ada@x.example", window, cx));
-            view.add_identity(window, cx);
-        });
-        settle(&mut cx);
+        // No label, which an identity needs.
+        type_identity(&view, &mut cx, "", "Ada", "ada@x.example");
         view.read_with(&cx, |view, cx| {
             assert!(matches!(view.feedback, Feedback::Failed(_)));
-            assert_eq!(view.new_match.read(cx).value().as_ref(), "a/b");
+            assert_eq!(
+                view.new_identity_email.read(cx).value().as_ref(),
+                "ada@x.example"
+            );
         });
-        assert!(identity::list(&scope).unwrap().is_empty());
+        assert!(identity::book(&scope).unwrap().identities.is_empty());
     }
 }
