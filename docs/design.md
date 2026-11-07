@@ -71,7 +71,8 @@ word.
 
 ## Type
 
-Maple Mono is the only typeface. Build hierarchy from size, weight, and colour.
+Maple Mono is the only typeface. Build hierarchy from size, weight, and colour. Ligatures
+are off, so that code reads as it was written.
 
 | Role            | Size / line height | Weight |
 | --------------- | ------------------ | ------ |
