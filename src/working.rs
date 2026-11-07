@@ -224,6 +224,7 @@ mod tests {
             repo.git(&["config", "user.name", "T"]);
             repo.git(&["config", "user.email", "t@e.com"]);
             repo.git(&["config", "commit.gpgsign", "false"]);
+            repo.git(&["config", "core.autocrlf", "false"]);
             repo
         }
 
@@ -373,6 +374,8 @@ mod tests {
         assert_eq!(repo.read("out"), "b\n");
     }
 
+    // Windows doesn't allow `*` in file names.
+    #[cfg(unix)]
     #[test]
     fn paths_with_glob_characters_are_taken_literally() {
         let repo = Repo::new();
