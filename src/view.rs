@@ -64,11 +64,13 @@ pub fn bind_keys(cx: &mut App) {
         ("ctrl-r", "ctrl-b")
     };
     let context = Some(KEY_CONTEXT);
+    // Letter keys would swallow typing, so they only act while no text input has focus.
+    let letters = Some("GraphView && !Input");
     cx.bind_keys([
         KeyBinding::new("up", SelectPrevious, context),
-        KeyBinding::new("k", SelectPrevious, context),
+        KeyBinding::new("k", SelectPrevious, letters),
         KeyBinding::new("down", SelectNext, context),
-        KeyBinding::new("j", SelectNext, context),
+        KeyBinding::new("j", SelectNext, letters),
         KeyBinding::new("pageup", SelectPreviousPage, context),
         KeyBinding::new("pagedown", SelectNextPage, context),
         KeyBinding::new("home", SelectFirst, context),
