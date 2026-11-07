@@ -48,7 +48,7 @@ pub(super) struct State {
     /// Scroll of the file list, which draws only the rows in view.
     files_scroll: UniformListScrollHandle,
     /// How the files are listed, and the folders the user closed in the tree.
-    files_view: FileView,
+    pub(super) files_view: FileView,
     closed_folders: HashSet<String>,
     /// Where the way of listing is remembered for every repository. `None` in tests.
     state_file: Option<PathBuf>,
@@ -70,6 +70,7 @@ impl GraphView {
     pub(super) fn set_files_view(&mut self, view: FileView, cx: &mut Context<Self>) {
         self.commit.files_view = view;
         self.commit.files_scroll = UniformListScrollHandle::new();
+        self.inspector.files_scroll = UniformListScrollHandle::new();
         if let Some(file) = &self.commit.state_file {
             let mut state = AppState::load(file);
             state.files_view = view;
@@ -80,14 +81,18 @@ impl GraphView {
         cx.notify();
     }
 
+    /// Reads the way of listing files again, since another tab may have changed it.
+    pub(super) fn refresh_files_view(&mut self) {
+        if let Some(file) = &self.commit.state_file {
+            self.commit.files_view = AppState::load(file).files_view;
+        }
+    }
+
     pub fn open_commit_screen(&mut self, cx: &mut Context<Self>) {
         let Some(repo) = self.workdir() else {
             return;
         };
-        // Another window or tab may have changed it since this screen was last open.
-        if let Some(file) = &self.commit.state_file {
-            self.commit.files_view = AppState::load(file).files_view;
-        }
+        self.refresh_files_view();
         self.commit.committed = None;
         self.show_screen(Screen::Commit, cx);
         Self::spawn_blocking(

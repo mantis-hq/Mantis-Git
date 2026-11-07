@@ -236,10 +236,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Commit form:** the bump card only shows when the repository has `v1.2.3` style tags to
   count from. Hunks start ticked, except that files with nothing staged start unticked
   when something else is staged, so work staged from a terminal carries over.
-- **Commit file list:** the header of the list always holds two chips, "List" (every file
+- **File lists:** the commit screen's file list and the inspector's list of a commit's (or
+  the working changes') files share one choice. Its header always holds two chips, "List" (every file
   by its path, the default) and "Tree" (files grouped by folder), the picked one with a
   tick. A folder row has an arrow, a tick box that ticks or clears everything below it
-  (dash when partly ticked), its name in Overlay 2 and a file count. A click opens or
+  (dash when partly ticked; the inspector has no tick boxes), its name in Overlay 2 and a file count. A click opens or
   closes it. A chain of folders with one child each is one row (`crates/core/src/`), and
   folders come before files. The choice applies to every repository and is saved at once
   as `files_view` in the app's `state` file.

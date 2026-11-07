@@ -1,7 +1,7 @@
 //! The panel beside the graph that shows the selected commit.
 
 use super::parts::{TEXT_CHIP, TEXT_SMALL};
-use super::parts::{file_path, loading, panel_row, section_label, status_color, title};
+use super::parts::{chip, file_path, loading, panel_row, section_label, status_color, title};
 use super::{GraphView, Status};
 use crate::theme::tokens;
 use chrono::{Local, TimeZone};
@@ -9,16 +9,20 @@ use gitclient_core::details::{self, CommitDetails, FileChange};
 use gitclient_core::git::{Commit, Entry, split_subject};
 use gitclient_core::ops::Cancel;
 use gitclient_core::text::{count, short_oid};
+use gitclient_core::tree::{self, FileView, TreeRow};
 use gitclient_core::working::{self, WorkingFile};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;
 
 const WIDTH: Pixels = px(380.);
+/// Tree rows step in by this much for each folder they sit in.
+const INDENT: f32 = 14.;
 
 #[derive(Default)]
 pub(super) struct State {
@@ -30,7 +34,9 @@ pub(super) struct State {
     pub(super) width: Option<f32>,
     /// Scroll of the file list, which draws only the rows in view so that a commit with
     /// thousands of files costs no more than one with a few.
-    files_scroll: UniformListScrollHandle,
+    pub(super) files_scroll: UniformListScrollHandle,
+    /// The folders the user closed in the tree.
+    closed_folders: HashSet<String>,
     /// The read of the selected commit's details, while it runs. Selecting something else
     /// sets it, so that git stops work nobody will look at.
     loading: Option<Cancel>,
@@ -84,6 +90,7 @@ impl GraphView {
     /// Loads the new selection's details, keeping the old ones up until then so that
     /// moving through the list doesn't flash an empty panel.
     pub(super) fn selection_changed(&mut self, cx: &mut Context<Self>) {
+        self.refresh_files_view();
         self.stop_loading_details();
         if self.working_row_is_selected() {
             return self.reload_working(cx);
@@ -463,6 +470,14 @@ impl GraphView {
         let (additions, deletions) = details.totals();
         let merge_note = tokens(cx.theme().is_dark()).subtext0;
         let listed = details.clone();
+        let tree_view = self.commit.files_view == FileView::Tree;
+        let rows: Arc<Vec<TreeRow>> = Arc::new(if tree_view {
+            let paths: Vec<&str> = details.files.iter().map(|file| &*file.path).collect();
+            tree::rows(&paths, &self.inspector.closed_folders)
+        } else {
+            Vec::new()
+        });
+        let listed_rows = if tree_view { rows.len() } else { total };
 
         div()
             .v_flex()
@@ -477,7 +492,14 @@ impl GraphView {
                     .h(px(24.))
                     .px_2()
                     .justify_between()
-                    .child(format!("{} changed", count(total, "file")))
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(format!("{} changed", count(total, "file"))),
+                    )
                     .child(
                         div()
                             .h_flex()
@@ -485,7 +507,18 @@ impl GraphView {
                             .text_size(TEXT_CHIP)
                             .child(div().text_color(added).child(format!("+{additions}")))
                             .child(div().text_color(removed).child(format!("−{deletions}"))),
-                    ),
+                    )
+                    .child(div().h_flex().children(FileView::ALL.map(|view| {
+                        chip(
+                            ("inspector-files-view", view as usize),
+                            view.label(),
+                            view == self.commit.files_view,
+                            cx,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_files_view(view, cx);
+                        }))
+                    }))),
             )
             .child(
                 div()
@@ -495,8 +528,16 @@ impl GraphView {
                     .child(
                         uniform_list(
                             "inspector-files",
-                            total,
+                            listed_rows,
                             cx.processor(move |this, range: Range<usize>, _, cx| {
+                                if tree_view {
+                                    return range
+                                        .filter_map(|at| rows.get(at).map(|row| (at, row)))
+                                        .map(|(at, row)| {
+                                            this.render_details_tree_row(at, row, &listed, cx)
+                                        })
+                                        .collect::<Vec<_>>();
+                                }
                                 range
                                     .filter_map(|index| {
                                         let file = listed.files.get(index)?;
@@ -518,6 +559,95 @@ impl GraphView {
                         .child("This merge has no changes of its own."),
                 )
             })
+    }
+
+    /// A line of the tree: a folder that opens and closes, or a file stepped in under its
+    /// folders.
+    fn render_details_tree_row(
+        &self,
+        at: usize,
+        row: &TreeRow,
+        details: &CommitDetails,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let muted = cx.theme().muted_foreground;
+        match row {
+            TreeRow::Folder {
+                path,
+                name,
+                depth,
+                open,
+                files,
+            } => {
+                let toggled = path.clone();
+                panel_row(("tree-row", at), false, cx)
+                    .h(px(28.))
+                    .pl(px(8. + INDENT * *depth as f32))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let closed = &mut this.inspector.closed_folders;
+                        if !closed.remove(&toggled) {
+                            closed.insert(toggled.clone());
+                        }
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .w(px(12.))
+                            .flex_none()
+                            .text_size(TEXT_CHIP)
+                            .text_color(muted)
+                            .child(if *open { "▾" } else { "▸" }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(muted)
+                            .child(format!("{name}/")),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(TEXT_CHIP)
+                            .text_color(muted)
+                            .child(files.len().to_string()),
+                    )
+            }
+            TreeRow::File { index, name, depth } => {
+                let index = *index;
+                let Some(file) = details.files.get(index) else {
+                    return panel_row(("tree-row", at), false, cx);
+                };
+                let shown = self.shown_file() == Some(index);
+                let count = if file.binary {
+                    "binary".to_owned()
+                } else {
+                    format!("+{} −{}", file.additions, file.deletions)
+                };
+                panel_row(("tree-row", at), shown, cx)
+                    .h(px(28.))
+                    .pl(px(8. + 20. + INDENT * *depth as f32))
+                    .on_click(cx.listener(move |this, _, _, cx| this.show_file(index, cx)))
+                    .child(
+                        div()
+                            .w(px(12.))
+                            .flex_none()
+                            .text_size(TEXT_CHIP)
+                            .font_medium()
+                            .text_color(status_color(file.status, cx))
+                            .child(file.status.to_string()),
+                    )
+                    .child(div().flex_1().min_w_0().truncate().child(name.clone()))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(TEXT_CHIP)
+                            .text_color(muted)
+                            .child(count),
+                    )
+            }
+        }
     }
 
     fn render_file(
