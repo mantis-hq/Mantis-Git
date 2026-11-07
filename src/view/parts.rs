@@ -162,3 +162,88 @@ pub(super) fn checkbox(
         .when(on, |tick| tick.child("✓"))
         .when(partly, |tick| tick.child("–"))
 }
+
+/// A panel edge that can be dragged to make the panel smaller or bigger.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Edge {
+    Sidebar,
+    Inspector,
+    Diff,
+    Dock,
+    Log,
+    Files,
+    Form,
+    Steps,
+    Settings,
+}
+
+/// What a drag of an edge carries. It draws nothing, since the edge itself moves.
+struct Resize(Edge);
+
+struct Ghost;
+
+impl Render for Ghost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+/// A 4 px strip centred on a panel edge that takes a drag, and tints Blue under the
+/// pointer. `vertical` is an edge between side-by-side panels. Place it between the
+/// two panels, or first in a column for a top edge: it takes no room of its own.
+pub(super) fn grip(edge: Edge, vertical: bool, cx: &App) -> AnyElement {
+    let hover = cx.theme().primary.opacity(0.5);
+    let strip = div()
+        .id(("grip", edge as usize))
+        .absolute()
+        .on_drag(Resize(edge), |_, _, _, cx| cx.new(|_| Ghost));
+    let (wrapper, strip) = if vertical {
+        (
+            div().w(px(0.)),
+            strip
+                .top_0()
+                .left(px(-2.))
+                .w(px(4.))
+                .h_full()
+                .cursor_col_resize(),
+        )
+    } else {
+        (
+            div().h(px(0.)).w_full(),
+            strip
+                .left_0()
+                .top(px(-2.))
+                .h(px(4.))
+                .w_full()
+                .cursor_row_resize(),
+        )
+    };
+    wrapper
+        .relative()
+        .flex_none()
+        .child(deferred(strip.hover(move |style| style.bg(hover))).with_priority(5))
+        .into_any_element()
+}
+
+/// Calls `apply` with the pointer and the bounds of `element` while `edge` is dragged.
+/// Put it on an element that spans the whole area the edge can move through.
+pub(super) fn on_resize<V: 'static, E: InteractiveElement>(
+    element: E,
+    edge: Edge,
+    cx: &mut Context<V>,
+    apply: impl Fn(&mut V, Point<Pixels>, Bounds<Pixels>) + 'static,
+) -> E {
+    element.on_drag_move(
+        cx.listener(move |this, event: &DragMoveEvent<Resize>, _, cx| {
+            if event.drag(cx).0 == edge {
+                apply(this, event.event.position, event.bounds);
+                cx.notify();
+            }
+        }),
+    )
+}
+
+/// A dragged size kept between what a panel can show and what it must leave.
+pub(super) fn fit(size: Pixels, min: f32, max: f32) -> f32 {
+    f32::from(size).clamp(min, max.max(min))
+}

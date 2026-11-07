@@ -23,6 +23,8 @@ pub(super) struct State {
     details: Option<Arc<CommitDetails>>,
     /// The uncommitted changes, read in full so a file's diff needs no further git call.
     working: Option<Working>,
+    /// The width the user dragged the panel to.
+    pub(super) width: Option<f32>,
 }
 
 /// What the working changes row shows: each file's patch, and the same list a commit has.
@@ -151,7 +153,7 @@ impl GraphView {
         let theme = cx.theme();
         let panel = div()
             .id("inspector")
-            .w(WIDTH)
+            .w(self.inspector.width.map_or(WIDTH, px))
             .flex_none()
             .bg(theme.title_bar)
             .border_l_1()

@@ -1,8 +1,8 @@
 //! The task screen for writing a commit: choose hunks, say what they do.
 
 use super::parts::{
-    LineStyle, checkbox, expand_tabs, file_path, header_bar, header_divider, line_style, panel_row,
-    section_label, status_color,
+    Edge, LineStyle, checkbox, expand_tabs, file_path, fit, grip, header_bar, header_divider,
+    line_style, on_resize, panel_row, section_label, status_color,
 };
 use super::{GraphView, Notice, Screen};
 use crate::theme::tokens;
@@ -32,6 +32,9 @@ pub(super) struct State {
     file: usize,
     kind: usize,
     breaking: bool,
+    /// The widths the user dragged the file list and the form to.
+    files_width: Option<f32>,
+    form_width: Option<f32>,
     subject: Option<Entity<InputState>>,
     details: Option<Entity<TextareaState>>,
     committed: Option<String>,
@@ -156,16 +159,7 @@ impl GraphView {
             .flex_1()
             .min_h_0()
             .child(self.render_commit_header(cx))
-            .child(
-                div()
-                    .h_flex()
-                    .items_stretch()
-                    .flex_1()
-                    .min_h_0()
-                    .child(files)
-                    .child(hunks)
-                    .child(form),
-            )
+            .child(self.resizable_columns(files, hunks, form, cx))
             .into_any_element()
     }
 
@@ -209,6 +203,37 @@ impl GraphView {
             )
     }
 
+    /// The file list, the hunks and the form, with the two outer edges draggable.
+    fn resizable_columns(
+        &self,
+        files: Stateful<Div>,
+        hunks: impl IntoElement,
+        form: Stateful<Div>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        const HUNKS_MIN: f32 = 320.;
+        let row = div()
+            .h_flex()
+            .items_stretch()
+            .flex_1()
+            .min_h_0()
+            .child(files)
+            .child(grip(Edge::Files, true, cx))
+            .child(hunks)
+            .child(grip(Edge::Form, true, cx))
+            .child(form);
+        let row = on_resize(row, Edge::Files, cx, |this, pointer, bounds| {
+            let other = this.commit.form_width.unwrap_or(f32::from(FORM_WIDTH));
+            let max = f32::from(bounds.size.width) - other - HUNKS_MIN;
+            this.commit.files_width = Some(fit(pointer.x - bounds.left(), 200., max));
+        });
+        on_resize(row, Edge::Form, cx, |this, pointer, bounds| {
+            let other = this.commit.files_width.unwrap_or(f32::from(FILES_WIDTH));
+            let max = f32::from(bounds.size.width) - other - HUNKS_MIN;
+            this.commit.form_width = Some(fit(bounds.right() - pointer.x, 280., max));
+        })
+    }
+
     fn render_changed_files(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let theme = cx.theme();
         let (panel, border, muted) = (theme.title_bar, theme.border, theme.muted_foreground);
@@ -219,7 +244,7 @@ impl GraphView {
         div()
             .id("changed-files")
             .v_flex()
-            .w(FILES_WIDTH)
+            .w(self.commit.files_width.map_or(FILES_WIDTH, px))
             .flex_none()
             .px_2()
             .py_3()
@@ -416,7 +441,7 @@ impl GraphView {
         let mut form = div()
             .id("commit-form")
             .v_flex()
-            .w(FORM_WIDTH)
+            .w(self.commit.form_width.map_or(FORM_WIDTH, px))
             .flex_none()
             .p_4()
             .gap_4()
