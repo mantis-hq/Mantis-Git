@@ -193,6 +193,9 @@ impl GraphView {
     /// Picks up what happened outside the app while this view was out of sight.
     pub(super) fn catch_up(&mut self, cx: &mut Context<Self>) {
         self.reload_if_refs_moved(cx);
+        if self.working_row_is_selected() {
+            self.reload_working(cx);
+        }
         self.check_paused_operation(cx);
     }
 

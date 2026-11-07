@@ -178,6 +178,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Inspector actions:** "Check out" names the branch when one is at the commit. Commands
   that add a commit say how to undo it in the band under the header.
 - **Commit form:** the bump card only shows when the repository has `v1.2.3` style tags to
+- **Working changes:** the inspector opens with the status sentence and the one blue
+  button, "Review and commit", and lists the changed files under them exactly as it does
+  for a commit, so a file's diff is one click away. Diffs open on a click, never on
+  their own. The list and an open diff refresh when the window is used again.
   count from. Hunks start ticked, except that files with nothing staged start unticked
   when something else is staged, so work staged from a terminal carries over.
 - **Conflicts:** buttons name the branch ("Use feat/x"), never "mine", in line with
