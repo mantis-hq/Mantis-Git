@@ -491,9 +491,19 @@ fn output_header(id: u64, cx: &App) -> Div {
                 .truncate()
                 .font_semibold()
                 .text_color(text)
-                .child(command),
+                .child(command.clone()),
         )
         .child(div().flex_none().text_color(color).child(summary))
+        .child(
+            Button::new("copy-command")
+                .ghost()
+                .small()
+                .label("Copy")
+                .tooltip("Copy the command to the clipboard")
+                .on_click(move |_, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(command.to_string()))
+                }),
+        )
 }
 
 fn output_lines(id: u64, range: Range<usize>, cx: &mut App) -> Vec<Div> {
