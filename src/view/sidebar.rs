@@ -2,9 +2,9 @@
 
 use super::GraphView;
 use super::parts::{panel_row, section_label};
-use crate::git::NamedRef;
-use crate::spotlight::Spotlight;
 use crate::theme::{lane_color, tokens};
+use gitclient_core::git::NamedRef;
+use gitclient_core::spotlight::Spotlight;
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;

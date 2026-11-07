@@ -1,6 +1,4 @@
-//! A throwaway repository for tests. `tests/render.rs` includes this file too, and uses
-//! only part of it.
-#![allow(dead_code)]
+//! A throwaway repository for tests.
 
 use std::fs;
 use std::path::Path;
@@ -49,6 +47,12 @@ pub fn empty_commit(dir: &Path, subject: &str) -> String {
 }
 
 pub struct Repo(TempDir);
+
+impl Default for Repo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Repo {
     /// An empty repository on `main`. Its settings live in the repository as well, because

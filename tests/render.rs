@@ -3,10 +3,6 @@
 //! Needs a working renderer, so it isn't part of `cargo test`. Run it with
 //! `cargo test --test render`. Set `RENDER_OUTPUT=dir` to keep the frames as PNGs.
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-#[path = "../src/testing.rs"]
-mod testing;
-
 fn main() {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     render::run();
@@ -16,9 +12,9 @@ fn main() {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod render {
-    use crate::testing::{Repo, git};
     use gitclient::theme;
     use gitclient::view::{self, GraphView, Status};
+    use gitclient_core::testing::{Repo, git};
     use gpui_kit::assets::Assets;
     use gpui_kit::component::{Theme, ThemeMode};
     use gpui_kit::{
@@ -258,9 +254,9 @@ mod render {
         write("fn parse(input: &str) {\n    input.trim_end();\n}\n");
         commit(path, "Keep leading spaces");
         git(path, &["checkout", "-q", "feat/parser"]);
-        assert!(gitclient::conflict::rebase_onto(path, "main").is_ok());
+        assert!(gitclient_core::conflict::rebase_onto(path, "main").is_ok());
         assert!(
-            gitclient::conflict::detect(path).is_some(),
+            gitclient_core::conflict::detect(path).is_some(),
             "fixture must conflict"
         );
 

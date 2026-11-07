@@ -2,9 +2,9 @@
 
 use super::parts::{LineStyle, expand_tabs, file_path, line_style};
 use super::{GraphView, Notice};
-use crate::details::{self, FileChange};
-use crate::patch::{FilePatch, Line};
 use crate::theme::tokens;
+use gitclient_core::details::{self, FileChange};
+use gitclient_core::patch::{FilePatch, Line};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
@@ -257,7 +257,7 @@ fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut App) -> Vec<Div> {
 mod tests {
     // Not `super::*`: that would bring in GPUI's `test` macro, which shadows Rust's.
     use super::{FileChange, FilePatch, Row, Shown};
-    use crate::patch;
+    use gitclient_core::patch;
 
     #[test]
     fn hunks_flatten_into_rows_and_the_longest_row_is_found() {

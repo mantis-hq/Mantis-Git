@@ -5,10 +5,10 @@ use super::parts::{
     section_label, status_color,
 };
 use super::{GraphView, Notice, Screen};
-use crate::patch::Hunk;
-use crate::text::count;
 use crate::theme::tokens;
-use crate::working::{self, Bump, COMMIT_TYPES, Included, Version, WorkingFile};
+use gitclient_core::patch::Hunk;
+use gitclient_core::text::count;
+use gitclient_core::working::{self, Bump, COMMIT_TYPES, Included, Version, WorkingFile};
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::*;
@@ -199,7 +199,7 @@ impl GraphView {
     fn latest_version(&self) -> Option<Version> {
         let tags = self.refs.by_commit.values().flatten();
         working::latest_version(
-            tags.filter(|r| r.kind == crate::git::RefKind::Tag)
+            tags.filter(|r| r.kind == gitclient_core::git::RefKind::Tag)
                 .map(|r| r.name.as_str()),
         )
     }
@@ -701,8 +701,8 @@ fn checkbox(id: impl Into<ElementId>, on: bool, partly: bool, cx: &App) -> State
 #[cfg(test)]
 mod tests {
     use super::{chosen, starting_ticks, toggled};
-    use crate::patch;
-    use crate::working::WorkingFile;
+    use gitclient_core::patch;
+    use gitclient_core::working::WorkingFile;
 
     const TWO_HUNKS: &str = "\
 diff --git a/x b/x

@@ -14,7 +14,7 @@ mod workspace;
 
 pub use workspace::Workspace;
 
-use crate::git::{self, Entry, LoadEvent, Refs};
+use gitclient_core::git::{self, Entry, LoadEvent, Refs};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
@@ -517,8 +517,8 @@ fn repository_name(path: &Path) -> String {
 mod tests {
     // Not `super::*`: that would bring in GPUI's `test` macro, which shadows Rust's.
     use super::{Entry, GraphView, LoadEvent, Status, bind_keys};
-    use crate::git::Commit;
-    use crate::graph::GraphBuilder;
+    use gitclient_core::git::Commit;
+    use gitclient_core::graph::GraphBuilder;
     use gpui_kit::{Entity, Modifiers, TestAppContext, VisualTestContext, point, px};
     use std::sync::Arc;
 
@@ -669,7 +669,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn a_force_push_waits_for_confirmation_and_others_do_not(cx: &mut TestAppContext) {
-        use crate::status::NextAction;
+        use gitclient_core::status::NextAction;
         let (view, mut cx) = open_view(cx);
         view.update(&mut cx, |view, cx| {
             let force = NextAction::ForcePush {

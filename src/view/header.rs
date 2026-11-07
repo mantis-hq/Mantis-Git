@@ -3,8 +3,8 @@
 use super::notice::Confirm;
 use super::parts::{header_bar, header_divider};
 use super::{GraphView, Status, repository_name};
-use crate::status::{self, NextAction, Span};
-use crate::text::count;
+use gitclient_core::status::{self, NextAction, Span};
+use gitclient_core::text::count;
 use gpui_kit::component::button::*;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::*;
@@ -62,7 +62,8 @@ impl GraphView {
     fn render_sentence(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let current = theme.primary;
-        let other = crate::theme::lane_color(crate::graph::LaneColor::Branch(0), theme.is_dark());
+        let other =
+            crate::theme::lane_color(gitclient_core::graph::LaneColor::Branch(0), theme.is_dark());
         let spans = self.refs.status.sentence().into_iter().map(|span| {
             let (text, color) = match span {
                 Span::Text(text) => (text, None),

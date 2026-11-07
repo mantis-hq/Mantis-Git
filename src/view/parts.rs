@@ -1,8 +1,8 @@
 //! Pieces of the interface that more than one region draws, so they can't drift apart.
 
-use crate::patch::LineKind;
-use crate::text::split_path;
 use crate::theme::{selected_row, tokens};
+use gitclient_core::patch::LineKind;
+use gitclient_core::text::split_path;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;

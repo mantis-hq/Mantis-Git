@@ -3,9 +3,9 @@
 use super::notice::Confirm;
 use super::parts::{expand_tabs, header_bar, section_label, title};
 use super::{GraphView, Notice, Screen};
-use crate::conflict::{self, Decision, Progress, Side, Step, StepState};
-use crate::graph::LaneColor;
 use crate::theme::{lane_color, tokens};
+use gitclient_core::conflict::{self, Decision, Progress, Side, Step, StepState};
+use gitclient_core::graph::LaneColor;
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::scroll::ScrollableElement as _;

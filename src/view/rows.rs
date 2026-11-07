@@ -1,11 +1,11 @@
 //! The commit rows: lanes on a canvas, then the subject, refs, author and time.
 
 use super::GraphView;
-use crate::git::{Commit, Ref, RefKind, split_subject};
-use crate::graph::{Lane, Row};
-use crate::spotlight::Spotlight;
 use crate::theme::{lane_color, selected_row, tokens};
 use chrono::{Datelike, Local, TimeZone, Utc};
+use gitclient_core::git::{Commit, Ref, RefKind, split_subject};
+use gitclient_core::graph::{Lane, Row};
+use gitclient_core::spotlight::Spotlight;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -425,9 +425,9 @@ fn paint_circle(x: Pixels, y: Pixels, radius: f32, color: Hsla, window: &mut Win
 #[cfg(test)]
 mod tests {
     use super::{MAX_VISIBLE_LANES, commit_chips, format_when, is_clipped};
-    use crate::git::{Commit, Ref, RefKind};
-    use crate::graph::GraphBuilder;
     use chrono::{Local, TimeZone};
+    use gitclient_core::git::{Commit, Ref, RefKind};
+    use gitclient_core::graph::GraphBuilder;
     use std::sync::Arc;
 
     #[test]

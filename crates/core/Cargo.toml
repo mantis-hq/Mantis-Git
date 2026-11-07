@@ -1,0 +1,17 @@
+[package]
+name = "gitclient-core"
+# release-please keeps this in step with the app, and can't update an inherited version.
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+# The throwaway repository in `testing.rs`, for the app's own tests.
+testing = ["dep:tempfile"]
+
+[dependencies]
+async-channel = "2"
+tempfile = { version = "3", optional = true }
+
+[dev-dependencies]
+tempfile = "3"

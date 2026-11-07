@@ -2111,10 +2111,18 @@ checksum = "1033caf0b349c518623b5396bfb2cf0bddf44f0306d543a250e5743297aafd10"
 name = "gitclient"
 version = "0.1.0"
 dependencies = [
- "async-channel",
  "chrono",
+ "gitclient-core",
  "gpui-kit",
  "image",
+ "tempfile",
+]
+
+[[package]]
+name = "gitclient-core"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
  "tempfile",
 ]
 

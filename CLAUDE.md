@@ -2,6 +2,12 @@
 
 A desktop Git client written in Rust on `gpui-kit`.
 
+## Layout
+
+`crates/core` is everything about a repository, and `src` is the interface on top of it.
+`crates/core` must never depend on gpui-kit: if something doesn't need a window, it
+belongs there.
+
 ## UI style
 
 All UI work must follow [docs/design.md](docs/design.md): Catppuccin Mocha, Blue as the

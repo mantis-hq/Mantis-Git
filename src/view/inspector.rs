@@ -2,11 +2,11 @@
 
 use super::parts::{file_path, panel_row, section_label, status_color, title};
 use super::{GraphView, Status};
-use crate::details::{self, CommitDetails, FileChange};
-use crate::git::{Commit, Entry, RefKind, split_subject};
-use crate::text::{count, short_oid};
 use crate::theme::tokens;
 use chrono::{Local, TimeZone};
+use gitclient_core::details::{self, CommitDetails, FileChange};
+use gitclient_core::git::{Commit, Entry, RefKind, split_subject};
+use gitclient_core::text::{count, short_oid};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
