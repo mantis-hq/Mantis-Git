@@ -194,6 +194,14 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   `git worktree add` that brings it back. The main worktree, the one on show and a locked
   one stay, and the menu says why. Git refuses to remove one with uncommitted changes,
   and the app never forces it. With one working tree the section isn't drawn.
+- Remotes: the "Remotes" header ends in a quiet blue "+ Add" that opens a form band under
+  the header (the notice band's look), with a name, an address, and quiet "Cancel" and
+  result-named buttons ("Add remote", "Save origin"). `Enter` saves and `Esc` closes. Each
+  remote's top folder in the list, or a row saying "no branches yet" for one nothing has
+  been fetched from, opens a menu on right-click: "Edit <name>" (the same form, filled in;
+  renaming also renames its remote branches), "Copy address", and in red "Remove remote
+  <name>", which asks first and gives the `git remote add` that brings it back. Names that
+  can't work are turned down in the form in Peach, before git runs.
 - A branch row ends with its count against the default branch (`+2 −1`), then against
   the remote branch it tracks (`↑1 ↓2`: to push, to pull). Level or untracked shows nothing.
 

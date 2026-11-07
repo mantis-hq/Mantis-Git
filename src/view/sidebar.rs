@@ -74,6 +74,9 @@ enum Item {
         depth: usize,
     },
     Worktree(usize),
+    /// A remote that has no remote branches yet, such as one just added. Index into
+    /// `remote_configs`.
+    Remote(usize),
     Stash(usize),
 }
 
@@ -325,7 +328,19 @@ impl GraphView {
         let muted = theme.muted_foreground;
         let text = theme.secondary_foreground;
         let key = format!("{list}/{path}");
+        // The top folder of the remote branches is the remote itself.
+        let remote = (list == RefList::Remotes.key() && depth == 0 && self.is_remote(&path))
+            .then(|| path.clone());
         panel_row(SharedString::from(format!("folder-{key}")), false, cx)
+            .when_some(remote, |row, name| {
+                row.on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.open_remote_menu(&name, event.position, cx);
+                    }),
+                )
+            })
             .h(px(30.))
             .pl(indent(depth))
             .gap_1()
@@ -420,6 +435,9 @@ impl GraphView {
             });
             if self.sidebar.expanded.contains(&section) {
                 self.push_tree(list, refs.iter().map(|named| &*named.name), &mut items);
+                if section == Section::Remotes {
+                    items.extend(self.remotes_without_branches().map(Item::Remote));
+                }
             }
         }
 
@@ -433,6 +451,23 @@ impl GraphView {
             items.extend((0..stashes).map(Item::Stash));
         }
         items
+    }
+
+    /// The remotes that no remote branch shows, until the first fetch brings some.
+    fn remotes_without_branches(&self) -> impl Iterator<Item = usize> + '_ {
+        let has_branch = |name: &str| {
+            let prefix = format!("{name}/");
+            self.refs
+                .remotes
+                .iter()
+                .any(|branch| branch.name.starts_with(&prefix))
+        };
+        self.refs
+            .remote_configs
+            .iter()
+            .enumerate()
+            .filter(move |(_, remote)| !has_branch(&remote.name))
+            .map(|(index, _)| index)
     }
 
     /// The ref at `index` in a list.
@@ -489,6 +524,10 @@ impl GraphView {
                 None => slot,
             },
             Item::Worktree(index) => match self.render_worktree_row(*index, cx) {
+                Some(row) => slot.child(row),
+                None => slot,
+            },
+            Item::Remote(index) => match self.render_remote_row(*index, cx) {
                 Some(row) => slot.child(row),
                 None => slot,
             },
@@ -756,6 +795,43 @@ impl GraphView {
         )
     }
 
+    /// A remote with nothing fetched from it yet. It is what there is to right-click.
+    fn render_remote_row(&self, index: usize, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let remote = self.refs.remote_configs.get(index)?;
+        let theme = cx.theme();
+        let (muted, text) = (theme.muted_foreground, theme.secondary_foreground);
+        let name = remote.name.clone();
+        let menu_name = remote.name.clone();
+        Some(
+            panel_row(("remote", index), false, cx)
+                .h(px(30.))
+                .pl(indent(0))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.open_remote_menu(&menu_name, event.position, cx);
+                    }),
+                )
+                .child(div().size(px(8.)).flex_none().rounded_full().bg(muted))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(text)
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(TEXT_CHIP)
+                        .text_color(muted)
+                        .child("no branches yet"),
+                ),
+        )
+    }
+
     fn render_section_header(
         &self,
         section: Section,
@@ -764,12 +840,31 @@ impl GraphView {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = cx.theme();
+        let link = theme.primary;
         panel_row(title, false, cx)
             .h(px(30.))
             .justify_between()
             .text_color(tokens(theme.is_dark()).subtext0)
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_section(section, cx)))
-            .child(title)
+            .child(div().flex_1().child(title))
+            .when(section == Section::Remotes, |row| {
+                row.child(
+                    div()
+                        .id("add-remote")
+                        .flex_none()
+                        .px_1()
+                        .rounded(px(4.))
+                        .cursor_pointer()
+                        .text_color(link)
+                        .font_semibold()
+                        .child("+ Add")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            // The header under it would otherwise fold the section.
+                            cx.stop_propagation();
+                            this.open_remote_form(None, cx);
+                        })),
+                )
+            })
             .child(
                 div()
                     .text_size(TEXT_CHIP)

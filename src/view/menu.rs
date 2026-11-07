@@ -157,7 +157,12 @@ impl GraphView {
         }
     }
 
-    fn show_menu(&mut self, position: Point<Pixels>, lines: Vec<Line>, cx: &mut Context<Self>) {
+    pub(super) fn show_menu(
+        &mut self,
+        position: Point<Pixels>,
+        lines: Vec<Line>,
+        cx: &mut Context<Self>,
+    ) {
         if !lines.is_empty() {
             self.hovered_refs = None;
             self.popover_hovered = false;
@@ -173,6 +178,8 @@ impl GraphView {
             cx.emit(SwitchWorktree(path.clone()));
         } else if let Command::OpenWorktreeInTab { path } = &command {
             cx.emit(OpenWorktreeInTab(path.clone()));
+        } else if let Command::EditRemote { name } = &command {
+            self.open_remote_form(Some(name.clone()), cx);
         } else if let Some(text) = copied_text(&command) {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
             self.notice = command
