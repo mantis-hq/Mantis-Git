@@ -371,7 +371,6 @@ impl GraphView {
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .child(self.render_column_header(cx))
             .child(
                 div()
                     .relative()
@@ -457,7 +456,6 @@ fn repository_name(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that would bring in GPUI's `test` macro, which shadows Rust's.
-    use super::rows::MIN_GRAPH_WIDTH;
     use super::{Entry, GraphView, LoadEvent, Status, bind_keys};
     use crate::git::Commit;
     use crate::graph::GraphBuilder;
@@ -498,15 +496,6 @@ mod tests {
         let view = window.root(cx).unwrap();
         let cx = VisualTestContext::from_window(window.into(), cx);
         (view, cx)
-    }
-
-    #[gpui_kit::test]
-    fn a_single_lane_leaves_room_for_the_graph_heading(cx: &mut TestAppContext) {
-        let (view, mut cx) = open_view(cx);
-        load(&view, &["a", "b"], &mut cx);
-        view.read_with(&cx, |view, _| {
-            assert_eq!(view.graph_width(), MIN_GRAPH_WIDTH);
-        });
     }
 
     fn load(view: &Entity<GraphView>, names: &[&str], cx: &mut VisualTestContext) {
@@ -609,11 +598,8 @@ mod tests {
         load(&view, &["a", "b", "c"], &mut cx);
         cx.run_until_parked();
 
-        // The second row, below the 44px toolbar and 26px header.
-        cx.simulate_click(
-            point(px(300.), px(44. + 26. + 28. + 14.)),
-            Modifiers::none(),
-        );
+        // The second row, below the 52px header.
+        cx.simulate_click(point(px(300.), px(52. + 32. + 16.)), Modifiers::none());
         assert_eq!(view.read_with(&cx, |view, _| view.selected()), Some(1));
     }
 }

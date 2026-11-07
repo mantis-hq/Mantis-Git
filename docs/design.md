@@ -93,7 +93,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Graph window: 300 px branch sidebar, graph, 380 px inspector. The diff sits under the
   graph, so history stays visible while reading it.
 - Task screens (commit, conflict) replace the sidebar and link back to the graph.
-- Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide.
+- Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide. Rows have no
+  column headings or hash: the subject, then chips, then author and a short time
+  ("12m", "3h", "Tue", "Oct 30"). The full hash belongs to the inspector.
 - Radii: 4 px for chips and checkboxes, 6 px for buttons and inputs, 8 px for cards.
 - Separate regions with Surface 0 borders and surface changes. No drop shadows, no
   coloured side stripes on cards, no emoji.
@@ -118,6 +120,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Quiet button:** text only, Subtext 1, with a faint hover fill.
 - **Ref chips:** tinted with 14% of the branch colour, text in full colour. Only the
   current branch gets a solid fill. Chips follow the subject, so subjects stay aligned.
+  A branch and its remote at the same commit are one chip with a small cloud.
 - **Files:** a status letter, then the path with its folder muted, then `+n −n`.
 - **Diffs:** added and removed lines use a 10% green or red wash. Text stays Text.
 - **Focus:** every control shows a 2 px blue focus ring, and each action has a key.
