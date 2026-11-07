@@ -3,6 +3,7 @@
 use super::GraphView;
 use crate::git::{Ref, RefKind};
 use crate::graph::{Lane, Row};
+use crate::spotlight::Spotlight;
 use crate::theme::{lane_color, selected_row};
 use chrono::{DateTime, Local};
 use gpui_kit::component::*;
@@ -21,6 +22,9 @@ const NODE_RADIUS: f32 = 4.;
 /// of the window.
 const MAX_VISIBLE_LANES: u32 = 24;
 const MAX_VISIBLE_REFS: usize = 3;
+/// How far things outside a spotlighted branch fade.
+const FADED_ROW: f32 = 0.28;
+const FADED_LINE: f32 = 0.16;
 
 const AUTHOR_WIDTH: Pixels = px(150.);
 const DATE_WIDTH: Pixels = px(136.);
@@ -52,6 +56,8 @@ impl GraphView {
             let selected = self.selected == Some(index);
             let row_background = if selected { active } else { background };
             let lane_row = entry.row.clone();
+            let spotlight = self.sidebar.spotlight.clone();
+            let commit_lit = spotlight.as_ref().is_none_or(|s| s.commit_is_lit(index));
             let is_head = self.refs.head.as_ref() == Some(&commit.oid);
             let is_merge = commit.parents.len() > 1;
             let commit_refs = self.refs.by_commit.get(&commit.oid);
@@ -66,6 +72,7 @@ impl GraphView {
                     .gap_3()
                     .text_sm()
                     .bg(row_background)
+                    .when(!commit_lit, |row| row.opacity(FADED_ROW))
                     .when(!selected, |row| row.hover(|style| style.bg(hover)))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.select(index, cx);
@@ -84,6 +91,7 @@ impl GraphView {
                                         paint_row(
                                             bounds,
                                             &lane_row,
+                                            spotlight.as_deref().map(|spot| (spot, index)),
                                             NodeStyle {
                                                 is_head,
                                                 is_merge,
@@ -232,6 +240,7 @@ struct NodeStyle {
 fn paint_row(
     bounds: Bounds<Pixels>,
     row: &Row,
+    spotlight: Option<(&Spotlight, usize)>,
     node: NodeStyle,
     is_dark: bool,
     window: &mut Window,
@@ -241,26 +250,31 @@ fn paint_row(
     let middle = top + bounds.size.height / 2.;
     let node_x = x_of(row.column);
 
+    let commit_lit = spotlight.is_none_or(|(spot, index)| spot.commit_is_lit(index));
+    let line_color = |lane: &Lane, lit: bool| {
+        let color = lane_color(lane.color, is_dark);
+        if lit {
+            color
+        } else {
+            color.opacity(FADED_LINE)
+        }
+    };
+    let column_lit =
+        |column: u32| spotlight.is_none_or(|(spot, index)| spot.column_is_lit(index, column));
+
     for lane in row.through.iter() {
-        paint_vertical(x_of(lane.column), top, bottom, lane, is_dark, window);
+        let color = line_color(lane, column_lit(lane.column));
+        paint_vertical(x_of(lane.column), top, bottom, color, window);
     }
     for lane in &row.incoming {
-        paint_edge(
-            point(x_of(lane.column), top),
-            point(node_x, middle),
-            lane,
-            is_dark,
-            window,
-        );
+        let color = line_color(lane, column_lit(lane.column));
+        let from = point(x_of(lane.column), top);
+        paint_edge(from, point(node_x, middle), color, window);
     }
     for lane in &row.outgoing {
-        paint_edge(
-            point(node_x, middle),
-            point(x_of(lane.column), bottom),
-            lane,
-            is_dark,
-            window,
-        );
+        let color = line_color(lane, commit_lit);
+        let to = point(x_of(lane.column), bottom);
+        paint_edge(point(node_x, middle), to, color, window);
     }
 
     if node.is_head {
@@ -281,28 +295,15 @@ fn paint_row(
     }
 }
 
-fn paint_vertical(
-    x: Pixels,
-    top: Pixels,
-    bottom: Pixels,
-    lane: &Lane,
-    is_dark: bool,
-    window: &mut Window,
-) {
+fn paint_vertical(x: Pixels, top: Pixels, bottom: Pixels, color: Hsla, window: &mut Window) {
     let half = px(LINE_WIDTH / 2.);
     let bounds = Bounds::from_corners(point(x - half, top), point(x + half, bottom));
-    window.paint_quad(fill(bounds, lane_color(lane.color, is_dark)));
+    window.paint_quad(fill(bounds, color));
 }
 
-fn paint_edge(
-    from: Point<Pixels>,
-    to: Point<Pixels>,
-    lane: &Lane,
-    is_dark: bool,
-    window: &mut Window,
-) {
+fn paint_edge(from: Point<Pixels>, to: Point<Pixels>, color: Hsla, window: &mut Window) {
     if from.x == to.x {
-        paint_vertical(from.x, from.y, to.y, lane, is_dark, window);
+        paint_vertical(from.x, from.y, to.y, color, window);
         return;
     }
     let bend = (to.y - from.y) * 0.6;
@@ -310,7 +311,7 @@ fn paint_edge(
     path.move_to(from);
     path.cubic_bezier_to(to, point(from.x, from.y + bend), point(to.x, to.y - bend));
     if let Ok(path) = path.build() {
-        window.paint_path(path, lane_color(lane.color, is_dark));
+        window.paint_path(path, color);
     }
 }
 

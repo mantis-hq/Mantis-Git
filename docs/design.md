@@ -92,6 +92,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Header: 52 px, Mantle, with a 1 px Surface 0 bottom border.
 - Graph window: 300 px branch sidebar, graph, 380 px inspector. The diff sits under the
   graph, so history stays visible while reading it.
+- The sidebar starts closed below 1500 px, because the two side panels would leave 520 px
+  for the graph at the default window. A quiet button and `Ctrl B` open it at any width.
 - Task screens (commit, conflict) replace the sidebar and link back to the graph.
 - Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide.
 - Radii: 4 px for chips and checkboxes, 6 px for buttons and inputs, 8 px for cards.

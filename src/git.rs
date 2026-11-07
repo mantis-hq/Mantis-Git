@@ -64,6 +64,38 @@ pub struct Ref {
     pub color: LaneColor,
 }
 
+/// A local branch, for the sidebar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Branch {
+    pub name: String,
+    pub tip: Arc<str>,
+    pub color: LaneColor,
+    pub is_head: bool,
+    /// Commits this has that the default branch doesn't, and the other way around.
+    pub ahead_behind: Option<(u32, u32)>,
+}
+
+impl Branch {
+    /// How the branch stands against the default branch, in a few characters.
+    pub fn delta(&self, default_branch: Option<&str>) -> String {
+        match self.ahead_behind {
+            _ if default_branch == Some(self.name.as_str()) => String::new(),
+            Some((0, _)) => "merged".to_owned(),
+            Some((ahead, 0)) => format!("+{ahead}"),
+            Some((ahead, behind)) => format!("+{ahead} −{behind}"),
+            None => String::new(),
+        }
+    }
+}
+
+/// A remote branch or tag, for the sidebar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NamedRef {
+    pub name: String,
+    pub tip: Arc<str>,
+    pub color: LaneColor,
+}
+
 /// The state of a repository's refs at one moment.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Refs {
@@ -73,6 +105,12 @@ pub struct Refs {
     pub head_branch: Option<String>,
     /// The branch history is shared on, usually `main`.
     pub default_branch: Option<String>,
+    /// HEAD's branch, then the default branch, then the rest by name.
+    pub branches: Vec<Branch>,
+    pub remotes: Vec<NamedRef>,
+    pub tags: Vec<NamedRef>,
+    /// Stash subjects, newest first.
+    pub stashes: Vec<String>,
     /// How to lay out the graph for this repository.
     pub plan: Plan,
     /// The top of the working tree, or the repository itself when it is bare.
@@ -271,6 +309,45 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
         }
     }
 
+    let ahead_behind = default_branch
+        .as_deref()
+        .map(|default| read_ahead_behind(repo, &found, default))
+        .unwrap_or_default();
+    for &(kind, name, commit, _) in &found {
+        let tip: Arc<str> = commit.into();
+        let color = color_of(kind, name);
+        match kind {
+            RefKind::Branch => refs.branches.push(Branch {
+                name: name.to_owned(),
+                tip,
+                color,
+                is_head: head_branch == Some(name),
+                ahead_behind: ahead_behind.get(name).copied(),
+            }),
+            RefKind::Remote => refs.remotes.push(NamedRef {
+                name: name.to_owned(),
+                tip,
+                color,
+            }),
+            RefKind::Tag => refs.tags.push(NamedRef {
+                name: name.to_owned(),
+                tip,
+                color,
+            }),
+            RefKind::DetachedHead => {}
+        }
+    }
+    refs.branches.sort_by_key(|branch| {
+        let is_default = default_branch.as_deref() == Some(branch.name.as_str());
+        (!branch.is_head, !is_default, branch.name.clone())
+    });
+    refs.tags.reverse();
+    let stashes = run_git(repo, &["stash", "list", "--format=%s"])?;
+    refs.stashes = String::from_utf8_lossy(&stashes.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect();
+
     refs.plan.fork = default_branch
         .as_deref()
         .filter(|&default| head.is_some() && head_branch != Some(default))
@@ -353,6 +430,39 @@ fn branch_colors(
         colors.insert(head.to_owned(), LaneColor::Head);
     }
     colors
+}
+
+/// How each local branch stands against the default branch, in one git call. Old versions
+/// of git don't know this format, which only costs the sidebar its counts.
+fn read_ahead_behind(
+    repo: &Path,
+    found: &[FoundRef],
+    default: &str,
+) -> HashMap<String, (u32, u32)> {
+    let base = found
+        .iter()
+        .find(|r| r.0 == RefKind::Branch && r.1 == default)
+        .or_else(|| {
+            found
+                .iter()
+                .find(|r| r.0 == RefKind::Remote && branch_key(r.0, r.1) == default)
+        });
+    let Some(base) = base else {
+        return HashMap::new();
+    };
+    let format = format!("--format=%(refname:short)%00%(ahead-behind:{})", base.3);
+    let Ok(output) = run_git(repo, &["for-each-ref", &format, "refs/heads"]) else {
+        return HashMap::new();
+    };
+    let listing = String::from_utf8_lossy(&output.stdout);
+    listing
+        .lines()
+        .filter_map(|line| {
+            let (name, counts) = line.split_once('\0')?;
+            let (ahead, behind) = counts.split_once(' ')?;
+            Some((name.to_owned(), (ahead.parse().ok()?, behind.parse().ok()?)))
+        })
+        .collect()
 }
 
 /// Where HEAD's first-parent line joins `base`. This can't be `git merge-base`: after
@@ -893,6 +1003,48 @@ mod tests {
         repo.git(&["branch", "-f", "aaa"]);
         repo.git(&["branch", "-f", "zzz"]);
         assert_eq!(colors(&repo)["aaa"], before["aaa"]);
+    }
+
+    #[test]
+    fn branches_list_head_first_then_the_default_and_say_how_they_stand() {
+        let repo = Repo::new();
+        repo.commit("base");
+        repo.git(&["branch", "merged-one"]);
+        repo.git(&["checkout", "-q", "-b", "zebra"]);
+        repo.commit("z1");
+        repo.commit("z2");
+        repo.git(&["checkout", "-q", "main"]);
+        repo.commit("on main");
+        repo.git(&["checkout", "-q", "-b", "alpha"]);
+        repo.commit("a1");
+
+        let refs = read_refs(repo.path()).unwrap();
+        let names: Vec<_> = refs.branches.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, ["alpha", "main", "merged-one", "zebra"]);
+
+        let default = refs.default_branch.as_deref();
+        let delta = |name: &str| {
+            let branch = refs.branches.iter().find(|b| b.name == name).unwrap();
+            branch.delta(default)
+        };
+        assert_eq!(delta("main"), "", "the default has nothing to compare with");
+        assert_eq!(delta("alpha"), "+1");
+        assert_eq!(delta("zebra"), "+2 −1");
+        assert_eq!(delta("merged-one"), "merged");
+    }
+
+    #[test]
+    fn stashes_are_listed_though_not_drawn() {
+        let repo = Repo::new();
+        std::fs::write(repo.path().join("file"), "one").unwrap();
+        repo.git(&["add", "file"]);
+        repo.commit("base");
+        std::fs::write(repo.path().join("file"), "two").unwrap();
+        repo.git(&["stash", "push", "-q", "-m", "half done"]);
+
+        let refs = read_refs(repo.path()).unwrap();
+        assert_eq!(refs.stashes.len(), 1);
+        assert!(refs.stashes[0].contains("half done"));
     }
 
     #[test]

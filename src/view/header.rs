@@ -48,6 +48,7 @@ impl GraphView {
                         .child(format!("{} commits", self.entries.len())),
                 )
             })
+            .children(self.render_sidebar_toggle(cx))
             .when(self.repo.is_some(), |bar| {
                 bar.child(
                     Button::new("refresh")
