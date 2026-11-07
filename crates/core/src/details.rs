@@ -1,6 +1,6 @@
 //! What a single commit changed, and the commands that act on one.
 
-use crate::ops;
+use crate::ops::{self, Cancel};
 use crate::patch::{self, FilePatch};
 use crate::text::{count, short_oid};
 use std::path::Path;
@@ -48,12 +48,15 @@ impl CommitDetails {
     }
 }
 
-pub fn read(repo: &Path, oid: &str) -> Result<CommitDetails, String> {
-    let body = ops::run(
+/// Reads what a commit changed. A set `cancel` stops it with [`ops::CANCELLED`], which
+/// matters because a commit of thousands of files takes a while to list.
+pub fn read(repo: &Path, oid: &str, cancel: &Cancel) -> Result<CommitDetails, String> {
+    let body = ops::run_cancellable(
         repo,
         &["log", "-1", "--no-show-signature", "--format=%b", oid],
+        cancel,
     )?;
-    let output = ops::run(
+    let output = ops::run_cancellable(
         repo,
         &[
             "diff-tree",
@@ -66,6 +69,7 @@ pub fn read(repo: &Path, oid: &str) -> Result<CommitDetails, String> {
             "--no-commit-id",
             oid,
         ],
+        cancel,
     )?;
     Ok(CommitDetails {
         oid: oid.into(),
@@ -210,12 +214,38 @@ mod tests {
     }
 
     #[test]
+    fn a_cancelled_read_stops_instead_of_listing_files() {
+        let repo = Repo::new();
+        repo.write("a", "one\n");
+        let oid = repo.commit("first");
+
+        let cancel = Cancel::new();
+        cancel.cancel();
+        assert_eq!(
+            read(repo.path(), &oid, &cancel),
+            Err(ops::CANCELLED.to_owned())
+        );
+    }
+
+    #[test]
+    fn a_read_of_many_files_lists_them_all() {
+        let repo = Repo::new();
+        for index in 0..300 {
+            repo.write(&format!("dir/file{index}"), "x\n");
+        }
+        let oid = repo.commit("many");
+
+        let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
+        assert_eq!(details.files.len(), 300);
+    }
+
+    #[test]
     fn a_root_commit_lists_its_files_as_added() {
         let repo = Repo::new();
         repo.write("src/app.rs", "one\ntwo\n");
         let oid = repo.commit("first\n\nThe details.\nAcross lines.");
 
-        let details = read(repo.path(), &oid).unwrap();
+        let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
         assert_eq!(details.body, "The details.\nAcross lines.");
         assert_eq!(details.files.len(), 1);
         let file = &details.files[0];
@@ -236,7 +266,7 @@ mod tests {
         fs::write(repo.path().join("blob"), [3u8, 0, 4]).unwrap();
         let oid = repo.commit("change");
 
-        let details = read(repo.path(), &oid).unwrap();
+        let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
         let file = |path: &str| details.files.iter().find(|f| &*f.path == path).unwrap();
         assert_eq!((file("keep").status, file("keep").additions), ('M', 1));
         assert_eq!(file("keep").deletions, 1);
@@ -257,7 +287,7 @@ mod tests {
         repo.write("other", "a\nb\n");
         let oid = repo.commit("rename");
 
-        let details = read(repo.path(), &oid).unwrap();
+        let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
         let renamed = details.files.iter().find(|f| f.status == 'R').unwrap();
         assert_eq!(&*renamed.path, "after.rs");
         assert_eq!(renamed.old_path.as_deref(), Some("before.rs"));
@@ -273,7 +303,7 @@ mod tests {
         let repo = Repo::new();
         repo.write("with space/a\tb.txt", "x\n");
         let oid = repo.commit("odd path");
-        let details = read(repo.path(), &oid).unwrap();
+        let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
         assert_eq!(&*details.files[0].path, "with space/a\tb.txt");
         assert_eq!(details.files[0].additions, 1);
     }
@@ -292,7 +322,12 @@ mod tests {
         repo.git(&["merge", "-q", "--no-ff", "-m", "merge", "side"]);
 
         let merge = repo.git(&["rev-parse", "HEAD"]);
-        assert!(read(repo.path(), &merge).unwrap().files.is_empty());
+        assert!(
+            read(repo.path(), &merge, &Cancel::new())
+                .unwrap()
+                .files
+                .is_empty()
+        );
     }
 
     #[test]
@@ -305,7 +340,7 @@ mod tests {
         repo.write("b", "also\n");
         let oid = repo.commit("both");
 
-        let details = read(repo.path(), &oid).unwrap();
+        let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
         let patch = file_diff(repo.path(), &oid, &details.files[0]).unwrap();
         assert_eq!(patch.path, "a");
         assert_eq!(patch.hunks[0].lines.len(), 2);
@@ -320,7 +355,7 @@ mod tests {
         repo.write("after", &format!("{}extra\n", lines(20, "same")));
         let oid = repo.commit("rename");
 
-        let details = read(repo.path(), &oid).unwrap();
+        let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
         let patch = file_diff(repo.path(), &oid, &details.files[0]).unwrap();
         assert_eq!(patch.path, "after");
         let added = patch.hunks[0].lines.iter().filter(|l| l.old.is_none());
@@ -332,7 +367,7 @@ mod tests {
         let repo = Repo::new();
         repo.write("a", "one\ntwo\n");
         let oid = repo.commit("root");
-        let details = read(repo.path(), &oid).unwrap();
+        let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
         let patch = file_diff(repo.path(), &oid, &details.files[0]).unwrap();
         assert_eq!(patch.hunks[0].lines.len(), 2);
     }

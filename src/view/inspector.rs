@@ -7,13 +7,16 @@ use crate::theme::tokens;
 use chrono::{Local, TimeZone};
 use gitclient_core::details::{self, CommitDetails, FileChange};
 use gitclient_core::git::{Commit, Entry, split_subject};
+use gitclient_core::ops::Cancel;
 use gitclient_core::text::{count, short_oid};
 use gitclient_core::working::{self, WorkingFile};
 use gpui_kit::component::button::*;
-use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::ops::Range;
 use std::sync::Arc;
 
 const WIDTH: Pixels = px(380.);
@@ -26,6 +29,12 @@ pub(super) struct State {
     working: Option<Working>,
     /// The width the user dragged the panel to.
     pub(super) width: Option<f32>,
+    /// Scroll of the file list, which draws only the rows in view so that a commit with
+    /// thousands of files costs no more than one with a few.
+    files_scroll: UniformListScrollHandle,
+    /// The read of the selected commit's details, while it runs. Selecting something else
+    /// sets it, so that git stops work nobody will look at.
+    loading: Option<Cancel>,
 }
 
 /// What the working changes row shows: each file's patch, and the same list a commit has.
@@ -76,6 +85,7 @@ impl GraphView {
     /// Loads the new selection's details, keeping the old ones up until then so that
     /// moving through the list doesn't flash an empty panel.
     pub(super) fn selection_changed(&mut self, cx: &mut Context<Self>) {
+        self.stop_loading_details();
         if self.working_row_is_selected() {
             return self.reload_working(cx);
         }
@@ -85,18 +95,33 @@ impl GraphView {
         };
         let oid = commit.oid.clone();
         let wanted = oid.clone();
+        let cancel = Cancel::new();
+        self.inspector.loading = Some(cancel.clone());
+        let finished = cancel.clone();
         Self::spawn_blocking(
-            move || details::read(&repo, &wanted),
+            move || details::read(&repo, &wanted, &cancel),
             move |this, details, cx| {
-                if this.selected_oid.as_ref() != Some(&oid) {
+                // Only the newest read has anything to say: an older one was cancelled.
+                if finished.is_cancelled() || this.selected_oid.as_ref() != Some(&oid) {
                     return;
                 }
+                this.inspector.loading = None;
                 this.inspector.details = details.ok().map(Arc::new);
+                this.inspector
+                    .files_scroll
+                    .scroll_to_item(0, ScrollStrategy::Top);
                 this.details_loaded(cx);
                 cx.notify();
             },
             cx,
         );
+    }
+
+    /// Cancels the read of the previous selection's details, if it is still running.
+    fn stop_loading_details(&mut self) {
+        if let Some(cancel) = self.inspector.loading.take() {
+            cancel.cancel();
+        }
     }
 
     /// Reads the uncommitted changes. Also run when the window is used again, because
@@ -171,10 +196,10 @@ impl GraphView {
                             .size_full()
                             .p_4()
                             .gap_4()
-                            .overflow_y_scrollbar()
                             .child(
                                 div()
                                     .v_flex()
+                                    .flex_none()
                                     .gap_3()
                                     .child(title().child("Working changes"))
                                     .child(div().text_color(subtext).child(sentence))
@@ -213,16 +238,40 @@ impl GraphView {
                         .size_full()
                         .p_4()
                         .gap_4()
-                        .overflow_y_scrollbar()
-                        .child(self.render_summary(commit, loaded, cx))
-                        .child(self.render_facts(commit, cx))
-                        .child(self.render_actions(commit, cx))
+                        .child(
+                            // Capped, so that a long message can't push the files out of view.
+                            div()
+                                .v_flex()
+                                .flex_none()
+                                .max_h(relative(0.5))
+                                .gap_4()
+                                .overflow_y_scrollbar()
+                                .child(self.render_summary(commit, loaded, cx))
+                                .child(self.render_facts(commit, cx))
+                                .child(self.render_actions(commit, cx)),
+                        )
                         .when_some(loaded, |panel, details| {
                             panel.child(self.render_files(commit.is_merge(), details, cx))
-                        }),
+                        })
+                        .when(
+                            loaded.is_none() && self.inspector.loading.is_some(),
+                            |panel| panel.child(self.render_loading(cx)),
+                        ),
                 )
                 .into_any_element(),
         )
+    }
+
+    /// Stands where the file list will be while git is still reading it.
+    fn render_loading(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        div()
+            .h_flex()
+            .gap_2()
+            .h(px(24.))
+            .text_color(muted)
+            .child(Spinner::new().small())
+            .child("Loading changed files…")
     }
 
     fn render_summary(
@@ -392,7 +441,7 @@ impl GraphView {
     fn render_files(
         &self,
         is_merge: bool,
-        details: &CommitDetails,
+        details: &Arc<CommitDetails>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme();
@@ -400,18 +449,20 @@ impl GraphView {
         let total = details.files.len();
         let (additions, deletions) = details.totals();
         let merge_note = tokens(cx.theme().is_dark()).subtext0;
-        let mut files = Vec::with_capacity(total);
-        for (index, file) in details.files.iter().enumerate() {
-            files.push(self.render_file(index, file, cx));
-        }
+        let listed = details.clone();
 
         div()
             .v_flex()
+            .flex_1()
+            .min_h_0()
             .gap(px(2.))
+            // Rows run edge to edge, past the panel's padding.
+            .mx(px(-8.))
             .child(
                 section_label(muted)
                     .h_flex()
                     .h(px(24.))
+                    .px_2()
                     .justify_between()
                     .child(format!("{} changed", count(total, "file")))
                     .child(
@@ -423,10 +474,33 @@ impl GraphView {
                             .child(div().text_color(removed).child(format!("−{deletions}"))),
                     ),
             )
-            .children(files)
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        uniform_list(
+                            "inspector-files",
+                            total,
+                            cx.processor(move |this, range: Range<usize>, _, cx| {
+                                range
+                                    .filter_map(|index| {
+                                        let file = listed.files.get(index)?;
+                                        Some(this.render_file(index, file, cx))
+                                    })
+                                    .collect::<Vec<_>>()
+                            }),
+                        )
+                        .track_scroll(&self.inspector.files_scroll)
+                        .size_full(),
+                    )
+                    .scrollbar(&self.inspector.files_scroll, ScrollbarAxis::Vertical),
+            )
             .when(is_merge && total == 0, |list| {
                 list.child(
                     div()
+                        .px_2()
                         .text_color(merge_note)
                         .child("This merge has no changes of its own."),
                 )
@@ -448,7 +522,6 @@ impl GraphView {
         };
         panel_row(("file", index), shown, cx)
             .h(px(28.))
-            .mx(px(-8.))
             .on_click(cx.listener(move |this, _, _, cx| this.show_file(index, cx)))
             .child(
                 div()

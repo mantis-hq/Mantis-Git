@@ -7,7 +7,10 @@ use crate::log::{self, Handle, Stream};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 /// A git command for `repo`, with the environment every call needs.
 pub(crate) fn git(repo: &Path) -> Command {
@@ -31,6 +34,49 @@ pub(crate) fn git_anywhere() -> Command {
 /// Runs git and returns its output, or what it said went wrong.
 pub fn run(repo: &Path, args: &[&str]) -> Result<String, String> {
     run_command(git(repo).args(args), None)
+}
+
+/// A request to stop work that is no longer wanted. Clones share one flag, so the side
+/// that starts the work keeps one and hands the other to the thread doing it.
+#[derive(Clone, Debug, Default)]
+pub struct Cancel(Arc<AtomicBool>);
+
+impl Cancel {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+/// What a cancelled run returns in place of git's output.
+pub const CANCELLED: &str = "cancelled";
+
+/// Runs git like [`run`], but stops the process and returns [`CANCELLED`] soon after
+/// `cancel` is set, so that a slow command nobody is waiting for any more stops costing.
+pub fn run_cancellable(repo: &Path, args: &[&str], cancel: &Cancel) -> Result<String, String> {
+    if cancel.is_cancelled() {
+        return Err(CANCELLED.to_owned());
+    }
+    let mut command = git(repo);
+    let mut process = Process::spawn(command.args(args), false)?;
+    let stdout = pump(
+        process.stdout.take().expect("stdout is piped"),
+        Stream::Out,
+        process.record,
+    );
+    let (success, stderr) = process.finish_unless(cancel)?;
+    if success {
+        Ok(String::from_utf8_lossy(&stdout.join().unwrap_or_default()).into_owned())
+    } else {
+        Err(stderr_message(&stderr))
+    }
 }
 
 /// Runs git with `input` on stdin.
@@ -144,6 +190,21 @@ impl Process {
     /// Adds a line to this command's log entry.
     pub fn note(&self, text: &str) {
         self.record.note(text);
+    }
+
+    /// Like [`Process::finish`], but gives the process up when `cancel` is set. Dropping it
+    /// stops it, which closes its output so that whoever reads that ends as well.
+    fn finish_unless(mut self, cancel: &Cancel) -> Result<(bool, Vec<u8>), String> {
+        loop {
+            if cancel.is_cancelled() {
+                return Err(CANCELLED.to_owned());
+            }
+            match self.child.try_wait() {
+                Ok(Some(_)) => return self.finish(),
+                Ok(None) => thread::sleep(Duration::from_millis(5)),
+                Err(error) => return Err(format!("could not wait for git: {error}")),
+            }
+        }
     }
 
     /// Waits for the process, and returns whether it succeeded and what it wrote to stderr.

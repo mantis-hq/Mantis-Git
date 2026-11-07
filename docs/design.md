@@ -219,6 +219,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   their own. The list and an open diff refresh when the window is used again.
 - **Inspector actions:** "Check out" names the branch when one is at the commit. Commands
   that add a commit say how to undo it in the band under the header.
+- **Long lists:** lists that can grow without limit, such as a commit's files, the commit
+  screen's files and the sidebar, draw only the rows in view. Their rows share one height.
+- **Loading:** while git reads a commit's files, the inspector shows a small spinner and
+  "Loading changed files…" where the list will be. Picking another commit stops that read.
 - **Commit form:** the bump card only shows when the repository has `v1.2.3` style tags to
   count from. Hunks start ticked, except that files with nothing staged start unticked
   when something else is staged, so work staged from a terminal carries over.

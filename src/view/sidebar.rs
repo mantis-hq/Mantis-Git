@@ -6,16 +6,16 @@ use super::parts::{panel_row, section_label};
 use super::{GraphView, SwitchWorktree};
 use crate::theme::{lane_color, tokens};
 use gitclient_core::branch::Dragged;
-use gitclient_core::git::{NamedRef, RefKind};
+use gitclient_core::git::RefKind;
 use gitclient_core::picks::{Click, Picks, tip_of};
 use gitclient_core::spotlight::Spotlight;
 use gpui_kit::component::button::*;
-use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::ops::Range;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 
 const WIDTH: Pixels = px(300.);
@@ -30,25 +30,62 @@ enum Section {
     Stashes,
 }
 
-/// A ref to place in a tree of folders.
-struct Leaf<'a> {
-    kind: RefKind,
-    name: &'a str,
-    color: Hsla,
-    detail: String,
-    /// How it stands against its remote branch, such as `↑1 ↓2`.
-    sync: String,
-    strong: bool,
+/// The lists of refs, which group `feat/x` under a `feat` folder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RefList {
+    Branches,
+    Remotes,
+    Tags,
 }
 
-/// One clickable row: a branch, remote branch or tag.
-struct RefRow<'a> {
+impl RefList {
+    /// Names the list in element ids and in the keys of closed folders.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Branches => "branches",
+            Self::Remotes => "Remotes",
+            Self::Tags => "Tags",
+        }
+    }
+}
+
+/// One row of the sidebar, as data. The sidebar is a single flat list of these, so that
+/// only the rows in view become elements however many refs the repository has.
+enum Item {
+    /// The "Branches" label and, while refs are picked, "Show all".
+    Heading,
+    /// Space between the branches and the other sections.
+    Gap,
+    Header {
+        section: Section,
+        title: &'static str,
+        count: usize,
+    },
+    Folder {
+        list: RefList,
+        folder: Folder,
+    },
+    Ref {
+        list: RefList,
+        /// Index into the list that was grouped.
+        index: usize,
+        /// What to call it, which leaves out the folders it is in.
+        label: String,
+        depth: usize,
+    },
+    Worktree(usize),
+    Stash(usize),
+}
+
+/// Every row is this tall: a 30 px row and the 2 px gap under it.
+const ITEM_HEIGHT: Pixels = px(32.);
+
+/// What a ref row needs to be drawn.
+struct RefRow {
     id: ElementId,
-    /// What to call it in the list, which leaves out the folders it is in.
-    name: &'a str,
+    name: String,
     target: Dragged,
-    /// Every ref row shown in this list, which a shift-click runs along.
-    visible: Rc<[Dragged]>,
+    list: RefList,
     color: Hsla,
     detail: String,
     sync: String,
@@ -70,6 +107,7 @@ pub(super) struct State {
     expanded: Vec<Section>,
     /// Folders the user closed, as `<list>/<path>`. Folders start open.
     closed_folders: Vec<String>,
+    scroll: UniformListScrollHandle,
 }
 
 impl State {
@@ -319,63 +357,197 @@ impl GraphView {
             )
     }
 
-    /// Rows for a list of refs, with `feat/x` shown inside a `feat` folder.
-    fn render_tree(
+    /// Adds a list of refs to `items`, with `feat/x` inside a `feat` folder.
+    fn push_tree<'a>(
         &self,
-        list: &'static str,
-        leaves: &[Leaf],
-        cx: &mut Context<Self>,
-    ) -> Vec<Stateful<Div>> {
-        let rows = tree_rows(leaves.iter().map(|l| l.name), |path| {
-            let key = format!("{list}/{path}");
+        list: RefList,
+        names: impl Iterator<Item = &'a str>,
+        items: &mut Vec<Item>,
+    ) {
+        let rows = tree_rows(names, |path| {
+            let key = format!("{}/{path}", list.key());
             self.sidebar.closed_folders.contains(&key)
         });
-        let visible: Rc<[Dragged]> = rows
-            .iter()
-            .filter_map(|row| match row {
-                TreeRow::Ref { index, .. } => Some(Dragged {
-                    kind: leaves[*index].kind,
-                    name: leaves[*index].name.to_owned(),
-                }),
-                TreeRow::Folder(_) => None,
-            })
-            .collect();
-        let mut out = Vec::with_capacity(rows.len());
-        for row in rows {
-            match row {
-                TreeRow::Folder(folder) => {
-                    out.push(self.render_folder_row(list, folder, cx));
-                }
-                TreeRow::Ref {
-                    index,
-                    label,
-                    depth,
-                } => {
-                    let leaf = &leaves[index];
-                    let target = Dragged {
-                        kind: leaf.kind,
-                        name: leaf.name.to_owned(),
-                    };
-                    let on = self.sidebar.picks.contains(&target);
-                    out.push(self.render_ref_row(
-                        RefRow {
-                            id: (list, index).into(),
-                            name: &label,
-                            target,
-                            visible: visible.clone(),
-                            color: leaf.color,
-                            detail: leaf.detail.clone(),
-                            sync: leaf.sync.clone(),
-                            on,
-                            strong: leaf.strong,
-                            depth,
-                        },
-                        cx,
-                    ));
-                }
+        items.extend(rows.into_iter().map(|row| match row {
+            TreeRow::Folder(folder) => Item::Folder { list, folder },
+            TreeRow::Ref {
+                index,
+                label,
+                depth,
+            } => Item::Ref {
+                list,
+                index,
+                label,
+                depth,
+            },
+        }));
+    }
+
+    /// Every row of the sidebar, top to bottom.
+    fn sidebar_items(&self) -> Vec<Item> {
+        let mut items = vec![Item::Heading];
+        let branches = self.refs.branches.iter().map(|b| &*b.name);
+        self.push_tree(RefList::Branches, branches, &mut items);
+        items.push(Item::Gap);
+
+        let trees = self.refs.worktrees.len();
+        if trees >= 2 {
+            let section = Section::Worktrees;
+            items.push(Item::Header {
+                section,
+                title: "Worktrees",
+                count: trees,
+            });
+            if self.sidebar.expanded.contains(&section) {
+                items.extend((0..trees).map(Item::Worktree));
             }
         }
-        out
+
+        let sections = [
+            (
+                Section::Remotes,
+                "Remotes",
+                RefList::Remotes,
+                &self.refs.remotes,
+            ),
+            (Section::Tags, "Tags", RefList::Tags, &self.refs.tags),
+        ];
+        for (section, title, list, refs) in sections {
+            items.push(Item::Header {
+                section,
+                title,
+                count: refs.len(),
+            });
+            if self.sidebar.expanded.contains(&section) {
+                self.push_tree(list, refs.iter().map(|named| &*named.name), &mut items);
+            }
+        }
+
+        let stashes = self.refs.stashes.len();
+        items.push(Item::Header {
+            section: Section::Stashes,
+            title: "Stashes",
+            count: stashes,
+        });
+        if self.sidebar.expanded.contains(&Section::Stashes) {
+            items.extend((0..stashes).map(Item::Stash));
+        }
+        items
+    }
+
+    /// The ref at `index` in a list.
+    fn ref_target(&self, list: RefList, index: usize) -> Option<Dragged> {
+        let (kind, name) = match list {
+            RefList::Branches => (RefKind::Branch, &self.refs.branches.get(index)?.name),
+            RefList::Remotes => (RefKind::Remote, &self.refs.remotes.get(index)?.name),
+            RefList::Tags => (RefKind::Tag, &self.refs.tags.get(index)?.name),
+        };
+        Some(Dragged {
+            kind,
+            name: name.to_string(),
+        })
+    }
+
+    /// Every ref row shown in a list, which a shift-click runs along.
+    fn visible_refs(&self, list: RefList) -> Vec<Dragged> {
+        self.sidebar_items()
+            .iter()
+            .filter_map(|item| match item {
+                Item::Ref {
+                    list: of, index, ..
+                } if *of == list => self.ref_target(list, *index),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn render_item(&self, item: &Item, cx: &mut Context<Self>) -> Div {
+        let slot = div().h(ITEM_HEIGHT).flex_none();
+        match item {
+            Item::Heading => slot.child(self.render_heading(cx)),
+            Item::Gap => slot,
+            Item::Header {
+                section,
+                title,
+                count,
+            } => slot.child(self.render_section_header(*section, title, *count, cx)),
+            Item::Folder { list, folder } => {
+                let folder = Folder {
+                    path: folder.path.clone(),
+                    label: folder.label.clone(),
+                    ..*folder
+                };
+                slot.child(self.render_folder_row(list.key(), folder, cx))
+            }
+            Item::Ref {
+                list,
+                index,
+                label,
+                depth,
+            } => match self.ref_row(*list, *index, label, *depth, cx) {
+                Some(row) => slot.child(self.render_ref_row(row, cx)),
+                None => slot,
+            },
+            Item::Worktree(index) => match self.render_worktree_row(*index, cx) {
+                Some(row) => slot.child(row),
+                None => slot,
+            },
+            Item::Stash(index) => {
+                let subtext = tokens(cx.theme().is_dark()).subtext0;
+                let stash = self.refs.stashes.get(*index).cloned().unwrap_or_default();
+                slot.child(
+                    div()
+                        .h_flex()
+                        .h(px(30.))
+                        .px_2()
+                        .text_color(subtext)
+                        .child(div().min_w_0().truncate().child(stash)),
+                )
+            }
+        }
+    }
+
+    fn ref_row(
+        &self,
+        list: RefList,
+        index: usize,
+        label: &str,
+        depth: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<RefRow> {
+        let target = self.ref_target(list, index)?;
+        let theme = cx.theme();
+        let is_dark = theme.is_dark();
+        let (color, detail, sync, strong) = match list {
+            RefList::Branches => {
+                let branch = self.refs.branches.get(index)?;
+                (
+                    lane_color(branch.color, is_dark),
+                    branch.delta(self.refs.default_branch.as_deref()),
+                    branch.remote_delta(),
+                    branch.is_head,
+                )
+            }
+            RefList::Remotes => (
+                lane_color(self.refs.remotes.get(index)?.color, is_dark),
+                String::new(),
+                String::new(),
+                false,
+            ),
+            RefList::Tags => (theme.warning, String::new(), String::new(), false),
+        };
+        Some(RefRow {
+            id: (list.key(), index).into(),
+            name: label.to_owned(),
+            on: self.sidebar.picks.contains(&target),
+            target,
+            list,
+            color,
+            detail,
+            sync,
+            strong,
+            depth,
+        })
     }
 
     fn toggle_section(&mut self, section: Section, cx: &mut Context<Self>) {
@@ -404,34 +576,8 @@ impl GraphView {
             return None;
         }
         let theme = cx.theme();
-        let (panel, border, muted, link) = (
-            theme.title_bar,
-            theme.border,
-            theme.muted_foreground,
-            theme.primary,
-        );
-        let spotlit = self.sidebar.spotlight.clone();
-
-        let is_dark = cx.theme().is_dark();
-        let default_branch = self.refs.default_branch.as_deref();
-        let leaves: Vec<Leaf> = self
-            .refs
-            .branches
-            .iter()
-            .map(|branch| Leaf {
-                kind: RefKind::Branch,
-                name: &branch.name,
-                color: lane_color(branch.color, is_dark),
-                detail: branch.delta(default_branch),
-                sync: branch.remote_delta(),
-                strong: branch.is_head,
-            })
-            .collect();
-        let branches = self.render_tree("branches", &leaves, cx);
-        let worktrees = self.render_worktrees(cx);
-        let remotes = self.render_section(Section::Remotes, "Remotes", &self.refs.remotes, cx);
-        let tags = self.render_section(Section::Tags, "Tags", &self.refs.tags, cx);
-        let stashes = self.render_stashes(cx);
+        let (panel, border) = (theme.title_bar, theme.border);
+        let items = self.sidebar_items();
 
         Some(
             div()
@@ -441,58 +587,51 @@ impl GraphView {
                 .border_r_1()
                 .border_color(border)
                 .child(
-                    div()
-                        .id("sidebar")
-                        .v_flex()
-                        .size_full()
-                        .px_2()
-                        .py_3()
-                        .gap_4()
-                        .overflow_y_scrollbar()
-                        .child(
-                            div()
-                                .v_flex()
-                                .gap(px(2.))
-                                .child(
-                                    div()
-                                        .h_flex()
-                                        .h(px(24.))
-                                        .px_2()
-                                        .child(
-                                            section_label(muted)
-                                                .h_flex()
-                                                .flex_1()
-                                                .child("Branches"),
-                                        )
-                                        .when(spotlit.is_some(), |heading| {
-                                            heading.child(
-                                                div()
-                                                    .id("show-all")
-                                                    .cursor_pointer()
-                                                    .text_size(TEXT_SMALL)
-                                                    .font_medium()
-                                                    .text_color(link)
-                                                    .child("Show all")
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.clear_picks(cx)
-                                                    })),
-                                            )
-                                        }),
+                    div().id("sidebar").size_full().px_2().py_3().child(
+                        div()
+                            .relative()
+                            .size_full()
+                            .child(
+                                uniform_list(
+                                    "sidebar-rows",
+                                    items.len(),
+                                    cx.processor(move |this, range: Range<usize>, _, cx| {
+                                        range
+                                            .filter_map(|index| items.get(index))
+                                            .map(|item| this.render_item(item, cx))
+                                            .collect::<Vec<_>>()
+                                    }),
                                 )
-                                .children(branches),
-                        )
-                        .child(
-                            div()
-                                .v_flex()
-                                .gap(px(2.))
-                                .child(worktrees)
-                                .child(remotes)
-                                .child(tags)
-                                .child(stashes),
-                        ),
+                                .track_scroll(&self.sidebar.scroll)
+                                .size_full(),
+                            )
+                            .scrollbar(&self.sidebar.scroll, ScrollbarAxis::Vertical),
+                    ),
                 )
                 .into_any_element(),
         )
+    }
+
+    fn render_heading(&self, cx: &mut Context<Self>) -> Div {
+        let theme = cx.theme();
+        let (muted, link) = (theme.muted_foreground, theme.primary);
+        div()
+            .h_flex()
+            .h(px(24.))
+            .px_2()
+            .child(section_label(muted).h_flex().flex_1().child("Branches"))
+            .when(self.sidebar.spotlight.is_some(), |heading| {
+                heading.child(
+                    div()
+                        .id("show-all")
+                        .cursor_pointer()
+                        .text_size(TEXT_SMALL)
+                        .font_medium()
+                        .text_color(link)
+                        .child("Show all")
+                        .on_click(cx.listener(|this, _, _, cx| this.clear_picks(cx))),
+                )
+            })
     }
 
     fn render_ref_row(&self, row: RefRow, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -500,7 +639,7 @@ impl GraphView {
             id,
             name,
             target,
-            visible,
+            list,
             color,
             detail,
             sync,
@@ -521,6 +660,7 @@ impl GraphView {
             .on_click({
                 let target = target.clone();
                 cx.listener(move |this, event: &ClickEvent, _, cx| {
+                    let visible = this.visible_refs(list);
                     this.pick(&target, event.modifiers(), &visible, cx);
                     this.open_on_double_click(&target, event, cx);
                 })
@@ -534,7 +674,7 @@ impl GraphView {
                     .truncate()
                     .text_color(text)
                     .when(strong, |name| name.font_semibold())
-                    .child(name.to_owned()),
+                    .child(name),
             )
             .child(
                 div()
@@ -554,129 +694,66 @@ impl GraphView {
             })
     }
 
-    fn render_section(
-        &self,
-        section: Section,
-        title: &'static str,
-        refs: &[NamedRef],
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let open = self.sidebar.expanded.contains(&section);
-        let header = self.render_section_header(section, title, refs.len(), cx);
-        let is_dark = cx.theme().is_dark();
-        let warning = cx.theme().warning;
-        let rows = if open {
-            let leaves: Vec<Leaf> = refs
-                .iter()
-                .map(|named| Leaf {
-                    kind: match section {
-                        Section::Tags => RefKind::Tag,
-                        _ => RefKind::Remote,
-                    },
-                    name: &named.name,
-                    color: match section {
-                        Section::Tags => warning,
-                        _ => lane_color(named.color, is_dark),
-                    },
-                    detail: String::new(),
-                    sync: String::new(),
-                    strong: false,
-                })
-                .collect();
-            self.render_tree(title, &leaves, cx)
-        } else {
-            Vec::new()
-        };
-        div().v_flex().gap(px(2.)).child(header).children(rows)
-    }
-
-    /// The repository's working trees, when it has more than the one. Picking another
-    /// opens it, in the tab already on it or a new one.
-    fn render_worktrees(&self, cx: &mut Context<Self>) -> Div {
-        let trees = &self.refs.worktrees;
-        if trees.len() < 2 {
-            return div();
-        }
-        let open = self.sidebar.expanded.contains(&Section::Worktrees);
-        let header = self.render_section_header(Section::Worktrees, "Worktrees", trees.len(), cx);
-        let is_dark = cx.theme().is_dark();
+    /// One of the repository's working trees. Picking another opens it, in the tab
+    /// already on it or a new one.
+    fn render_worktree_row(&self, index: usize, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let tree = self.refs.worktrees.get(index)?;
         let theme = cx.theme();
+        let is_dark = theme.is_dark();
         let (muted, text, strong) = (
             theme.muted_foreground,
             theme.secondary_foreground,
             theme.foreground,
         );
-        let rows = trees
-            .iter()
-            .enumerate()
-            .filter(|_| open)
-            .map(|(index, tree)| {
-                let color = match &tree.branch {
-                    Some(branch) => lane_color(self.refs.branch_color(branch), is_dark),
-                    None => muted,
-                };
-                let unavailable = tree.unavailable();
-                let path = tree.path.clone();
-                let mut detail = tree.detail();
-                if tree.locked {
-                    detail.push_str(" · locked");
-                }
-                let menu_path = tree.path.clone();
-                let row =
-                    panel_row(("worktree", index), tree.is_current, cx)
-                        .on_mouse_down(
-                            MouseButton::Right,
-                            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                                cx.stop_propagation();
-                                this.open_worktree_menu(&menu_path, event.position, cx);
-                            }),
-                        )
-                        .h(px(30.))
-                        .pl(indent(0))
-                        .when(unavailable.is_some(), |row| {
-                            row.opacity(0.5).cursor_default()
-                        })
-                        .when(!tree.is_current && unavailable.is_none(), |row| {
-                            row.on_click(cx.listener(move |this, _, _, cx| {
-                                this.switch_worktree(path.clone(), cx)
-                            }))
-                        });
-                row.child(div().size(px(8.)).flex_none().rounded_full().bg(color))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(if tree.is_current { strong } else { text })
-                            .when(tree.is_current, |name| name.font_semibold())
-                            .child(tree.label()),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(TEXT_CHIP)
-                            .text_color(muted)
-                            .child(unavailable.map_or(detail, str::to_owned)),
-                    )
+        let color = match &tree.branch {
+            Some(branch) => lane_color(self.refs.branch_color(branch), is_dark),
+            None => muted,
+        };
+        let unavailable = tree.unavailable();
+        let path = tree.path.clone();
+        let mut detail = tree.detail();
+        if tree.locked {
+            detail.push_str(" · locked");
+        }
+        let menu_path = tree.path.clone();
+        let row = panel_row(("worktree", index), tree.is_current, cx)
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.open_worktree_menu(&menu_path, event.position, cx);
+                }),
+            )
+            .h(px(30.))
+            .pl(indent(0))
+            .when(unavailable.is_some(), |row| {
+                row.opacity(0.5).cursor_default()
+            })
+            .when(!tree.is_current && unavailable.is_none(), |row| {
+                row.on_click(
+                    cx.listener(move |this, _, _, cx| this.switch_worktree(path.clone(), cx)),
+                )
             });
-        div().v_flex().gap(px(2.)).child(header).children(rows)
-    }
-
-    fn render_stashes(&self, cx: &mut Context<Self>) -> Div {
-        let count = self.refs.stashes.len();
-        let open = self.sidebar.expanded.contains(&Section::Stashes);
-        let header = self.render_section_header(Section::Stashes, "Stashes", count, cx);
-        let subtext = tokens(cx.theme().is_dark()).subtext0;
-        let rows = self.refs.stashes.iter().filter(|_| open).map(|stash| {
-            div()
-                .h_flex()
-                .h(px(30.))
-                .px_2()
-                .text_color(subtext)
-                .child(div().min_w_0().truncate().child(stash.clone()))
-        });
-        div().v_flex().gap(px(2.)).child(header).children(rows)
+        Some(
+            row.child(div().size(px(8.)).flex_none().rounded_full().bg(color))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(if tree.is_current { strong } else { text })
+                        .when(tree.is_current, |name| name.font_semibold())
+                        .child(tree.label()),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(TEXT_CHIP)
+                        .text_color(muted)
+                        .child(unavailable.map_or(detail, str::to_owned)),
+                ),
+        )
     }
 
     fn render_section_header(

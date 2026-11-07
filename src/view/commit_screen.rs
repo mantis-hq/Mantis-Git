@@ -14,9 +14,11 @@ use gitclient_core::working::{
 };
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
+use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::ops::Range;
 use std::sync::Arc;
 
 const FILES_WIDTH: Pixels = px(320.);
@@ -36,6 +38,8 @@ pub(super) struct State {
     /// The widths the user dragged the file list and the form to.
     files_width: Option<f32>,
     form_width: Option<f32>,
+    /// Scroll of the file list, which draws only the rows in view.
+    files_scroll: UniformListScrollHandle,
     subject: Option<Entity<InputState>>,
     details: Option<Entity<TextareaState>>,
     committed: Option<String>,
@@ -238,10 +242,7 @@ impl GraphView {
     fn render_changed_files(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let theme = cx.theme();
         let (panel, border, muted) = (theme.title_bar, theme.border, theme.muted_foreground);
-        let mut rows = Vec::with_capacity(self.commit.files.len());
-        for index in 0..self.commit.files.len() {
-            rows.push(self.render_changed_file(index, cx));
-        }
+        let total = self.commit.files.len();
         div()
             .id("changed-files")
             .v_flex()
@@ -253,7 +254,6 @@ impl GraphView {
             .bg(panel)
             .border_r_1()
             .border_color(border)
-            .overflow_y_scroll()
             .child(
                 section_label(muted)
                     .h_flex()
@@ -261,7 +261,27 @@ impl GraphView {
                     .px_2()
                     .child("Tick what goes in this commit"),
             )
-            .children(rows)
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        uniform_list(
+                            "changed-file-rows",
+                            total,
+                            cx.processor(move |this, range: Range<usize>, _, cx| {
+                                range
+                                    .filter(|index| *index < this.commit.files.len())
+                                    .map(|index| this.render_changed_file(index, cx))
+                                    .collect::<Vec<_>>()
+                            }),
+                        )
+                        .track_scroll(&self.commit.files_scroll)
+                        .size_full(),
+                    )
+                    .scrollbar(&self.commit.files_scroll, ScrollbarAxis::Vertical),
+            )
     }
 
     fn render_changed_file(&self, index: usize, cx: &mut Context<Self>) -> Stateful<Div> {
