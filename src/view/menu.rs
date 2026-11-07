@@ -197,7 +197,13 @@ impl GraphView {
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) {
-        let lines = menu::ref_menu(&self.refs, &target);
+        // A right-click on one of several picked refs acts on all of them.
+        let picks = self.sidebar.picks.items();
+        let lines = if picks.len() > 1 && picks.contains(&target) {
+            menu::refs_menu(&self.refs, picks)
+        } else {
+            menu::ref_menu(&self.refs, &target)
+        };
         self.show_menu(position, lines, cx);
     }
 

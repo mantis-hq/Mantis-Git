@@ -1,5 +1,5 @@
 //! Works out what stays lit when branches are spotlighted. One click picks a branch, and
-//! ctrl-click adds more.
+//! picking more adds to it.
 
 use crate::git::Entry;
 use std::collections::HashMap;
@@ -73,30 +73,6 @@ impl Spotlight {
 
     pub fn tips(&self) -> &[Arc<str>] {
         &self.tips
-    }
-
-    /// Whether a branch or tag pointing at `tip` is one of the spotlighted.
-    pub fn has_tip(&self, tip: &str) -> bool {
-        self.tips.iter().any(|t| &**t == tip)
-    }
-
-    /// The tips after a click on `tip`. A plain click picks that one, or clears when it is
-    /// the only one picked. With `add`, it joins the others, or leaves them if already in.
-    pub fn after_click(current: Option<&Spotlight>, tip: &Arc<str>, add: bool) -> Vec<Arc<str>> {
-        let mut tips = current.map(|s| s.tips.clone()).unwrap_or_default();
-        if add {
-            match tips.iter().position(|t| t == tip) {
-                Some(at) => {
-                    tips.remove(at);
-                }
-                None => tips.push(tip.clone()),
-            }
-        } else if tips.len() == 1 && tips[0] == *tip {
-            tips.clear();
-        } else {
-            tips = vec![tip.clone()];
-        }
-        tips
     }
 
     pub fn commit_is_lit(&self, row: usize) -> bool {
@@ -196,23 +172,6 @@ mod tests {
         let spot = Spotlight::new(vec!["mine".into(), "third".into()], &list);
         assert!(spot.commit_is_lit(0) && !spot.commit_is_lit(1));
         assert!(spot.commit_is_lit(2) && spot.commit_is_lit(3) && spot.commit_is_lit(4));
-        assert!(spot.has_tip("third") && !spot.has_tip("other"));
-    }
-
-    #[test]
-    fn clicks_pick_one_or_add_and_remove() {
-        let list = entries(&[("a", &["b"]), ("b", &[])]);
-        let (a, b): (Arc<str>, Arc<str>) = ("a".into(), "b".into());
-        let one = Spotlight::new(Spotlight::after_click(None, &a, false), &list);
-        assert_eq!(one.tips(), [a.clone()]);
-        assert!(Spotlight::after_click(Some(&one), &a, false).is_empty());
-        assert_eq!(Spotlight::after_click(Some(&one), &b, false), [b.clone()]);
-
-        let two = Spotlight::new(Spotlight::after_click(Some(&one), &b, true), &list);
-        assert_eq!(two.tips(), [a.clone(), b.clone()]);
-        // A plain click on one of several narrows to it rather than clearing.
-        assert_eq!(Spotlight::after_click(Some(&two), &a, false), [a.clone()]);
-        assert_eq!(Spotlight::after_click(Some(&two), &a, true), [b]);
     }
 
     #[test]

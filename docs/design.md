@@ -164,7 +164,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Your branch line is blue down to where it forks. Shared history below that takes
   `main`'s colour.
 - Clicking a branch spotlights it: everything outside its history fades to about 28%.
-  `Ctrl`-click adds or removes branches, and the graph lights all of their histories.
+  `Ctrl`-click adds or removes branches, `Shift`-click picks the range down from the last
+  one, and the graph lights all of their histories. Right-clicking one of several picked
+  refs opens a menu for all of them ("Delete 3 branches"), which asks first and lists the
+  command to bring each back. A checked-out branch and remote branches stay, and the menu
+  says so.
 - A branch row ends with its count against the default branch (`+2 −1`), then against
   the remote branch it tracks (`↑1 ↓2`: to push, to pull). Level or untracked shows nothing.
 

@@ -681,9 +681,18 @@ mod tests {
     }
 
     fn load(view: &Entity<GraphView>, names: &[&str], cx: &mut VisualTestContext) {
+        load_with(view, names, Arc::default(), cx);
+    }
+
+    fn load_with(
+        view: &Entity<GraphView>,
+        names: &[&str],
+        refs: Arc<gitclient_core::git::Refs>,
+        cx: &mut VisualTestContext,
+    ) {
         view.update(cx, |view, cx| {
             view.status = Status::Loading;
-            view.apply(LoadEvent::Refs(Arc::default()), cx);
+            view.apply(LoadEvent::Refs(refs), cx);
             view.apply(LoadEvent::Batch(entries(names)), cx);
             view.finish_load(cx);
         });
@@ -810,23 +819,112 @@ mod tests {
         });
     }
 
+    /// Refs for branches named like the commits they point at.
+    fn branches(names: &[&str]) -> Arc<gitclient_core::git::Refs> {
+        let mut refs = gitclient_core::git::Refs::default();
+        refs.branches = names
+            .iter()
+            .map(|name| gitclient_core::git::Branch {
+                name: (*name).into(),
+                tip: (*name).into(),
+                color: Default::default(),
+                is_head: false,
+                ahead_behind: None,
+                upstream: None,
+            })
+            .collect();
+        Arc::new(refs)
+    }
+
+    fn branch(name: &str) -> Dragged {
+        Dragged {
+            kind: RefKind::Branch,
+            name: name.into(),
+        }
+    }
+
     #[gpui_kit::test]
-    fn spotlighting_twice_turns_it_off_and_a_reload_keeps_it(cx: &mut TestAppContext) {
+    fn picking_twice_turns_it_off_and_a_reload_keeps_it(cx: &mut TestAppContext) {
         let (view, mut cx) = open_view(cx);
-        load(&view, &["b", "a"], &mut cx);
+        load_with(&view, &["b", "a"], branches(&["a", "b"]), &mut cx);
+        let rows = [branch("a"), branch("b")];
         view.update(&mut cx, |view, cx| {
-            view.spotlight("a".into(), false, cx);
+            view.pick(&rows[0], Modifiers::none(), &rows, cx);
             let spot = view.sidebar.spotlight.clone().unwrap();
             assert!(!spot.commit_is_lit(0) && spot.commit_is_lit(1));
 
-            view.spotlight("a".into(), false, cx);
+            view.pick(&rows[0], Modifiers::none(), &rows, cx);
             assert!(view.sidebar.spotlight.is_none());
-            view.spotlight("a".into(), false, cx);
+            view.pick(&rows[0], Modifiers::none(), &rows, cx);
         });
-        load(&view, &["c", "b", "a"], &mut cx);
+        load_with(&view, &["c", "b", "a"], branches(&["a", "b"]), &mut cx);
         view.read_with(&cx, |view, _| {
             let spot = view.sidebar.spotlight.as_ref().unwrap();
             assert!(spot.commit_is_lit(2) && !spot.commit_is_lit(0));
+        });
+    }
+
+    #[gpui_kit::test]
+    fn shift_and_ctrl_pick_several_branches(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_view(cx);
+        load_with(&view, &["c", "b", "a"], branches(&["a", "b", "c"]), &mut cx);
+        let rows = [branch("a"), branch("b"), branch("c")];
+        let picked = |view: &Entity<GraphView>, cx: &VisualTestContext| {
+            view.read_with(cx, |view, _| {
+                view.sidebar
+                    .picks
+                    .items()
+                    .iter()
+                    .map(|d| d.name.clone())
+                    .collect::<Vec<_>>()
+            })
+        };
+        view.update(&mut cx, |view, cx| {
+            view.pick(&rows[0], Modifiers::none(), &rows, cx);
+            let shift = Modifiers {
+                shift: true,
+                ..Modifiers::none()
+            };
+            view.pick(&rows[2], shift, &rows, cx);
+        });
+        assert_eq!(picked(&view, &cx), ["a", "b", "c"]);
+
+        view.update(&mut cx, |view, cx| {
+            let ctrl = Modifiers {
+                control: true,
+                ..Modifiers::none()
+            };
+            view.pick(&rows[1], ctrl, &rows, cx);
+        });
+        assert_eq!(picked(&view, &cx), ["a", "c"]);
+    }
+
+    #[gpui_kit::test]
+    fn right_clicking_a_picked_branch_offers_to_delete_all_picked(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_view(cx);
+        load_with(&view, &["c", "b", "a"], branches(&["a", "b", "c"]), &mut cx);
+        let rows = [branch("a"), branch("b"), branch("c")];
+        view.update(&mut cx, |view, cx| {
+            view.pick(&rows[0], Modifiers::none(), &rows, cx);
+            let shift = Modifiers {
+                shift: true,
+                ..Modifiers::none()
+            };
+            view.pick(&rows[1], shift, &rows, cx);
+            view.open_ref_menu(rows[0].clone(), point(px(10.), px(10.)), cx);
+            let lines = view.menu.as_ref().unwrap().lines();
+            assert!(lines.iter().any(|line| matches!(
+                line.command(),
+                Some(gitclient_core::menu::Command::DeleteMany { refs }) if refs.len() == 2
+            )));
+
+            // A branch outside the picks keeps its own menu.
+            view.open_ref_menu(rows[2].clone(), point(px(10.), px(10.)), cx);
+            let lines = view.menu.as_ref().unwrap().lines();
+            assert!(!lines.iter().any(|line| matches!(
+                line.command(),
+                Some(gitclient_core::menu::Command::DeleteMany { .. })
+            )));
         });
     }
 

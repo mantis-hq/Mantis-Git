@@ -12,6 +12,7 @@ pub mod log;
 pub mod menu;
 pub mod ops;
 pub mod patch;
+pub mod picks;
 pub mod selection;
 pub mod spotlight;
 pub mod ssh;

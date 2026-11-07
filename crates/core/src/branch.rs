@@ -223,6 +223,78 @@ pub fn delete_warning(kind: RefKind, name: &str, tip: Option<&str>) -> String {
     }
 }
 
+/// A branch or tag that is about to be deleted, with where it pointed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Doomed {
+    pub kind: RefKind,
+    pub name: String,
+    pub tip: Option<String>,
+}
+
+fn counted(number: usize, one: &str, many: &str) -> String {
+    format!("{number} {}", if number == 1 { one } else { many })
+}
+
+fn split(refs: &[Doomed]) -> (Vec<&Doomed>, Vec<&Doomed>) {
+    refs.iter().partition(|r| r.kind != RefKind::Tag)
+}
+
+/// "2 branches and 1 tag".
+fn summary(branches: &[&Doomed], tags: &[&Doomed]) -> String {
+    let mut parts = Vec::new();
+    if !branches.is_empty() {
+        parts.push(counted(branches.len(), "branch", "branches"));
+    }
+    if !tags.is_empty() {
+        parts.push(counted(tags.len(), "tag", "tags"));
+    }
+    parts.join(" and ")
+}
+
+/// What deleting several refs loses, and the commands that bring each back.
+pub fn delete_many_warning(refs: &[Doomed]) -> String {
+    let (branches, tags) = split(refs);
+    let names: Vec<&str> = refs.iter().map(|r| r.name.as_str()).collect();
+    let undo: Vec<String> = refs
+        .iter()
+        .filter_map(|r| {
+            let tip = short_oid(r.tip.as_deref()?);
+            Some(match r.kind {
+                RefKind::Tag => format!("`git tag {} {tip}`", r.name),
+                _ => format!("`git branch {} {tip}`", r.name),
+            })
+        })
+        .collect();
+    let undo = if undo.is_empty() {
+        String::new()
+    } else {
+        format!(" To undo it, run {}.", undo.join(", "))
+    };
+    let stay = if branches.is_empty() {
+        ""
+    } else {
+        " Branch commits stay until git cleans up."
+    };
+    format!(
+        "This deletes {}: {}.{stay}{undo}",
+        summary(&branches, &tags),
+        names.join(", ")
+    )
+}
+
+/// Deletes branches and tags in one go. Branches go first, in one git call.
+pub fn delete_many(repo: &Path, refs: &[Doomed]) -> Result<Option<String>, String> {
+    let (branches, tags) = split(refs);
+    for (group, base) in [(&branches, ["branch", "-D"]), (&tags, ["tag", "-d"])] {
+        if !group.is_empty() {
+            let names = group.iter().map(|r| r.name.as_str());
+            let args: Vec<&str> = base.into_iter().chain(names).collect();
+            ops::run(repo, &args)?;
+        }
+    }
+    Ok(Some(format!("Deleted {}.", summary(&branches, &tags))))
+}
+
 /// Says what a rebase does and how to undo it.
 pub fn rebase_warning(branch: &str, onto: &str) -> String {
     format!(
@@ -424,5 +496,34 @@ mod tests {
         assert!(delete_warning(RefKind::Tag, "v1", None).starts_with("This deletes the tag v1."));
         delete_tag(repo.path(), "v1").unwrap();
         assert!(!ops::resolves(repo.path(), "refs/tags/v1"));
+    }
+
+    #[test]
+    fn several_refs_are_deleted_together_and_the_warning_lists_each_undo() {
+        let repo = ahead();
+        repo.git(&["branch", "other", "main"]);
+        repo.git(&["tag", "v1"]);
+        let doomed = |kind, name: &str| Doomed {
+            kind,
+            name: name.into(),
+            tip: Some(repo.git(&["rev-parse", name])),
+        };
+        let refs = [
+            doomed(RefKind::Branch, "side"),
+            doomed(RefKind::Branch, "other"),
+            doomed(RefKind::Tag, "v1"),
+        ];
+        let warning = delete_many_warning(&refs);
+        assert!(warning.starts_with("This deletes 2 branches and 1 tag: side, other, v1."));
+        assert!(warning.contains("`git branch other "));
+        assert!(warning.contains("`git tag v1 "));
+
+        assert_eq!(
+            delete_many(repo.path(), &refs),
+            Ok(Some("Deleted 2 branches and 1 tag.".into()))
+        );
+        for name in ["refs/heads/side", "refs/heads/other", "refs/tags/v1"] {
+            assert!(!ops::resolves(repo.path(), name));
+        }
     }
 }

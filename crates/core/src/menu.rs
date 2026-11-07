@@ -2,7 +2,7 @@
 //! branch on another, asks here for the lines of a menu. Each line carries the command it
 //! runs, so the interface only draws lines and hands the chosen command back to be run.
 
-use crate::branch::{self, Dragged, DropAction, Relation};
+use crate::branch::{self, Doomed, Dragged, DropAction, Relation};
 use crate::conflict;
 use crate::details;
 use crate::git::{Commit, RefKind, Refs};
@@ -37,6 +37,10 @@ pub enum Command {
         name: String,
         /// Where the ref pointed, so the warning can say how to get it back.
         tip: Option<String>,
+    },
+    /// Several branches and tags at once.
+    DeleteMany {
+        refs: Vec<Doomed>,
     },
     /// Oldest first, which is the order they're applied in.
     CherryPick {
@@ -81,7 +85,7 @@ impl Command {
             }
             | Self::Rebase { .. } => "Rebasing",
             Self::Drop { .. } => "Merging",
-            Self::Delete { .. } => "Deleting",
+            Self::Delete { .. } | Self::DeleteMany { .. } => "Deleting",
             Self::CherryPick { .. } => "Cherry-picking",
             Self::Revert { .. } => "Reverting",
             Self::Reset { .. } => "Resetting",
@@ -103,6 +107,10 @@ impl Command {
             }),
             Self::Delete { kind, name, tip } => Some(Confirmation {
                 message: branch::delete_warning(*kind, name, tip.as_deref()),
+                action: "Delete",
+            }),
+            Self::DeleteMany { refs } => Some(Confirmation {
+                message: branch::delete_many_warning(refs),
                 action: "Delete",
             }),
             Self::Reset {
@@ -146,6 +154,7 @@ impl Command {
                 RefKind::Tag => branch::delete_tag(repo, name),
                 _ => branch::delete_branch(repo, name),
             },
+            Self::DeleteMany { refs } => branch::delete_many(repo, refs),
             Self::CherryPick { oids } => match oids.as_slice() {
                 [oid] => details::cherry_pick(repo, oid),
                 _ => details::cherry_pick_many(repo, oids),
@@ -290,6 +299,61 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
             )
             .danger(),
         );
+    }
+    lines
+}
+
+/// Whether a ref can be deleted from the menu: a local branch that isn't checked out, or
+/// a tag. A remote branch is somebody else's to remove.
+fn why_not_deletable(refs: &Refs, target: &Dragged) -> Option<String> {
+    let name = &target.name;
+    match target.kind {
+        RefKind::Tag => None,
+        RefKind::Branch if refs.head_branch.as_deref() == Some(name.as_str()) => {
+            Some(format!("{name} is checked out, so it stays"))
+        }
+        RefKind::Branch => None,
+        _ => Some(format!("{name} is a remote branch, so it stays")),
+    }
+}
+
+/// The menu for several picked branches and tags. What it can do to many at once is
+/// copy their names and delete them.
+pub fn refs_menu(refs: &Refs, targets: &[Dragged]) -> Vec<Line> {
+    let mut lines = vec![Line::Heading(format!("{} selected", targets.len()))];
+    let names: Vec<&str> = targets.iter().map(|t| t.name.as_str()).collect();
+    lines.push(Line::item(
+        "Copy names",
+        copy(&names.join("\n"), "the names"),
+    ));
+
+    let (deletable, kept): (Vec<&Dragged>, Vec<&Dragged>) = targets
+        .iter()
+        .partition(|target| why_not_deletable(refs, target).is_none());
+    lines.push(Line::Separator);
+    for target in &kept {
+        if let Some(reason) = why_not_deletable(refs, target) {
+            lines.push(Line::unavailable(reason));
+        }
+    }
+    if !deletable.is_empty() {
+        let doomed: Vec<Doomed> = deletable
+            .iter()
+            .map(|target| Doomed {
+                kind: target.kind,
+                name: target.name.clone(),
+                tip: crate::picks::tip_of(refs, target).map(|tip| tip.to_string()),
+            })
+            .collect();
+        let tags = doomed.iter().filter(|d| d.kind == RefKind::Tag).count();
+        let label = match (tags, doomed.len()) {
+            (0, 1) => "Delete 1 branch".to_owned(),
+            (0, n) => format!("Delete {n} branches"),
+            (t, n) if t == n && n == 1 => "Delete 1 tag".to_owned(),
+            (t, n) if t == n => format!("Delete {n} tags"),
+            (_, n) => format!("Delete {n} branches and tags"),
+        };
+        lines.push(Line::item(label, Command::DeleteMany { refs: doomed }).danger());
     }
     lines
 }
@@ -497,6 +561,50 @@ mod tests {
             kind,
             name: name.into(),
         }
+    }
+
+    #[test]
+    fn several_picks_can_be_deleted_but_not_the_checked_out_one() {
+        let picks = [
+            target(RefKind::Branch, "main"),
+            target(RefKind::Branch, "feat/x"),
+            target(RefKind::Tag, "v1.0.0"),
+        ];
+        let lines = refs_menu(&refs(), &picks);
+        assert_eq!(
+            labels(&lines),
+            [
+                "Copy names",
+                "main is checked out, so it stays",
+                "Delete 2 branches and tags"
+            ]
+        );
+        let command = lines.last().unwrap().command().unwrap();
+        let Command::DeleteMany { refs } = command else {
+            panic!("expected a bulk delete");
+        };
+        assert_eq!(refs.len(), 2);
+        assert!(
+            command
+                .confirmation()
+                .unwrap()
+                .message
+                .contains("feat/x, v1.0.0")
+        );
+    }
+
+    #[test]
+    fn only_a_checked_out_branch_leaves_nothing_to_delete() {
+        let picks = [
+            target(RefKind::Branch, "main"),
+            target(RefKind::Remote, "origin/x"),
+        ];
+        let lines = refs_menu(&refs(), &picks);
+        assert!(
+            lines
+                .iter()
+                .all(|l| !matches!(l.command(), Some(Command::DeleteMany { .. })))
+        );
     }
 
     #[test]
