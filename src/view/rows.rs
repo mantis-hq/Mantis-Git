@@ -93,11 +93,27 @@ impl GraphView {
                     .border_color(border)
                     .occlude()
                     .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                        // While dragging, `on_drag_move` tracks the pointer instead.
+                        if cx.has_active_drag() {
+                            return;
+                        }
                         this.popover_hovered = *hovered;
                         if !hovered {
                             this.leave_refs(index, cx);
                         }
                     }))
+                    .on_drag_move(cx.listener(
+                        move |this, event: &DragMoveEvent<Dragged>, _, cx| {
+                            // Hover events pause during a drag, so follow the pointer instead.
+                            let inside = event.bounds.contains(&event.event.position);
+                            if this.popover_hovered != inside {
+                                this.popover_hovered = inside;
+                                if !inside {
+                                    this.leave_refs(index, cx);
+                                }
+                            }
+                        },
+                    ))
                     .children(all),
             )
             .with_priority(5)
@@ -110,6 +126,9 @@ impl GraphView {
             .h_full()
             .flex_none()
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                if cx.has_active_drag() {
+                    return;
+                }
                 if *hovered {
                     if this.hovered_refs != Some(index) {
                         this.hovered_refs = Some(index);
@@ -135,6 +154,21 @@ impl GraphView {
                                 .child(format!("+{}", chips.len() - MAX_VISIBLE_REFS)),
                         )
                     }),
+            )
+            .on_drag_move(
+                cx.listener(move |this, event: &DragMoveEvent<Dragged>, _, cx| {
+                    // Hover events pause during a drag, so follow the pointer instead.
+                    // The open card covers the rows below it, whose columns also contain the
+                    // pointer, so a pointer on the card must not move the card elsewhere.
+                    if event.bounds.contains(&event.event.position) {
+                        if this.hovered_refs != Some(index) && !this.popover_hovered {
+                            this.hovered_refs = Some(index);
+                            cx.notify();
+                        }
+                    } else if this.hovered_refs == Some(index) && !this.popover_hovered {
+                        this.leave_refs(index, cx);
+                    }
+                }),
             )
             .children(popover)
     }
