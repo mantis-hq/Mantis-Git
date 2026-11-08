@@ -7,6 +7,12 @@ use gpui_kit::*;
 use std::path::PathBuf;
 
 fn main() {
+    // git and ssh run this program to ask a question, with the question as its argument.
+    // Pass it on to the window that is open, and quit with the answer.
+    if let Some(status) = gitclient_core::askpass::run_helper() {
+        std::process::exit(status);
+    }
+    let questions = gitclient_core::askpass::serve();
     // Each path on the command line gets a tab. With none, the repositories left open
     // last time come back, and failing that the current folder opens.
     let given: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
@@ -56,6 +62,9 @@ fn main() {
                 workspace.restore_dock(dock, cx);
                 // Only now, so that opening the tabs one by one doesn't overwrite the rest.
                 workspace.remember_in(state_file, cx);
+                if let Some(questions) = questions {
+                    workspace.answer_questions(questions, cx);
+                }
                 workspace
             })
         })

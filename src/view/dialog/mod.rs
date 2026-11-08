@@ -3,9 +3,11 @@
 //! keys. Enter answers, Escape or a click outside cancels, and a key held down never
 //! answers, so nothing happens that the user hasn't read.
 
+mod ask;
 mod confirm;
 mod form;
 
+pub(super) use ask::AskDialog;
 pub(super) use confirm::Confirm;
 pub(super) use form::FormDialog;
 
@@ -22,6 +24,7 @@ const WIDTH: Pixels = px(420.);
 pub(super) enum Dialog {
     Confirm(Confirm),
     Form(FormDialog),
+    Ask(AskDialog),
 }
 
 /// What a popup puts in the shared frame, above the line naming the keys and the buttons.
@@ -44,6 +47,7 @@ impl GraphView {
             Some(_) if self.key_held => {}
             Some(Dialog::Confirm(_)) => self.press_enter_to_confirm(cx),
             Some(Dialog::Form(_)) => self.submit_form(cx),
+            Some(Dialog::Ask(_)) => self.submit_ask(cx),
         }
     }
 
@@ -73,6 +77,7 @@ impl GraphView {
         match &self.dialog {
             Some(Dialog::Confirm(_)) => self.run_confirmed(cx),
             Some(Dialog::Form(_)) => self.submit_form(cx),
+            Some(Dialog::Ask(_)) => self.submit_ask(cx),
             None => {}
         }
     }
@@ -98,6 +103,14 @@ impl GraphView {
                 };
                 form.keep_focus(&self.focus, window, cx);
                 form.frame(cx)
+            }
+            Dialog::Ask(_) => {
+                self.ensure_ask_input(window, cx);
+                let Some(Dialog::Ask(ask)) = &self.dialog else {
+                    return None;
+                };
+                ask.keep_focus(&self.focus, window, cx);
+                ask.frame(cx)
             }
         };
         Some(self.render_frame(frame, cx))

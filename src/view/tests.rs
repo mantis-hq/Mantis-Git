@@ -1106,6 +1106,33 @@ fn tab_moves_between_a_forms_fields_and_a_held_enter_does_nothing(cx: &mut TestA
 }
 
 #[gpui_kit::test]
+fn a_question_from_git_is_answered_in_a_popup_and_cancelled_by_escape(cx: &mut TestAppContext) {
+    use gitclient_core::askpass::Request;
+    let (_repo, view, mut cx) = open_repo(cx);
+
+    let (request, answer) = Request::new("Enter passphrase for key '/home/me/.ssh/id': ");
+    view.update(&mut cx, |view, cx| view.open_ask(request, cx));
+    cx.run_until_parked();
+    cx.simulate_input("hunter2");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(answer.try_recv().unwrap().as_deref(), Some("hunter2"));
+    view.update(&mut cx, |view, _| assert!(view.dialog.is_none()));
+
+    let (request, answer) = Request::new("Username for 'https://example.com': ");
+    view.update(&mut cx, |view, cx| view.open_ask(request, cx));
+    cx.run_until_parked();
+    cx.simulate_input("me");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(
+        answer.try_recv().is_err(),
+        "a cancelled question sends no answer"
+    );
+    assert!(answer.is_closed(), "and git is told it was cancelled");
+}
+
+#[gpui_kit::test]
 fn the_keyboard_walks_a_menu_wraps_and_skips_lines_that_do_nothing(cx: &mut TestAppContext) {
     let (view, mut cx) = open_view(cx);
     load(&view, &["a", "b"], &mut cx);

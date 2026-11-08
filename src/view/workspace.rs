@@ -108,6 +108,27 @@ impl Workspace {
         self.persist(cx);
     }
 
+    /// Shows each question git or ssh asks (a passphrase, a login) as a popup in the front
+    /// tab, since it is waiting on whoever is looking at the window.
+    pub fn answer_questions(
+        &mut self,
+        questions: gitclient_core::askpass::Questions,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(async move |this, cx| {
+            while let Ok(request) = questions.recv().await {
+                let shown = this.update(cx, |this, cx| {
+                    let front = this.active_view().clone();
+                    front.update(cx, |front, cx| front.open_ask(request, cx));
+                });
+                if shown.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
     /// Brings the dock back as it was left, with its terminals in the front repository.
     pub fn restore_dock(&mut self, layout: DockLayout, cx: &mut Context<Self>) {
         self.sync_dock_directory(cx);

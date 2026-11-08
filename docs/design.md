@@ -302,6 +302,15 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     under the inputs, whether the form found it or git refused, and typing clears it. On
     success the popup closes and the band says what happened. What each form asks lives in
     core (`Form` in `crates/core/src/menu/form.rs`).
+- **Questions from git** (a key's passphrase, an HTTPS login, whether to trust a new host)
+  open the same popup in the front tab, because git or ssh is waiting on it. The sentence is
+  the question as they word it, with one input under it, hidden while typing when it is a
+  passphrase, password or token. The result is named for what it does ("Unlock key",
+  "Log in", else "Answer"). `Enter` sends the answer, `Esc` or a click outside cancels, and
+  git then fails with its own message. git and ssh ask by running the app again as their
+  askpass program, which passes the question to the open window over a private socket; the
+  app never stores the answer. Where the app isn't serving, they fail at once instead of
+  asking a terminal nobody sees. What the popup says lives in `gitclient_core::askpass`.
 - **Double-click:** double-clicking a branch, in the sidebar or on a chip, checks it out. A
   remote branch gets a local copy that follows it. The checked-out branch does nothing.
 - **Drag and drop:** branches and tags drag from the sidebar and from the refs column,
