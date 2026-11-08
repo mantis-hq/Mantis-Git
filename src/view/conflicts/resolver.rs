@@ -185,7 +185,14 @@ impl GraphView {
             Some(standing) => standing.clone(),
             None => vec![true; count],
         };
-        let top = self.conflict.scroll.logical_scroll_top_index();
+        // The row at the top of the list, or the one it is about to go to.
+        let top = {
+            let scroll = self.conflict.scroll.0.borrow();
+            match &scroll.deferred_scroll_to_item {
+                Some(deferred) => deferred.item_index,
+                None => scroll.base_handle.logical_scroll_top().0,
+            }
+        };
         let from_last = (self.conflict.jumped)
             .filter(|&last| last < count && view.header_row(whole_file, last) >= top);
         let at = match from_last {
