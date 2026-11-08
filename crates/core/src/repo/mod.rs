@@ -2,6 +2,7 @@
 //! working trees, submodules, a paused operation, and where it stands overall.
 
 pub mod branch;
+pub mod commit_graph;
 pub mod conflict;
 pub mod remote;
 pub mod status;

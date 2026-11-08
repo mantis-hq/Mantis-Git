@@ -8,6 +8,7 @@
 pub mod lanes;
 pub mod picks;
 pub mod refs;
+pub mod reload;
 pub mod selection;
 pub mod spotlight;
 
@@ -116,6 +117,21 @@ impl More {
         starts.dedup();
         starts
     }
+
+    /// Lays out `commits` under everything laid out so far, after `working` if given.
+    fn place(&mut self, working: Option<Entry>, commits: Vec<Commit>) -> Vec<Entry> {
+        for commit in &commits {
+            self.unseen_tips.remove(&commit.oid);
+        }
+        working
+            .into_iter()
+            .chain(commits.into_iter().map(|commit| Entry {
+                row: self.builder.push(&commit.oid, &commit.parents),
+                commit,
+                working: false,
+            }))
+            .collect()
+    }
 }
 
 impl std::fmt::Debug for More {
@@ -126,19 +142,26 @@ impl std::fmt::Debug for More {
     }
 }
 
+/// A fresh layout for `refs`: lanes planned from them, and the working changes row to go
+/// first when there are any.
+fn begin(refs: &Refs) -> (More, Option<Entry>) {
+    let mut builder = GraphBuilder::with_plan(refs.plan.clone());
+    let files = refs.status.changed;
+    let working = (files > 0).then(|| working_entry(files, &mut builder));
+    let more = More {
+        builder,
+        unseen_tips: refs.tips.iter().cloned().collect(),
+    };
+    (more, working)
+}
+
 /// What the band under the header says when older history could not be read.
 pub fn more_failed_message(message: &str) -> String {
     format!("Could not load older commits: {message}")
 }
 
-/// Loads a repository on its own thread. The channel closes when loading is done, and
-/// dropping the receiver cancels the load and stops `git`.
-pub fn spawn_load(repo: PathBuf, limit: u32) -> async_channel::Receiver<LoadEvent> {
-    spawn(move |emit| load(&repo, limit, emit))
-}
-
-/// Reads up to `limit` more commits where an earlier load stopped, on its own thread, as
-/// `spawn_load` does. It sends no refs.
+/// Reads up to `limit` more commits where an earlier load stopped, on its own thread. It
+/// sends no refs.
 pub fn spawn_load_more(
     repo: PathBuf,
     more: More,
@@ -147,6 +170,8 @@ pub fn spawn_load_more(
     spawn(move |emit| load_more(&repo, more, limit, emit))
 }
 
+/// Runs a load on its own thread. The channel closes when loading is done, and dropping
+/// the receiver cancels the load and stops `git`.
 fn spawn(
     work: impl FnOnce(&mut dyn FnMut(LoadEvent) -> bool) + Send + 'static,
 ) -> async_channel::Receiver<LoadEvent> {
@@ -161,32 +186,28 @@ fn spawn(
 /// Reads refs and history, passing each step to `emit` until it returns false.
 /// Reads at most `limit` commits, and ends with `More` if there may be others.
 pub fn load(repo: &Path, limit: u32, mut emit: impl FnMut(LoadEvent) -> bool) {
-    let refs = match read_refs(repo) {
-        Ok(refs) => Arc::new(refs),
+    match read_refs(repo) {
+        Ok(refs) => load_from(repo, Arc::new(refs), limit, &mut emit),
         Err(message) => {
             emit(LoadEvent::Failed(message));
-            return;
         }
-    };
+    }
+}
+
+/// Loads history for refs already read, as `load` does once it has them.
+fn load_from(repo: &Path, refs: Arc<Refs>, limit: u32, emit: &mut impl FnMut(LoadEvent) -> bool) {
     if !emit(LoadEvent::Refs(refs.clone())) {
         return;
     }
-
-    let mut builder = GraphBuilder::with_plan(refs.plan.clone());
-    let files = refs.status.changed;
-    let working = (files > 0).then(|| working_entry(files, &mut builder));
-    if let Some(working) = &working
-        && refs.tips.is_empty()
-        && !emit(LoadEvent::Batch(vec![working.clone()]))
-    {
+    let (more, working) = begin(&refs);
+    if refs.tips.is_empty() {
+        // No commits to read, so the working changes are all there is.
+        if let Some(working) = working {
+            emit(LoadEvent::Batch(vec![working]));
+        }
         return;
     }
-    let working = working.filter(|_| !refs.tips.is_empty());
-    let more = More {
-        builder,
-        unseen_tips: refs.tips.iter().cloned().collect(),
-    };
-    read_more(repo, &refs.tips, more, limit, working, &mut emit);
+    read_more(repo, &refs.tips, more, limit, working, emit);
 }
 
 /// Reads up to `limit` commits after the ones `more` has read, passing each step to
@@ -205,20 +226,8 @@ fn read_more(
     emit: &mut impl FnMut(LoadEvent) -> bool,
 ) {
     let mut stopped = false;
-    let result = stream_commits(repo, starts, limit, |commits| {
-        for commit in &commits {
-            more.unseen_tips.remove(&commit.oid);
-        }
-        let batch = working
-            .take()
-            .into_iter()
-            .chain(commits.into_iter().map(|commit| Entry {
-                row: more.builder.push(&commit.oid, &commit.parents),
-                commit,
-                working: false,
-            }))
-            .collect();
-        stopped = !emit(LoadEvent::Batch(batch));
+    let result = stream_commits(repo, starts, &[], limit, |commits| {
+        stopped = !emit(LoadEvent::Batch(more.place(working.take(), commits)));
         !stopped
     });
     match result {
@@ -248,10 +257,12 @@ fn working_entry(files: u32, builder: &mut GraphBuilder) -> Entry {
     }
 }
 
-/// Streams up to `limit` commits, and says how many it read.
+/// Streams up to `limit` commits reachable from `tips` and not from `exclude`, and says how
+/// many it read.
 fn stream_commits(
     repo: &Path,
     tips: &[Arc<str>],
+    exclude: &[Arc<str>],
     limit: u32,
     mut sink: impl FnMut(Vec<Commit>) -> bool,
 ) -> Result<u32, String> {
@@ -279,7 +290,12 @@ fn stream_commits(
 
     // git reads all of stdin before it writes anything, so this can't deadlock. If git
     // quits early the write fails, and its exit status is what gets reported below.
-    let _ = tips.iter().try_for_each(|tip| writeln!(stdin, "{tip}"));
+    // `^` rather than a `--not` line, which `--stdin` only understands from git 2.42.
+    let _ = tips
+        .iter()
+        .map(|tip| (tip, ""))
+        .chain(exclude.iter().map(|tip| (tip, "^")))
+        .try_for_each(|(tip, mark)| writeln!(stdin, "{mark}{tip}"));
     drop(stdin);
 
     let mut reader = BufReader::with_capacity(1 << 16, stdout);

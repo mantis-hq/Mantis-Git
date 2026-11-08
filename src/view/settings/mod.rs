@@ -8,6 +8,7 @@
 mod app;
 mod git_config;
 mod identities;
+mod repository;
 
 use super::parts::{
     Edge, checkbox, chip, fit, grip, header_bar, on_resize, panel_row, section_label, title,
@@ -103,16 +104,23 @@ enum Page {
     GitConfig,
     Identities,
     App,
+    Repository,
 }
 
 impl Page {
-    const ALL: [Page; 3] = [Page::GitConfig, Page::Identities, Page::App];
+    const ALL: [Page; 4] = [
+        Page::GitConfig,
+        Page::Identities,
+        Page::App,
+        Page::Repository,
+    ];
 
     fn name(self) -> &'static str {
         match self {
             Page::GitConfig => "Git config",
             Page::Identities => "Identities",
             Page::App => "App",
+            Page::Repository => "Repository",
         }
     }
 }
@@ -277,6 +285,9 @@ pub struct Settings {
     caches: Caches,
     /// How much the caches hold on disk, once counted.
     cache_size: Option<u64>,
+    /// How the open repository's commit graph stands, and whether it is being written.
+    commit_graph: repository::GraphState,
+    writing_graph: bool,
     feedback: Feedback,
     /// Inputs the user has typed in since they were last saved or filled in.
     dirty: std::collections::HashSet<String>,
@@ -398,6 +409,8 @@ impl Settings {
             state_file,
             caches: super::shared_caches(cx),
             cache_size: None,
+            commit_graph: Default::default(),
+            writing_graph: false,
             feedback: Feedback::None,
             dirty: Default::default(),
             _new_inputs: new_inputs,
@@ -411,12 +424,24 @@ impl Settings {
     /// Shows the page at `index` of the side panel.
     pub fn show_page(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(page) = Page::ALL.get(index) {
-            self.page = *page;
-            if *page == Page::App {
-                self.load_cache_size(cx);
-            }
-            cx.notify();
+            self.open_page(*page, cx);
         }
+    }
+
+    /// Shows `page`, reading again what it shows that may have changed meanwhile. The
+    /// Repository page only shows while a repository is open.
+    fn open_page(&mut self, page: Page, cx: &mut Context<Self>) {
+        if page == Page::Repository && self.repo.is_none() {
+            return;
+        }
+        self.page = page;
+        self.feedback = Feedback::None;
+        match page {
+            Page::App => self.load_cache_size(cx),
+            Page::Repository => self.load_commit_graph(cx),
+            Page::GitConfig | Page::Identities => {}
+        }
+        cx.notify();
     }
 
     /// Whether everything the pages show has been read.
@@ -445,8 +470,16 @@ impl Settings {
         self.repo = repo;
         if self.repo.is_none() {
             self.target = Target::Everywhere;
+            if self.page == Page::Repository {
+                self.page = Page::GitConfig;
+            }
         }
         self.feedback = Feedback::None;
+        self.commit_graph = Default::default();
+        self.writing_graph = false;
+        if self.page == Page::Repository {
+            self.load_commit_graph(cx);
+        }
         self.load(window, cx);
         self.load_suggestions(window, cx);
     }
@@ -713,6 +746,10 @@ impl Settings {
                             .to_owned()
                     }
                     Page::App => "App preferences save as you make them.".to_owned(),
+                    Page::Repository => format!(
+                        "Showing {}, the repository in the front tab.",
+                        self.repo.as_deref().map(repository_name).unwrap_or_default()
+                    ),
                 },
                 tokens(theme.is_dark()).subtext0,
             ),
@@ -733,17 +770,18 @@ impl Settings {
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = cx.theme();
         let (panel, border, muted) = (theme.list_head, theme.border, theme.muted_foreground);
-        let pages = Page::ALL.into_iter().enumerate().map(|(index, page)| {
-            panel_row(("page", index), self.page == page, cx)
-                .h(px(32.))
-                .text_size(TEXT_BODY)
-                .child(page.name())
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.page = page;
-                    this.feedback = Feedback::None;
-                    cx.notify();
-                }))
-        });
+        let has_repo = self.repo.is_some();
+        let pages = Page::ALL
+            .into_iter()
+            .enumerate()
+            .filter(|(_, page)| *page != Page::Repository || has_repo)
+            .map(|(index, page)| {
+                panel_row(("page", index), self.page == page, cx)
+                    .h(px(32.))
+                    .text_size(TEXT_BODY)
+                    .child(page.name())
+                    .on_click(cx.listener(move |this, _, _, cx| this.open_page(page, cx)))
+            });
         div()
             .v_flex()
             .w(self.sidebar_width.map_or(SIDEBAR_WIDTH, px))
@@ -840,6 +878,7 @@ impl Render for Settings {
             Page::GitConfig => self.render_git_config(cx),
             Page::Identities => self.render_identities(cx),
             Page::App => self.render_app(cx),
+            Page::Repository => self.render_repository(cx),
         };
         let body = div()
             .h_flex()

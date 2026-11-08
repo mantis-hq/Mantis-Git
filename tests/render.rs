@@ -539,11 +539,16 @@ mod render {
             cx.run_until_parked();
             std::thread::sleep(Duration::from_millis(10));
         }
-        for (index, name) in ["git-config", "identities"].into_iter().enumerate() {
+        for (index, name) in [(0, "git-config"), (1, "identities"), (3, "repository")] {
             cx.update_window(handle, |_, _, cx| {
                 view.update(cx, |view, cx| view.show_page(index, cx));
             })
             .unwrap();
+            // The repository page reads git when it opens.
+            for _ in 0..30 {
+                cx.run_until_parked();
+                std::thread::sleep(Duration::from_millis(10));
+            }
             capture(&mut cx, handle, &format!("settings-{name}-{suffix}"));
         }
     }

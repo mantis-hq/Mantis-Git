@@ -152,7 +152,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     (100, 500 by default, 1000, 5000, 20000), kept as `commit_limit` in the same file. The
     newest commits by history order come first. Scrolling to within 200 rows of the end
     loads the next as many, in the same lanes, and a reload keeps what was already
-    scrolled into view. A change applies the next time a repository loads.
+    scrolled into view. When refs only moved forward, a reload reads just the new commits
+    and lays out the rest again; after a rewrite or a deleted branch it reads everything.
+    A change applies the next time a repository loads.
     Under "Cache", a tick box "Keep a cache on disk" (on by default) says that what git
     reports about commits and their file diffs is kept between runs, so a commit seen before
     opens at once. When it is on, a row of chips picks the size limit (64 MB, 256 MB by
@@ -160,6 +162,17 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     button. Changes apply at once to the running app. The cache lives in the system's cache
     folder (`$XDG_CACHE_HOME` or `~/.cache` on Linux), never in the config folder, and an
     entry that is damaged or out of date is simply read from git again.
+  - **Repository** holds what belongs to the open repository alone, apart from its git
+    config, and is only in the side panel while a repository is open. The header says which
+    one. Under "History", a "Commit graph" row says whether git's commit graph lists every
+    commit the branches and tags reach ("The commit graph lists 72712 of the 73143 commits
+    your branches and tags reach."), and why git can't use one in a shallow clone, with
+    `core.commitGraph` off, or with replace refs. When something is missing a quiet button
+    names the result ("Add 431 commits to the commit graph", "Write the commit graph") and
+    runs `git commit-graph write --reachable --split`, as `git maintenance` does. If
+    `gc.writeCommitGraph` or `maintenance.commit-graph.enabled` is off, the row says that
+    git won't write it on its own. The page reads all this each time it opens. Nothing
+    about the commit graph shows in the main window.
 - Dock: a 36 px Mantle bar along the bottom of the window with a 1 px Surface 0 top
   border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
   under the bar, so history stays in view. `Ctrl \`` shows and hides it, and

@@ -278,7 +278,19 @@ impl GraphView {
         // Reloading keeps as much history as was scrolled into view, so the graph doesn't
         // shrink back to the first page under the pointer.
         let limit = self.commit_limit().max(self.commit_count() as u32);
-        let events = history::spawn_load(repo, limit);
+        // What is on show always belongs to `refs`, even while a load is under way: a new
+        // one replaces both at once. So when refs only moved forward, git lists just what
+        // is new and the rest is laid out again from here.
+        let previous = history::reload::Previous {
+            refs: self.refs.clone(),
+            commits: self
+                .entries
+                .iter()
+                .filter(|entry| !entry.working)
+                .map(|entry| entry.commit.clone())
+                .collect(),
+        };
+        let events = history::reload::spawn_reload(repo, previous, limit);
         self.load_task = Some(cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 if this.update(cx, |this, cx| this.apply(event, cx)).is_err() {
