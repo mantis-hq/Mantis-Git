@@ -186,9 +186,24 @@ pub fn list(workdir: &Path) -> Vec<Submodule> {
     )
     .map(|listing| parse_modules(&listing))
     .unwrap_or_default();
-    let recorded = ops::run(workdir, &["ls-files", "-s", "-z"])
-        .map(|listing| parse_recorded(&listing))
-        .unwrap_or_default();
+    // `submodule status` already says the recorded commit, except for a submodule that has
+    // moved (it says where it is) or is in conflict, so only those are looked up, and by
+    // their own paths. Listing the whole index takes over ten seconds in a large
+    // repository, and this runs each time the refs are read.
+    let differing: Vec<&str> = states
+        .iter()
+        .filter(|(state, _, _)| matches!(state, State::Moved | State::Conflict))
+        .map(|(_, _, path)| path.as_str())
+        .collect();
+    let recorded = if differing.is_empty() {
+        HashMap::new()
+    } else {
+        let mut args = vec!["--literal-pathspecs", "ls-files", "-s", "-z", "--"];
+        args.extend(differing);
+        ops::run(workdir, &args)
+            .map(|listing| parse_recorded(&listing))
+            .unwrap_or_default()
+    };
 
     let mut found: Vec<Submodule> = states
         .into_iter()
