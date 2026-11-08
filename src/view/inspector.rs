@@ -9,7 +9,7 @@ use crate::theme::tokens;
 use chrono::{Local, TimeZone};
 use gitclient_core::details::{self, CommitDetails, FileChange};
 use gitclient_core::git::{Commit, Entry, split_subject};
-use gitclient_core::ops::Cancel;
+use gitclient_core::ops::{self, Cancel};
 use gitclient_core::text::{count, short_oid};
 use gitclient_core::tree::{self, FileView, TreeRow};
 use gitclient_core::working::{self, Changes, Side, WorkingFile};
@@ -48,6 +48,12 @@ pub(super) struct State {
     /// The read of the selected commit's details, while it runs. Selecting something else
     /// sets it, so that git stops work nobody will look at.
     loading: Option<Cancel>,
+    /// Set while the working changes are being read, so that a burst of refreshes (the
+    /// window used again, a file staged) waits for the read in progress rather than
+    /// starting one git per event.
+    reading_working: bool,
+    /// Whether another refresh came in during that read, which then runs once more.
+    read_working_again: bool,
 }
 
 /// What the working changes row shows: what is staged and what is not, and the same list
@@ -190,30 +196,52 @@ impl GraphView {
     }
 
     /// Reads the uncommitted changes. Also run when the window is used again, because
-    /// they change under the app as files are edited.
+    /// they change under the app as files are edited. One read runs at a time: a request
+    /// during it makes it run once more when it ends, and selecting a commit stops it.
     pub(super) fn reload_working(&mut self, cx: &mut Context<Self>) {
         let Some(repo) = self.workdir() else {
             return;
         };
+        if self.inspector.reading_working {
+            self.inspector.read_working_again = true;
+            return;
+        }
+        self.inspector.reading_working = true;
+        let cancel = Cancel::new();
+        self.inspector.loading = Some(cancel.clone());
         Self::spawn_blocking(
-            move || {
-                // Counting the lines of every patch is work for this thread, not the window's.
-                working::read(&repo).map(|changes| {
-                    let details = CommitDetails {
-                        oid: WORKING_ID.into(),
-                        body: String::new(),
-                        files: changes.all().map(WorkingFile::change).collect(),
-                    };
-                    (changes, details)
-                })
-            },
-            move |this, read, cx| {
+            move || working::read(&repo, &cancel),
+            move |this, changes, cx| {
+                this.inspector.reading_working = false;
+                let again = std::mem::take(&mut this.inspector.read_working_again);
                 if !this.working_row_is_selected() {
                     return;
                 }
-                let Ok((changes, details)) = read else {
+                if again || changes.as_ref().is_err_and(|e| e == ops::CANCELLED) {
+                    // Out of date, or stopped: only the newest read has anything to say.
+                    return this.reload_working(cx);
+                }
+                this.inspector.loading = None;
+                let Ok(changes) = changes else {
                     this.inspector.working = None;
                     return cx.notify();
+                };
+                let same = this
+                    .inspector
+                    .working
+                    .as_ref()
+                    .is_some_and(|working| working.changes == changes);
+                if same {
+                    // Nothing in the list moved, so only an open diff may have changed.
+                    if this.diff_is_open() {
+                        this.working_loaded(cx);
+                    }
+                    return;
+                }
+                let details = CommitDetails {
+                    oid: WORKING_ID.into(),
+                    body: String::new(),
+                    files: changes.all().map(WorkingFile::change).collect(),
                 };
                 this.inspector.working = Some(Working {
                     changes,

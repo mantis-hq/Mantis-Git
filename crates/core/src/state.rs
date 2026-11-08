@@ -7,6 +7,7 @@
 //! missing or broken file is the same as a fresh install.
 
 use crate::cache::{DEFAULT_DISK_MB, DiskSettings};
+use crate::text::count;
 use crate::tree::FileView;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -27,6 +28,8 @@ pub struct AppState {
     pub disk_cache: bool,
     /// How much that may take, in megabytes.
     pub cache_mb: u32,
+    /// The most commits the graph loads from a repository.
+    pub commit_limit: u32,
     /// How the commit screen lists changed files, for every repository.
     pub files_view: FileView,
 }
@@ -39,6 +42,7 @@ impl Default for AppState {
             active: 0,
             disk_cache: true,
             cache_mb: DEFAULT_DISK_MB,
+            commit_limit: DEFAULT_COMMIT_LIMIT,
             files_view: FileView::List,
         }
     }
@@ -85,6 +89,12 @@ impl AppState {
                 "cache_mb" => {
                     state.cache_mb = value.trim().parse().unwrap_or(DEFAULT_DISK_MB);
                 }
+                "commit_limit" => {
+                    state.commit_limit = match value.trim().parse() {
+                        Ok(limit) if limit > 0 => limit,
+                        _ => DEFAULT_COMMIT_LIMIT,
+                    };
+                }
                 "files_view" => state.files_view = FileView::from_key(value),
                 "active" => state.active = value.trim().parse().unwrap_or(0),
                 "tab" if !value.is_empty() => state.tabs.push(PathBuf::from(value)),
@@ -100,6 +110,7 @@ impl AppState {
         text.push_str(&format!("reopen_tabs={}\n", self.reopen_tabs));
         text.push_str(&format!("disk_cache={}\n", self.disk_cache));
         text.push_str(&format!("cache_mb={}\n", self.cache_mb));
+        text.push_str(&format!("commit_limit={}\n", self.commit_limit));
         text.push_str(&format!("files_view={}\n", self.files_view.key()));
         text.push_str(&format!("active={}\n", self.active));
         for tab in &self.tabs {
@@ -198,6 +209,23 @@ impl AppState {
         }
     }
 
+    /// The sentence under the commit limit, saying what it does now.
+    pub fn commit_limit_sentence(&self) -> String {
+        format!(
+            "The graph shows the newest {} of a repository. A change applies the next time a \
+             repository loads.",
+            count(self.commit_limit, "commit")
+        )
+    }
+
+    /// What the header says after the commit limit is changed.
+    pub fn commit_limit_saved_message(&self) -> String {
+        format!(
+            "Saved. The graph loads up to {} from now on.",
+            count(self.commit_limit, "commit")
+        )
+    }
+
     /// The sentence under the "Reopen repositories" switch, saying what it does now.
     pub fn reopen_sentence(&self) -> &'static str {
         if self.reopen_tabs {
@@ -207,6 +235,12 @@ impl AppState {
         }
     }
 }
+
+/// How many commits the graph loads unless the settings say otherwise.
+pub const DEFAULT_COMMIT_LIMIT: u32 = 500;
+
+/// The commit limits offered in the settings.
+pub const COMMIT_LIMITS: [u32; 5] = [100, 500, 1000, 5000, 20000];
 
 /// The sizes offered for the disk cache, in megabytes.
 pub const CACHE_SIZES_MB: [u32; 4] = [64, 256, 1024, 4096];
@@ -284,6 +318,14 @@ mod tests {
     }
 
     #[test]
+    fn the_commit_limit_is_500_unless_the_file_says_otherwise() {
+        assert_eq!(AppState::default().commit_limit, 500);
+        assert_eq!(AppState::parse("commit_limit=1000\n").commit_limit, 1000);
+        assert_eq!(AppState::parse("commit_limit=0\n").commit_limit, 500);
+        assert_eq!(AppState::parse("commit_limit=many\n").commit_limit, 500);
+    }
+
+    #[test]
     fn the_disk_cache_is_on_at_256_mb_unless_the_file_says_otherwise() {
         let fresh = AppState::parse("");
         assert!(fresh.disk_cache);
@@ -316,6 +358,7 @@ mod tests {
             active: 1,
             disk_cache: false,
             cache_mb: 1024,
+            commit_limit: 1000,
             files_view: FileView::Tree,
         };
         state.save(&file).unwrap();

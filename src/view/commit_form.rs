@@ -3,7 +3,7 @@
 use super::parts::{TEXT_CHIP, TEXT_SMALL, checkbox, section_label};
 use super::{GraphView, Notice};
 use crate::theme::tokens;
-use gitclient_core::state::AppState;
+use gitclient_core::state::{self, AppState};
 use gitclient_core::tree::FileView;
 use gitclient_core::working::{self, Bump, COMMIT_TYPES, Version};
 use gpui_kit::component::button::*;
@@ -35,6 +35,16 @@ impl GraphView {
     /// Sets the file where the way of listing files is remembered.
     pub(super) fn set_state_file(&mut self, file: Option<PathBuf>) {
         self.commit.state_file = file;
+    }
+
+    /// How many commits the graph loads, as the app settings say.
+    pub(super) fn commit_limit(&self) -> u32 {
+        self.commit
+            .state_file
+            .as_deref()
+            .map_or(state::DEFAULT_COMMIT_LIMIT, |file| {
+                AppState::load(file).commit_limit
+            })
     }
 
     /// Lists the files in `view` and remembers it for every repository. The file's other
