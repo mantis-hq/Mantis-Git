@@ -10,7 +10,6 @@ mod inspector;
 mod menu;
 mod notice;
 mod parts;
-mod remotes;
 mod rows;
 mod settings;
 mod sidebar;
@@ -138,7 +137,7 @@ pub struct GraphView {
     /// Whether the key now down is a repeat of one still held.
     key_held: bool,
     /// The form that adds or edits a remote, while it is open.
-    remote_form: Option<remotes::RemoteForm>,
+    remote_form: Option<sidebar::remotes::RemoteForm>,
     sidebar: sidebar::State,
     inspector: inspector::State,
     diff: diff::State,

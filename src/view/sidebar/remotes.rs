@@ -2,9 +2,9 @@
 //! the header, with a name and an address. What a remote is and how it is saved lives in
 //! `gitclient_core::repo::remote`.
 
-use super::GraphView;
-use super::parts::{TEXT_BODY, TEXT_SMALL};
 use crate::theme::tokens;
+use crate::view::GraphView;
+use crate::view::parts::{TEXT_BODY, TEXT_SMALL};
 use gitclient_core::menu;
 use gitclient_core::repo::remote;
 use gpui_kit::component::button::*;
@@ -16,7 +16,7 @@ use std::path::Path;
 
 /// The open form. Its inputs are made on the next draw, which is the first time there
 /// is a window to make them in.
-pub(super) struct RemoteForm {
+pub(in crate::view) struct RemoteForm {
     /// The remote being edited, or `None` while adding one.
     original: Option<String>,
     name: String,
@@ -35,14 +35,18 @@ struct Inputs {
 impl RemoteForm {
     /// The name and address the form started with.
     #[cfg(test)]
-    pub(super) fn prefill(&self) -> (&str, &str) {
+    pub(in crate::view) fn prefill(&self) -> (&str, &str) {
         (&self.name, &self.url)
     }
 }
 
 impl GraphView {
     /// Opens the form to add a remote, or to edit the one called `original`.
-    pub(super) fn open_remote_form(&mut self, original: Option<String>, cx: &mut Context<Self>) {
+    pub(in crate::view) fn open_remote_form(
+        &mut self,
+        original: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         let (name, url) = match &original {
             Some(original) => self
                 .refs
@@ -64,7 +68,7 @@ impl GraphView {
         cx.notify();
     }
 
-    pub(super) fn open_remote_menu(
+    pub(in crate::view) fn open_remote_menu(
         &mut self,
         name: &str,
         position: Point<Pixels>,
@@ -75,7 +79,7 @@ impl GraphView {
     }
 
     /// Whether `name` is a remote of the repository, as opposed to a folder of branches.
-    pub(super) fn is_remote(&self, name: &str) -> bool {
+    pub(in crate::view) fn is_remote(&self, name: &str) -> bool {
         self.refs
             .remote_configs
             .iter()
@@ -83,7 +87,7 @@ impl GraphView {
     }
 
     /// Escape: closes the menu if one is open, otherwise the form.
-    pub(super) fn dismiss(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::view) fn dismiss(&mut self, cx: &mut Context<Self>) {
         if self.menu.is_some() {
             self.close_menu(cx);
         } else if self.remote_form.take().is_some() {
@@ -96,7 +100,11 @@ impl GraphView {
     }
 
     /// Makes the form's inputs the first time it is drawn, and puts the cursor in the first.
-    pub(super) fn ensure_remote_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(in crate::view) fn ensure_remote_inputs(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(form) = &self.remote_form else {
             return;
         };
@@ -165,7 +173,7 @@ impl GraphView {
         );
     }
 
-    pub(super) fn render_remote_form(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(in crate::view) fn render_remote_form(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let form = self.remote_form.as_ref()?;
         let inputs = form.inputs.as_ref()?;
         let theme = cx.theme();
