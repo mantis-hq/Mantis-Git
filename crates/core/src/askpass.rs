@@ -237,7 +237,7 @@ mod unix {
     /// The environment that makes git and ssh run this app as their askpass program.
     pub fn variables() -> Option<Vec<(&'static str, OsString)>> {
         let socket = SOCKET.get()?;
-        let exe = std::env::current_exe().ok()?;
+        let exe = crate::install::exe_path();
         Some(vec![
             ("SSH_ASKPASS", exe.into_os_string()),
             // Even with a terminal to hand, ssh asks here rather than on it.

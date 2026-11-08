@@ -2,8 +2,173 @@
 //! launch, how many commits the graph loads, and the cache on disk.
 
 use super::*;
+use gitclient_core::install::exe_path;
+use gitclient_core::install::update::{self, Version};
 
 impl Settings {
+    /// Reads how the launcher stands, which is what the page shows. Settings reads the disk
+    /// rather than a remembered choice, so a launcher added or removed by hand is seen.
+    pub(super) fn load_launcher(&mut self) {
+        self.launcher_status = self
+            .launcher
+            .as_ref()
+            .map(|launcher| launcher.status(&exe_path()));
+    }
+
+    /// Adds the launcher to the menu, or takes it away, and says which in the header. The
+    /// question at first launch is settled too, so it isn't asked after the user has chosen.
+    pub(super) fn set_launcher(&mut self, on: bool, cx: &mut Context<Self>) {
+        let Some(launcher) = &self.launcher else {
+            return;
+        };
+        let exe = exe_path();
+        let result = if on {
+            launcher.add(&exe).map(|()| launcher.added_message())
+        } else {
+            launcher.remove().map(|()| launcher.removed_message())
+        };
+        self.feedback = match result {
+            Ok(message) => {
+                if let Some(file) = &self.state_file
+                    && let Ok(state) = AppState::change(file, |s| s.menu_entry_asked = true)
+                {
+                    self.app = state;
+                }
+                Feedback::Saved(message)
+            }
+            Err(error) => Feedback::Failed(error),
+        };
+        self.load_launcher();
+        cx.notify();
+    }
+
+    /// Turns "look for a newer version when gitclient starts" on or off, and saves it at once.
+    pub(super) fn set_check_updates(&mut self, on: bool, cx: &mut Context<Self>) {
+        let Some(file) = &self.state_file else {
+            return;
+        };
+        match AppState::change(file, |state| state.check_updates = on) {
+            Ok(state) => {
+                self.feedback = Feedback::Saved(update::check_saved_message(on).to_owned());
+                self.app = state;
+            }
+            Err(error) => self.feedback = Feedback::Failed(error),
+        }
+        cx.notify();
+    }
+
+    /// A title over a muted sentence, the left side of a row in a card.
+    fn row_words(&self, title: &str, note: &str, cx: &App) -> Div {
+        div()
+            .v_flex()
+            .flex_1()
+            .min_w_0()
+            .gap_0p5()
+            .child(
+                div()
+                    .text_size(TEXT_BODY)
+                    .line_height(px(20.))
+                    .child(title.to_owned()),
+            )
+            .child(
+                div()
+                    .text_size(TEXT_SMALL)
+                    .line_height(px(17.))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(note.to_owned()),
+            )
+    }
+
+    /// The "Launcher" card: whether gitclient is in the application menu. Only a portable
+    /// copy on a system with such a menu has one.
+    fn render_launcher_group(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let launcher = self.launcher.as_ref()?;
+        let status = self.launcher_status?;
+        let on = matches!(status, LauncherStatus::Present { .. });
+        // A launcher that isn't ours stays as it is, so there is nothing to tick.
+        let box_ = (status != LauncherStatus::Foreign).then(|| {
+            checkbox("launcher", on, false, cx)
+                .on_click(cx.listener(move |this, _, _, cx| this.set_launcher(!on, cx)))
+        });
+        let row = div()
+            .px_4()
+            .py_3()
+            .gap_3()
+            .h_flex()
+            .child(self.row_words(&launcher.title(), &launcher.sentence(&exe_path()), cx))
+            .children(box_)
+            .into_any_element();
+        Some(self.render_group("Launcher", vec![row], cx))
+    }
+
+    /// The "Updates" card. A copy a package manager installed says so and has nothing to
+    /// set. A portable one says where an update stands, and acts on it.
+    fn render_updates_group(&self, cx: &mut Context<Self>) -> AnyElement {
+        let updates = self.updates.clone();
+        let reason = match &updates {
+            Some(updates) => updates.read(cx).reason().map(str::to_owned),
+            None => Some(match self.channel {
+                Channel::Packaged { by } => {
+                    format!("gitclient was installed with {by}, which updates it.")
+                }
+                Channel::Portable => "Updates aren't set up in this window.".to_owned(),
+            }),
+        };
+        let (Some(updates), None) = (updates, reason.clone()) else {
+            let row = div()
+                .px_4()
+                .py_3()
+                .child(self.row_words("Updates", reason.as_deref().unwrap_or_default(), cx))
+                .into_any_element();
+            return self.render_group("Updates", vec![row], cx);
+        };
+
+        let enabled = self.state_file.is_some();
+        let on = self.app.check_updates;
+        let switch = div()
+            .px_4()
+            .py_3()
+            .gap_3()
+            .h_flex()
+            .child(self.row_words(
+                "Look for a newer version when gitclient starts",
+                if enabled {
+                    update::check_sentence(on)
+                } else {
+                    "gitclient can't find a folder to keep this in."
+                },
+                cx,
+            ))
+            .children(enabled.then(|| {
+                checkbox("check-updates", on, false, cx)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_check_updates(!on, cx)))
+            }))
+            .into_any_element();
+
+        let status = updates.read(cx).status().clone();
+        let button = status.button().map(|label| {
+            let updates = updates.clone();
+            Button::new("update-act")
+                .ghost()
+                .small()
+                .label(label)
+                .on_click(move |_, _, cx| updates.update(cx, |updates, cx| updates.act(cx)))
+        });
+        let state = div()
+            .px_4()
+            .py_3()
+            .gap_3()
+            .h_flex()
+            .child(self.row_words(
+                "Check for updates",
+                &status.sentence(Version::current()),
+                cx,
+            ))
+            .children(button)
+            .into_any_element();
+        self.render_group("Updates", vec![switch, state], cx)
+    }
+
     /// Turns "reopen repositories on launch" on or off and saves it at once.
     pub(super) fn set_reopen_tabs(&mut self, on: bool, cx: &mut Context<Self>) {
         let Some(file) = &self.state_file else {
@@ -300,6 +465,8 @@ impl Settings {
                 ],
                 cx,
             ))
+            .children(self.render_launcher_group(cx))
+            .child(self.render_updates_group(cx))
             .child(self.render_graph_group(cx))
             .child(self.render_cache_group(cx))
             .into_any_element()

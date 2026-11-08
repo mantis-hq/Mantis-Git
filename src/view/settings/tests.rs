@@ -581,3 +581,172 @@ fn the_repository_page_writes_a_missing_commit_graph(cx: &mut TestAppContext) {
         assert_eq!(settings.page, Page::GitConfig)
     });
 }
+
+/// Draws the window once, so that a page that panics while rendering fails its test.
+fn draw(view: &Entity<Settings>, cx: &mut VisualTestContext) {
+    view.update(cx, |_, cx| cx.notify());
+    // A pointer event draws the window before it is handled, as the existing view tests rely on.
+    cx.simulate_mouse_move(
+        gpui_kit::point(gpui_kit::px(5.), gpui_kit::px(5.)),
+        None,
+        gpui_kit::Modifiers::none(),
+    );
+}
+
+fn with_launcher(
+    view: &Entity<Settings>,
+    dir: &std::path::Path,
+    cx: &mut VisualTestContext,
+) -> (PathBuf, gitclient_core::install::menu_entry::Launcher) {
+    use gitclient_core::install::Channel;
+    use gitclient_core::install::menu_entry::Launcher;
+    let file = dir.join("state");
+    AppState {
+        tabs: vec!["/work/a".into()],
+        ..Default::default()
+    }
+    .save(&file)
+    .unwrap();
+    let launcher = Launcher::in_data_home(&dir.join("data"));
+    let held = launcher.clone();
+    view.update(cx, |settings, _| {
+        settings.state_file = Some(file.clone());
+        settings.launcher = Some(held);
+        settings.channel = Channel::Portable;
+        settings.load_launcher();
+    });
+    (file, launcher)
+}
+
+#[gpui_kit::test]
+fn the_launcher_switch_adds_and_removes_the_menu_entry_and_settles_the_question(
+    cx: &mut TestAppContext,
+) {
+    use gitclient_core::install::exe_path;
+    use gitclient_core::install::menu_entry::Status;
+    let dir = tempfile::tempdir().unwrap();
+    let (_scope_dir, scope) = file_scope();
+    let (view, mut cx) = open(None, scope, cx);
+    let (file, launcher) = with_launcher(&view, dir.path(), &mut cx);
+    assert_eq!(launcher.status(&exe_path()), Status::Absent);
+
+    view.update(&mut cx, |settings, cx| settings.set_launcher(true, cx));
+
+    assert!(matches!(
+        launcher.status(&exe_path()),
+        Status::Present { up_to_date: true }
+    ));
+    let saved = AppState::load(&file);
+    assert!(
+        saved.menu_entry_asked,
+        "the question is not asked after choosing"
+    );
+    assert_eq!(
+        saved.tabs,
+        [PathBuf::from("/work/a")],
+        "the tabs are left alone"
+    );
+    view.read_with(&cx, |settings, _| {
+        assert!(matches!(
+            &settings.feedback,
+            Feedback::Saved(message) if message.starts_with("Added gitclient")
+        ));
+        assert!(matches!(
+            settings.launcher_status,
+            Some(Status::Present { up_to_date: true })
+        ));
+    });
+    draw(&view, &mut cx);
+
+    view.update(&mut cx, |settings, cx| settings.set_launcher(false, cx));
+
+    assert_eq!(launcher.status(&exe_path()), Status::Absent);
+    view.read_with(&cx, |settings, _| {
+        assert!(matches!(
+            &settings.feedback,
+            Feedback::Saved(message) if message.starts_with("Took gitclient out")
+        ));
+    });
+}
+
+#[gpui_kit::test]
+fn a_launcher_somebody_else_wrote_cannot_be_replaced_from_settings(cx: &mut TestAppContext) {
+    use gitclient_core::install::exe_path;
+    use gitclient_core::install::menu_entry::Status;
+    let dir = tempfile::tempdir().unwrap();
+    let (_scope_dir, scope) = file_scope();
+    let (view, mut cx) = open(None, scope, cx);
+    let (_file, launcher) = with_launcher(&view, dir.path(), &mut cx);
+    let folder = dir.path().join("data").join("applications");
+    std::fs::create_dir_all(&folder).unwrap();
+    let theirs = folder.join("gitclient.desktop");
+    std::fs::write(&theirs, "[Desktop Entry]\nName=Mine\n").unwrap();
+    view.update(&mut cx, |settings, _| settings.load_launcher());
+    assert_eq!(launcher.status(&exe_path()), Status::Foreign);
+
+    view.update(&mut cx, |settings, cx| settings.set_launcher(true, cx));
+
+    view.read_with(&cx, |settings, _| {
+        assert!(
+            matches!(&settings.feedback, Feedback::Failed(error) if error.contains("left alone"))
+        );
+    });
+    assert!(std::fs::read_to_string(&theirs).unwrap().contains("Mine"));
+    draw(&view, &mut cx);
+}
+
+#[gpui_kit::test]
+fn the_update_check_switch_saves_at_once_and_keeps_the_tabs(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (_scope_dir, scope) = file_scope();
+    let (view, mut cx) = open(None, scope, cx);
+    let (file, _) = with_launcher(&view, dir.path(), &mut cx);
+    assert!(AppState::load(&file).check_updates, "on unless turned off");
+
+    view.update(&mut cx, |settings, cx| {
+        settings.set_check_updates(false, cx)
+    });
+
+    let saved = AppState::load(&file);
+    assert!(!saved.check_updates);
+    assert_eq!(saved.tabs, [PathBuf::from("/work/a")]);
+    view.read_with(&cx, |settings, _| {
+        assert!(!settings.app.check_updates);
+        assert!(matches!(
+            &settings.feedback,
+            Feedback::Saved(message) if message.contains("won't look")
+        ));
+    });
+
+    view.update(&mut cx, |settings, cx| settings.set_check_updates(true, cx));
+    assert!(AppState::load(&file).check_updates);
+}
+
+#[gpui_kit::test]
+fn the_app_page_draws_for_a_portable_copy_and_for_one_a_package_manager_installed(
+    cx: &mut TestAppContext,
+) {
+    use gitclient_core::install::Channel;
+    let dir = tempfile::tempdir().unwrap();
+    let (_scope_dir, scope) = file_scope();
+    let (view, mut cx) = open(None, scope, cx);
+    let _ = with_launcher(&view, dir.path(), &mut cx);
+    view.update(&mut cx, |settings, cx| {
+        settings.page = Page::App;
+        cx.notify();
+    });
+
+    // Portable, with a launcher but no updater in this window.
+    draw(&view, &mut cx);
+    // A package manager's copy has no launcher row, and says who updates it.
+    view.update(&mut cx, |settings, cx| {
+        settings.channel = Channel::Packaged { by: "Flatpak" };
+        settings.launcher = None;
+        settings.load_launcher();
+        cx.notify();
+    });
+    draw(&view, &mut cx);
+    view.read_with(&cx, |settings, _| {
+        assert!(settings.launcher_status.is_none())
+    });
+}

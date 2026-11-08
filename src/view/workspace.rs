@@ -6,7 +6,9 @@
 
 use super::dock::{Dock, NewTerminal, ToggleDock};
 use super::parts::TEXT_BODY;
-use super::{GraphView, OpenWorktreeInTab, SwitchWorktree, parts, repository_name};
+use super::updates::{Updates, render_band, shared_updates};
+use super::{GraphView, OpenWorktreeInTab, SwitchWorktree, launcher, parts, repository_name};
+use gitclient_core::install::menu_entry::Launcher;
 use gitclient_core::settings::state::{AppState, DockLayout};
 use gpui_kit::component::button::*;
 use gpui_kit::component::tooltip::Tooltip;
@@ -76,6 +78,9 @@ pub struct Workspace {
     state_file: Option<PathBuf>,
     /// The tabs, front tab and dock last written, so that only a change writes.
     saved: Option<(Vec<PathBuf>, usize, DockLayout)>,
+    /// Looks for newer releases, and offers them in a band over the window. There is none
+    /// in tests.
+    updates: Option<Entity<Updates>>,
 }
 
 impl Workspace {
@@ -87,7 +92,11 @@ impl Workspace {
             dock: cx.new(Dock::new),
             state_file: None,
             saved: None,
+            updates: shared_updates(cx),
         };
+        if let Some(updates) = &this.updates {
+            cx.observe(updates, |_, _, cx| cx.notify()).detach();
+        }
         let first = this.make_tab(window, cx);
         this.tabs.push(first);
         this.track(0, cx);
@@ -127,6 +136,16 @@ impl Workspace {
             }
         })
         .detach();
+    }
+
+    /// At launch, for a portable copy: mends the application menu launcher if it points at a
+    /// copy that has moved, and asks once whether to add it. Needs the state file, which is
+    /// where the question is remembered.
+    pub fn offer_launcher(&mut self, launcher: Option<Launcher>, cx: &mut Context<Self>) {
+        let (Some(launcher), Some(file)) = (launcher, self.state_file.clone()) else {
+            return;
+        };
+        launcher::offer(self.active_view(), &launcher, &file, cx);
     }
 
     /// Brings the dock back as it was left, with its terminals in the front repository.
@@ -447,6 +466,10 @@ impl Render for Workspace {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let background = cx.theme().background;
         let strip = (self.tabs.len() > 1).then(|| self.render_strip(cx));
+        let update = self
+            .updates
+            .as_ref()
+            .and_then(|updates| render_band(updates, cx));
         self.sync_dock_directory(cx);
         div()
             .v_flex()
@@ -484,6 +507,7 @@ impl Render for Workspace {
                     .on_action(cx.listener(|this, _: &OpenRepositoryInTab, window, cx| {
                         this.prompt(window, cx)
                     }))
+                    .children(update)
                     .children(strip)
                     .child(
                         div()

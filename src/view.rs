@@ -7,15 +7,18 @@ mod diff;
 mod dock;
 mod header;
 mod inspector;
+mod launcher;
 mod menu;
 mod notice;
 mod parts;
 mod rows;
 mod settings;
 mod sidebar;
+mod updates;
 mod workspace;
 
 pub use settings::{OpenSettings, Settings, open as open_settings, should_quit};
+pub use updates::{Updates, install_updates};
 pub use workspace::Workspace;
 
 use dialog::{Confirm, Dialog};

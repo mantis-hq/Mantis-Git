@@ -15,8 +15,11 @@ use super::parts::{
 };
 use super::parts::{TEXT_BODY, TEXT_SMALL, TEXT_STATUS};
 use super::repository_name;
+use super::updates::{Updates, shared_updates};
 use crate::theme::{selected_row, tokens};
 use gitclient_core::cache::keys::Caches;
+use gitclient_core::install::Channel;
+use gitclient_core::install::menu_entry::{Launcher, Status as LauncherStatus};
 use gitclient_core::settings::config::{self, Kind, Scope, Setting, Sources, Values, Version};
 use gitclient_core::settings::identity::{self, Book, Choice, Identity, Match, Profile, RepoState};
 use gitclient_core::settings::ssh;
@@ -77,6 +80,7 @@ pub fn open(repo: Option<PathBuf>, cx: &mut App) {
         }),
         window_bounds: Some(WindowBounds::centered(size(px(1000.), px(720.)), cx)),
         window_min_size: Some(size(px(680.), px(420.))),
+        app_id: Some("gitclient".into()),
         ..Default::default()
     };
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
@@ -285,6 +289,14 @@ pub struct Settings {
     caches: Caches,
     /// How much the caches hold on disk, once counted.
     cache_size: Option<u64>,
+    /// The application menu launcher, for a portable copy on a system that has one.
+    launcher: Option<Launcher>,
+    /// How the launcher stands on disk, read when the page opens and after each change.
+    launcher_status: Option<LauncherStatus>,
+    /// Looks for and installs newer releases, shared with the band over the main window.
+    updates: Option<Entity<Updates>>,
+    /// How this copy was installed, which decides whether it manages itself.
+    channel: Channel,
     /// How the open repository's commit graph stands, and whether it is being written.
     commit_graph: repository::GraphState,
     writing_graph: bool,
@@ -292,6 +304,7 @@ pub struct Settings {
     /// Inputs the user has typed in since they were last saved or filled in.
     dirty: std::collections::HashSet<String>,
     _new_inputs: Vec<Subscription>,
+    _updates: Option<Subscription>,
 }
 
 fn field(
@@ -379,6 +392,15 @@ impl Settings {
         let state_file = matches!(base, Scope::Global)
             .then(state::default_file)
             .flatten();
+        let channel = Channel::detect();
+        // Like the state file, the launcher is the real one only in the real window.
+        let launcher = (matches!(base, Scope::Global) && channel.is_portable())
+            .then(Launcher::this_system)
+            .flatten();
+        let updates = shared_updates(cx);
+        let watch_updates = updates
+            .as_ref()
+            .map(|updates| cx.observe(updates, |_, _, cx| cx.notify()));
         let mut this = Self {
             base,
             repo,
@@ -409,12 +431,18 @@ impl Settings {
             state_file,
             caches: super::shared_caches(cx),
             cache_size: None,
+            launcher,
+            launcher_status: None,
+            updates,
+            channel,
             commit_graph: Default::default(),
             writing_graph: false,
             feedback: Feedback::None,
             dirty: Default::default(),
             _new_inputs: new_inputs,
+            _updates: watch_updates,
         };
+        this.load_launcher();
         this.load(window, cx);
         this.load_suggestions(window, cx);
         this.load_cache_size(cx);

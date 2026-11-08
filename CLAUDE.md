@@ -29,6 +29,10 @@ Where things go in `crates/core/src`:
   (`actions.rs`).
 - `working/`: staging and committing, with the commit's wording and version bumps.
 - `repo/`: branches, remotes, worktrees, submodules, a paused operation, and status.
+- `install/`: how this copy was installed (`channel.rs`), its application menu launcher
+  (`menu_entry/`), and updating itself from GitHub releases (`update.rs`). Only a portable
+  copy does either; one a package manager installed must never write a launcher or replace
+  itself.
 - `settings/`: git config, identities, SSH suggestions, and what the app remembers.
 - `menu/`: what each menu offers, in `command.rs` what its lines run, and in `form.rs`
   what the popups that ask for a name say and do.

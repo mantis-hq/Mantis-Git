@@ -34,6 +34,11 @@ pub struct AppState {
     pub files_view: FileView,
     /// How the dock along the bottom of the window was left.
     pub dock: DockLayout,
+    /// Whether the user has been asked about adding gitclient to the application menu.
+    /// The question is asked once; what the menu holds is read from disk, not remembered.
+    pub menu_entry_asked: bool,
+    /// Whether a portable copy looks for a newer release when it starts.
+    pub check_updates: bool,
 }
 
 /// Whether the dock was open, how many terminals it had and which of its tabs was in
@@ -72,6 +77,8 @@ impl Default for AppState {
             commit_limit: DEFAULT_COMMIT_LIMIT,
             files_view: FileView::List,
             dock: DockLayout::default(),
+            menu_entry_asked: false,
+            check_updates: true,
         }
     }
 }
@@ -105,6 +112,15 @@ impl AppState {
         std::fs::rename(&partial, file).map_err(fail)
     }
 
+    /// Reads the file again, applies `change` and saves it, so that whatever else changed
+    /// the file meanwhile (the tabs, from the main window) is kept. Returns the new state.
+    pub fn change(file: &Path, change: impl FnOnce(&mut Self)) -> Result<Self, String> {
+        let mut state = Self::load(file);
+        change(&mut state);
+        state.save(file)?;
+        Ok(state)
+    }
+
     pub fn parse(text: &str) -> Self {
         let mut state = Self::default();
         for line in text.lines() {
@@ -124,6 +140,8 @@ impl AppState {
                     };
                 }
                 "files_view" => state.files_view = FileView::from_key(value),
+                "menu_entry_asked" => state.menu_entry_asked = value.trim() == "true",
+                "check_updates" => state.check_updates = value.trim() != "false",
                 "dock_open" => state.dock.open = value.trim() == "true",
                 "dock_terminals" => state.dock.terminals = value.trim().parse().unwrap_or(0),
                 "dock_tab" => state.dock.tab = value.trim().parse().unwrap_or(0),
@@ -144,6 +162,8 @@ impl AppState {
         text.push_str(&format!("cache_mb={}\n", self.cache_mb));
         text.push_str(&format!("commit_limit={}\n", self.commit_limit));
         text.push_str(&format!("files_view={}\n", self.files_view.key()));
+        text.push_str(&format!("menu_entry_asked={}\n", self.menu_entry_asked));
+        text.push_str(&format!("check_updates={}\n", self.check_updates));
         text.push_str(&format!("dock_open={}\n", self.dock.open));
         text.push_str(&format!("dock_terminals={}\n", self.dock.terminals));
         text.push_str(&format!("dock_tab={}\n", self.dock.tab));
@@ -400,6 +420,8 @@ mod tests {
                 terminals: 2,
                 tab: 1,
             },
+            menu_entry_asked: true,
+            check_updates: false,
         };
         state.save(&file).unwrap();
         assert_eq!(AppState::load(&file), state);
@@ -407,6 +429,37 @@ mod tests {
             !file.with_extension("tmp").exists(),
             "no partial file is left"
         );
+    }
+
+    #[test]
+    fn nobody_is_asked_twice_about_the_menu_and_updates_are_checked_unless_turned_off() {
+        let fresh = AppState::parse("");
+        assert!(!fresh.menu_entry_asked);
+        assert!(fresh.check_updates);
+        assert!(AppState::parse("menu_entry_asked=true").menu_entry_asked);
+        // Anything but a plain "true" doesn't count as having asked.
+        assert!(!AppState::parse("menu_entry_asked=yes").menu_entry_asked);
+        assert!(!AppState::parse("check_updates=false").check_updates);
+        assert!(AppState::parse("check_updates=maybe").check_updates);
+    }
+
+    #[test]
+    fn changing_one_setting_keeps_what_another_window_saved_meanwhile() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("state");
+        AppState {
+            tabs: vec!["/work/a".into()],
+            ..AppState::default()
+        }
+        .save(&file)
+        .unwrap();
+
+        let state = AppState::change(&file, |state| state.menu_entry_asked = true).unwrap();
+
+        assert!(state.menu_entry_asked);
+        let saved = AppState::load(&file);
+        assert!(saved.menu_entry_asked);
+        assert_eq!(saved.tabs, [PathBuf::from("/work/a")]);
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! happens is said here in words, and risky steps wait here for a second click.
 
 use super::GraphView;
-use super::parts::TEXT_BODY;
+use super::parts::band;
 use crate::theme::tokens;
 use gpui_kit::component::button::*;
 use gpui_kit::component::*;
@@ -98,27 +98,13 @@ impl GraphView {
 
     pub(super) fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let theme = cx.theme();
-        let (border, header, text) = (theme.border, theme.title_bar, theme.secondary_foreground);
+        let text = theme.secondary_foreground;
         let peach = tokens(theme.is_dark()).peach;
-        let band = |id: &'static str| {
-            div()
-                .id(id)
-                .h_flex()
-                .flex_none()
-                .min_h(px(36.))
-                .px_4()
-                .py_1()
-                .gap_3()
-                .text_size(TEXT_BODY)
-                .bg(header)
-                .border_b_1()
-                .border_color(border)
-        };
 
         if let Some(confirm) = &self.confirm {
             let run = confirm.run.clone();
             return Some(
-                band("confirm")
+                band("confirm", cx)
                     .child(
                         div()
                             .flex_1()
@@ -155,7 +141,7 @@ impl GraphView {
             Notice::Error(message) => (message.clone(), peach),
         };
         Some(
-            band("notice")
+            band("notice", cx)
                 .child(div().flex_1().min_w_0().text_color(color).child(message))
                 .child(
                     Button::new("notice-dismiss")
