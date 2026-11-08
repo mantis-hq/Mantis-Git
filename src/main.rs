@@ -16,6 +16,7 @@ fn main() {
         .map(AppState::load)
         .unwrap_or_default();
     let startup = saved.startup(&given, std::env::current_dir().ok());
+    let dock = saved.dock;
     // Without a cache folder the caches still work, from memory.
     let caches = match cache::default_dir() {
         Some(root) => Caches::on_disk(root, saved.disk_settings()),
@@ -52,6 +53,7 @@ fn main() {
                     workspace.open(repo, window, cx);
                 }
                 workspace.activate(startup.active, window, cx);
+                workspace.restore_dock(dock, cx);
                 // Only now, so that opening the tabs one by one doesn't overwrite the rest.
                 workspace.remember_in(state_file, cx);
                 workspace

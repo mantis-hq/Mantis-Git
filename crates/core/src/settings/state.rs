@@ -32,6 +32,33 @@ pub struct AppState {
     pub commit_limit: u32,
     /// How the commit screen lists changed files, for every repository.
     pub files_view: FileView,
+    /// How the dock along the bottom of the window was left.
+    pub dock: DockLayout,
+}
+
+/// Whether the dock was open, how many terminals it had and which of its tabs was in
+/// front, so that it comes back the same way. Terminals come back as fresh shells.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DockLayout {
+    pub open: bool,
+    pub terminals: usize,
+    /// 0 is the log, then one per terminal.
+    pub tab: usize,
+}
+
+impl DockLayout {
+    /// The most terminals brought back, so a mangled file can't start hundreds of shells.
+    pub const MAX_TERMINALS: usize = 16;
+
+    /// The same layout with its numbers inside what can be brought back.
+    pub fn bounded(self) -> Self {
+        let terminals = self.terminals.min(Self::MAX_TERMINALS);
+        Self {
+            open: self.open,
+            terminals,
+            tab: self.tab.min(terminals),
+        }
+    }
 }
 
 impl Default for AppState {
@@ -44,6 +71,7 @@ impl Default for AppState {
             cache_mb: DEFAULT_DISK_MB,
             commit_limit: DEFAULT_COMMIT_LIMIT,
             files_view: FileView::List,
+            dock: DockLayout::default(),
         }
     }
 }
@@ -96,11 +124,15 @@ impl AppState {
                     };
                 }
                 "files_view" => state.files_view = FileView::from_key(value),
+                "dock_open" => state.dock.open = value.trim() == "true",
+                "dock_terminals" => state.dock.terminals = value.trim().parse().unwrap_or(0),
+                "dock_tab" => state.dock.tab = value.trim().parse().unwrap_or(0),
                 "active" => state.active = value.trim().parse().unwrap_or(0),
                 "tab" if !value.is_empty() => state.tabs.push(PathBuf::from(value)),
                 _ => {}
             }
         }
+        state.dock = state.dock.bounded();
         state
     }
 
@@ -112,6 +144,9 @@ impl AppState {
         text.push_str(&format!("cache_mb={}\n", self.cache_mb));
         text.push_str(&format!("commit_limit={}\n", self.commit_limit));
         text.push_str(&format!("files_view={}\n", self.files_view.key()));
+        text.push_str(&format!("dock_open={}\n", self.dock.open));
+        text.push_str(&format!("dock_terminals={}\n", self.dock.terminals));
+        text.push_str(&format!("dock_tab={}\n", self.dock.tab));
         text.push_str(&format!("active={}\n", self.active));
         for tab in &self.tabs {
             // A path that isn't text can't be written to a text file, so it isn't kept.
@@ -360,6 +395,11 @@ mod tests {
             cache_mb: 1024,
             commit_limit: 1000,
             files_view: FileView::Tree,
+            dock: DockLayout {
+                open: true,
+                terminals: 2,
+                tab: 1,
+            },
         };
         state.save(&file).unwrap();
         assert_eq!(AppState::load(&file), state);
@@ -378,6 +418,27 @@ mod tests {
         );
         let state = AppState::parse("garbage\nactive=x\nfuture_key=1\ntab=\nreopen_tabs=true");
         assert_eq!(state, AppState::default());
+    }
+
+    #[test]
+    fn the_dock_starts_closed_and_a_mangled_layout_is_kept_in_bounds() {
+        assert_eq!(AppState::default().dock, DockLayout::default());
+        let dock = AppState::parse("dock_open=true\ndock_terminals=2\ndock_tab=2\n").dock;
+        assert_eq!(
+            dock,
+            DockLayout {
+                open: true,
+                terminals: 2,
+                tab: 2
+            }
+        );
+        // A tab past the last terminal falls back to the last one, and nonsense to none.
+        assert_eq!(AppState::parse("dock_terminals=1\ndock_tab=5").dock.tab, 1);
+        assert_eq!(AppState::parse("dock_terminals=lots").dock.terminals, 0);
+        assert_eq!(
+            AppState::parse("dock_terminals=900").dock.terminals,
+            DockLayout::MAX_TERMINALS
+        );
     }
 
     #[test]
