@@ -58,7 +58,7 @@ impl RefList {
 /// One row of the sidebar, as data. The sidebar is a single flat list of these, so that
 /// only the rows in view become elements however many refs the repository has.
 enum Item {
-    /// The "Branches" label and, while refs are picked, "Show all".
+    /// The "Branches" label and the "New branch" link.
     Heading,
     /// Space between the branches and the other sections.
     Gap,
@@ -197,13 +197,6 @@ impl GraphView {
         let tips = self.sidebar.picks.tips(&self.refs);
         self.sidebar.spotlight =
             (!tips.is_empty()).then(|| Arc::new(Spotlight::new(tips, &self.entries)));
-    }
-
-    /// Lets go of every pick, as "Show all" does.
-    fn clear_picks(&mut self, cx: &mut Context<Self>) {
-        self.sidebar.picks.clear();
-        self.sidebar.spotlight = None;
-        cx.notify();
     }
 
     /// Refs or history changed, so the picks and their lit commits need working out again.
@@ -619,18 +612,6 @@ impl GraphView {
                         this.open_form(Form::new_branch_here(&this.refs), cx)
                     })),
             )
-            .when(self.sidebar.spotlight.is_some(), |heading| {
-                heading.child(
-                    div()
-                        .id("show-all")
-                        .cursor_pointer()
-                        .text_size(TEXT_SMALL)
-                        .font_medium()
-                        .text_color(link)
-                        .child("Show all")
-                        .on_click(cx.listener(|this, _, _, cx| this.clear_picks(cx))),
-                )
-            })
     }
 
     fn render_ref_row(&self, row: RefRow, cx: &mut Context<Self>) -> Stateful<Div> {
