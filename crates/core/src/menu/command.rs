@@ -61,6 +61,13 @@ pub enum Command {
         oid: String,
         hard: bool,
     },
+    /// Applies what a commit changed in one file to the working tree.
+    ApplyFile {
+        oid: String,
+        path: String,
+        /// Where a renamed file came from.
+        old_path: Option<String>,
+    },
     /// Handled by the interface, which owns the tabs: shows the worktree in this tab.
     SwitchWorktree {
         path: PathBuf,
@@ -204,6 +211,7 @@ impl Command {
             Self::CherryPick { .. } => "Cherry-picking",
             Self::Revert { .. } => "Reverting",
             Self::Reset { .. } => "Resetting",
+            Self::ApplyFile { .. } => "Applying",
             Self::SwitchWorktree { .. } | Self::OpenWorktreeInTab { .. } => "Switching",
             Self::Form(form) => form.progress(),
             Self::RemoveWorktree { .. } => "Removing the worktree",
@@ -324,6 +332,11 @@ impl Command {
                 _ => actions::revert_many(repo, oids),
             },
             Self::Reset { oid, hard } => actions::reset(repo, oid, *hard),
+            Self::ApplyFile {
+                oid,
+                path,
+                old_path,
+            } => actions::apply_file(repo, oid, path, old_path.as_deref()),
             Self::RemoveWorktree { path, .. } => worktree::remove(repo, path),
             Self::UpdateSubmodule { path, .. } => submodule::update(repo, path),
             Self::UpdateSubmodules => submodule::update_all(repo),

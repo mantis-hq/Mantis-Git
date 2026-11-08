@@ -7,7 +7,7 @@
 use super::dock::{Dock, NewTerminal, ToggleDock};
 use super::parts::TEXT_BODY;
 use super::{GraphView, OpenWorktreeInTab, SwitchWorktree, parts, repository_name};
-use gitclient_core::settings::state::AppState;
+use gitclient_core::settings::state::{AppState, DockLayout};
 use gpui_kit::component::button::*;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
@@ -74,8 +74,8 @@ pub struct Workspace {
     dock: Entity<Dock>,
     /// Where the open repositories are remembered. `None` remembers nothing, as in tests.
     state_file: Option<PathBuf>,
-    /// The tabs and front tab last written, so that only a change writes.
-    saved: Option<(Vec<PathBuf>, usize)>,
+    /// The tabs, front tab and dock last written, so that only a change writes.
+    saved: Option<(Vec<PathBuf>, usize, DockLayout)>,
 }
 
 impl Workspace {
@@ -102,7 +102,16 @@ impl Workspace {
             let file = self.state_file.clone();
             tab.update(cx, |tab, _| tab.set_state_file(file));
         }
+        // The dock redraws often for the log, but only a change to its layout writes.
+        cx.observe(&self.dock, |this, _, cx| this.persist(cx))
+            .detach();
         self.persist(cx);
+    }
+
+    /// Brings the dock back as it was left, with its terminals in the front repository.
+    pub fn restore_dock(&mut self, layout: DockLayout, cx: &mut Context<Self>) {
+        self.sync_dock_directory(cx);
+        self.dock.update(cx, |dock, cx| dock.restore(layout, cx));
     }
 
     /// Saves when the tab at `index` changes, since a tab can open a repository itself.
@@ -111,7 +120,8 @@ impl Workspace {
             .detach();
     }
 
-    /// Writes the open repositories and the front tab, unless that is what is saved.
+    /// Writes the open repositories, the front tab and how the dock is laid out, unless
+    /// that is what is saved.
     /// Empty tabs aren't kept, and the file's other settings are left as they are.
     fn persist(&mut self, cx: &App) {
         let Some(file) = &self.state_file else {
@@ -128,12 +138,12 @@ impl Workspace {
             }
             open.extend(tab.read(cx).repository().map(Path::to_owned));
         }
-        let now = (open, front);
+        let now = (open, front, self.dock.read(cx).layout());
         if self.saved.as_ref() == Some(&now) {
             return;
         }
         let mut state = AppState::load(file);
-        (state.tabs, state.active) = now.clone();
+        (state.tabs, state.active, state.dock) = now.clone();
         match state.save(file) {
             Ok(()) => self.saved = Some(now),
             Err(error) => eprintln!("{error}"),
@@ -473,7 +483,7 @@ fn canonical(path: &Path) -> PathBuf {
 mod tests {
     use super::Workspace;
     use crate::view::bind_keys;
-    use gitclient_core::settings::state::AppState;
+    use gitclient_core::settings::state::{AppState, DockLayout};
     use gpui_kit::{AppContext as _, Entity, TestAppContext, VisualTestContext};
 
     fn open_workspace(cx: &mut TestAppContext) -> (Entity<Workspace>, VisualTestContext) {
@@ -719,6 +729,64 @@ mod tests {
             AppState::load(&file).tabs,
             vec![paths[1].clone(), paths[0].clone(), paths[2].clone()]
         );
+    }
+
+    #[cfg(unix)]
+    #[gpui_kit::test]
+    fn the_dock_and_its_terminals_are_remembered_and_come_back(cx: &mut TestAppContext) {
+        let state_dir = tempfile::tempdir().unwrap();
+        let file = state_dir.path().join("state");
+        let open = DockLayout {
+            open: true,
+            terminals: 2,
+            tab: 1,
+        };
+        {
+            let (view, mut cx) = open_workspace(cx);
+            view.update(&mut cx, |view, cx| view.remember_in(Some(file.clone()), cx));
+            assert_eq!(AppState::load(&file).dock, DockLayout::default());
+
+            cx.simulate_keystrokes("ctrl-shift-` ctrl-shift-`");
+            view.update_in(&mut cx, |view, window, cx| {
+                view.dock().update(cx, |dock, cx| dock.show(1, window, cx));
+            });
+            cx.run_until_parked();
+            assert_eq!(AppState::load(&file).dock, open);
+
+            cx.simulate_keystrokes("ctrl-`");
+            cx.run_until_parked();
+            assert_eq!(
+                AppState::load(&file).dock,
+                DockLayout {
+                    open: false,
+                    ..open
+                },
+                "hiding keeps the terminals"
+            );
+        }
+
+        // The next run brings the same terminals back, with the keyboard on the
+        // repository so its shortcuts work.
+        let (view, mut cx) = open_workspace(cx);
+        view.update(&mut cx, |view, cx| view.restore_dock(open, cx));
+        assert_eq!(dock_state(&view, &cx), (true, 2, 1));
+        cx.simulate_keystrokes("ctrl-t");
+        assert_eq!(
+            state(&view, &cx),
+            (2, 1),
+            "the repository keeps the keyboard"
+        );
+
+        view.update(&mut cx, |view, cx| {
+            view.restore_dock(
+                DockLayout {
+                    open: false,
+                    ..open
+                },
+                cx,
+            )
+        });
+        assert_eq!(dock_state(&view, &cx), (false, 2, 1), "no extra terminals");
     }
 
     #[gpui_kit::test]

@@ -222,6 +222,94 @@ pub fn update(workdir: &Path, path: &str) -> Result<Option<String>, String> {
     Ok(Some(format!("Updated {path}.")))
 }
 
+/// What the Submodules list says when the repository has none.
+pub const NONE: &str = "This repository has no submodules.";
+
+/// Why `path` can't be where a submodule lives, in words for the person typing it.
+/// An empty path is fine when adding, since git names the folder after the address.
+pub fn why_bad_path(path: &str) -> Option<&'static str> {
+    if path.starts_with('/') || path.split('/').any(|part| part == "..") {
+        Some("A submodule's folder has to be inside this repository.")
+    } else if path.starts_with('-') {
+        Some("A submodule's folder can't start with a dash.")
+    } else {
+        None
+    }
+}
+
+/// Adds a submodule cloned from `url` when `original` is `None`, at `path` or, when that
+/// is empty, in a folder named after the address. Otherwise changes the submodule at
+/// `original`: pointing it at another address and moving it to `path`, when those
+/// changed. Either way git stages the change, ready to commit.
+pub fn save(
+    workdir: &Path,
+    original: Option<&str>,
+    path: &str,
+    url: &str,
+) -> Result<Option<String>, String> {
+    save_with(workdir, &[], original, path, url)
+}
+
+/// [`save`], with switches for git ahead of the command that clones, which tests use to
+/// allow cloning from a local path.
+fn save_with(
+    workdir: &Path,
+    switches: &[&str],
+    original: Option<&str>,
+    path: &str,
+    url: &str,
+) -> Result<Option<String>, String> {
+    let (path, url) = (path.trim().trim_end_matches('/'), url.trim());
+    if url.is_empty() {
+        return Err("Give the submodule an address to clone from.".to_owned());
+    }
+    if let Some(reason) = why_bad_path(path) {
+        return Err(reason.to_owned());
+    }
+    let Some(original) = original else {
+        let mut args = switches.to_vec();
+        args.extend(["submodule", "add", "--", url]);
+        if !path.is_empty() {
+            args.push(path);
+        }
+        ops::run(workdir, &args)?;
+        let added = match path {
+            "" => "a submodule".to_owned(),
+            path => path.to_owned(),
+        };
+        return Ok(Some(format!(
+            "Added {added}. It is staged, so commit it to keep it."
+        )));
+    };
+    if path.is_empty() {
+        return Err("Give the submodule a folder.".to_owned());
+    }
+    let before = list(workdir)
+        .into_iter()
+        .find(|module| module.path == original)
+        .ok_or_else(|| format!("There is no submodule at {original} any more."))?;
+    let moved = before.path != path;
+    let repointed = before.url.as_deref() != Some(url);
+    if !moved && !repointed {
+        return Ok(Some(format!("{path} is already set up that way.")));
+    }
+    if repointed {
+        ops::run(workdir, &["submodule", "set-url", "--", original, url])?;
+        ops::run(workdir, &["add", "--", ".gitmodules"])?;
+    }
+    if moved {
+        // git moves it into a folder that is there, but doesn't make one.
+        if let Some(parent) = Path::new(path).parent() {
+            std::fs::create_dir_all(workdir.join(parent))
+                .map_err(|error| format!("Couldn't make the folder for {path}: {error}"))?;
+        }
+        ops::run(workdir, &["mv", "--", original, path])?;
+    }
+    Ok(Some(format!(
+        "Saved {path}. The change is staged, so commit it to keep it."
+    )))
+}
+
 /// Does [`update`] for every submodule.
 pub fn update_all(workdir: &Path) -> Result<Option<String>, String> {
     ops::run(workdir, &["submodule", "update", "--init"])?;
@@ -371,6 +459,54 @@ mod tests {
             update_all(repo.path()),
             Ok(Some("Updated every submodule.".to_owned()))
         );
+    }
+
+    #[test]
+    fn adding_repointing_and_moving_a_submodule_stages_each_change() {
+        let lib = Repo::new();
+        lib.write("lib.txt", "one");
+        lib.commit("lib: first");
+        let other = Repo::new();
+        other.commit("other: first");
+        let repo = Repo::new();
+        repo.write("app.txt", "x");
+        repo.commit("first");
+        let lib_url = lib.path().to_str().unwrap();
+
+        // Cloning from a local path needs a switch the app's own git calls leave off.
+        let allow = ["-c", "protocol.file.allow=always"];
+        let said = save_with(repo.path(), &allow, None, "vendor/lib/", lib_url).unwrap();
+        assert!(said.unwrap().starts_with("Added vendor/lib."));
+        let added = &list(repo.path())[0];
+        assert_eq!(
+            (added.path.as_str(), added.url.as_deref()),
+            ("vendor/lib", Some(lib_url))
+        );
+
+        let other_url = other.path().to_str().unwrap();
+        save(repo.path(), Some("vendor/lib"), "libs/lib", other_url).unwrap();
+        let saved = list(repo.path());
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].path, "libs/lib");
+        assert_eq!(saved[0].url.as_deref(), Some(other_url));
+        let unstaged = repo.git(&["diff", "--name-only"]);
+        assert_eq!(unstaged.trim(), "", "everything is staged: {unstaged}");
+
+        let same = save(repo.path(), Some("libs/lib"), "libs/lib", other_url);
+        assert!(same.unwrap().unwrap().contains("already"));
+    }
+
+    #[test]
+    fn bad_submodule_input_is_refused_before_git_runs() {
+        let repo = Repo::new();
+        let refused = |original, path, url| save(repo.path(), original, path, url).unwrap_err();
+        assert!(refused(None, "lib", " ").contains("address"));
+        assert!(refused(None, "../lib", "u").contains("inside"));
+        assert!(refused(None, "/lib", "u").contains("inside"));
+        assert!(refused(None, "-lib", "u").contains("dash"));
+        assert!(refused(Some("lib"), "", "u").contains("folder"));
+        assert!(refused(Some("lib"), "lib", "u").contains("no submodule"));
+        assert_eq!(why_bad_path(""), None, "git names it after the address");
     }
 
     #[test]

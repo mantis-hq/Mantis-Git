@@ -180,7 +180,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
   under the bar, so history stays in view. `Ctrl \`` shows and hides it, and
   `Ctrl Shift \`` opens a terminal. Closed, the bar still says which command is running
-  and for how long, so a slow command is never a silent wait.
+  and for how long, so a slow command is never a silent wait. Whether the dock is open, how
+  many terminals it has and which of its tabs is in front are saved with the open tabs (see
+  "App") and come back on launch, the terminals as fresh shells in the front repository's
+  folder. The keyboard starts with the repository, not a terminal.
 - Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide. Rows have no
   column headings or hash: the refs column, the graph, the subject, then author and a short time
   ("12m", "3h", "Tue", "Oct 30"). The full hash belongs to the inspector.
@@ -224,18 +227,26 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   `git worktree add` that brings it back. The main worktree, the one on show and a locked
   one stay, and the menu says why. Git refuses to remove one with uncommitted changes,
   and the app never forces it. With one working tree the section isn't drawn.
-- Submodules: when a repository has any, the sidebar lists them under "Submodules", open
-  by default, as the last section, after Stashes. A row is the submodule's path, then where it stands in
+- Submodules: the sidebar ends in a "Submodules" section pinned to its foot, under a
+  Surface 0 border, so it stays in view however long the lists above run. It is open by
+  default and always drawn: with no submodules it says "This repository has no
+  submodules." Its header ends in a quiet blue "+ Add", as Remotes does, which opens a form
+  popup ("Add a submodule") with an "Address" and a "Folder" input (left empty, git names
+  the folder after the address) and "Add submodule" as its result. It shows up to 5 rows
+  and scrolls past that. A row is the submodule's path, then where it stands in
   Overlay 2 (its short commit, `moved to <hash>`, `not downloaded` or `in conflict`), with
   a dot that says the same: Green at the commit the repository records, Yellow on another,
   Peach in conflict, Overlay 2 when not downloaded. Clicking a downloaded one opens it in
   a tab of its own, or brings its tab forward. Right-clicking opens the usual menu: "Open
   <path> in a new tab", a line that names its result ("Download lib at 1a2b3c4", "Check
   out 1a2b3c4 in lib", "Update lib"), "Update 2 submodules" when more than one needs it,
-  and "Copy path" and "Copy URL". A line that can't be used stays and says why. Checking
-  out the recorded commit in a submodule that is on another one asks first, and gives the
-  `git -C <path> checkout <hash>` that goes back. The app never forces anything. With no
-  submodules the section isn't drawn.
+  "Edit <path>" (the same form, filled in, saved with "Save <path>"; a new address is set
+  with `git submodule set-url`, a new folder moves it with `git mv`), and "Copy path" and
+  "Copy URL". Adding and editing stage the change, ready to commit, and the band says so.
+  A folder outside the repository is turned down in the popup, before git runs. A line
+  that can't be used stays and says why. Checking out the recorded commit in a submodule
+  that is on another one asks first, and gives the `git -C <path> checkout <hash>` that
+  goes back. The app never forces anything.
 - New branch: a quiet "New branch" link ends the Branches heading, and branch, tag and
   commit menus have "New branch from <name or hash>". Either opens a form popup (see
   "Popups") that says where the branch starts ("New branch, starting at main"), with a
@@ -267,6 +278,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   ("Merge feat/x into main", "Rebase main onto feat/x"). A line that can't be used stays,
   in Overlay 2, and says why. Only lines that remove something are red, and they ask
   first, saying how to undo. `Up`/`Down` move, `Enter` chooses, `Esc` closes.
+  A commit's menu starts with a check-out line for each of its refs, as its chips show
+  them ("Check out feat/x", "Check out origin/y as a local branch", "Check out v1.0.0
+  without a branch"), then "Check out 1a2b3c4 without a branch" for the commit itself.
 - **Popups:** a 420 px card centred over the window, on Mantle with a Surface 0 border
   and 8 px radius. It holds a sentence, then any inputs, then a line naming the keys
   ("Press Enter to create feat/x, or Esc to cancel.", in Overlay 2), and "Cancel" and the
@@ -280,7 +294,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     first press turns the key line Red and says "Press Enter again to delete." Rules for
     which is which live in core (`Weight` in `crates/core/src/menu/command.rs`). Other risky
     steps (rebase, force push, hard reset) still use the band.
-  - **Forms** ask for a few words: a new branch's name, or a remote's name and address. The
+  - **Forms** ask for a few words: a new branch's name, a remote's name and address, or a
+    submodule's address and folder. The
     sentence says what the form makes or changes, and each input sits under its section
     label, with the cursor in the first. `Tab` and `Shift Tab` move between inputs. The
     result is named for what was typed ("Create feat/x"). What can't work is said in Peach
@@ -314,8 +329,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   the file itself.
 - **File menus:** right-clicking a file in the inspector opens the usual menu: its path as
   the heading, "Show changes in <name>", for working changes "Stage <name>" or "Unstage
-  <name>", and "Copy path". A folder in the tree has "Stage 3 files in <name>/" (or
-  "Unstage"), and "Copy path".
+  <name>", for a commit's file "Apply changes in <name> to working changes", and "Copy
+  path". Applying puts what the commit changed in that file (over its first parent, for a
+  merge) into the working tree, unstaged, and leaves the branch alone. When the file has
+  moved on, the two changes are merged; where they clash, or the file already has the
+  change, nothing is written and the band says why. On success the band says how to undo
+  it. A folder in the tree has "Stage 3 files in <name>/" (or "Unstage"), and "Copy path".
 - **Merges in the inspector:** a merge lists and diffs what it brought in over its first
   parent, the branch it was made on, so its files match what reverting it with `-m 1` undoes.
 - **Inspector actions:** "Check out" names the branch when one is at the commit. Commands
@@ -366,25 +385,27 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   commit form wait while it is paused.
   Clicking a file opens the resolver over the graph, as a diff does, and `Esc` or "Close"
   brings the graph back. It is one file at a time, in three parts that share the height:
-  - **Conflicts**, shown in the context of the file, as a list of rows that draws only
-    those in view, so a file of any size costs the same. A bar over it names the two
-    branches. The lines both sides agree on are plain rows with their line numbers; each
-    conflict is a header row, "Conflict 2 of 3 · line 40" with "Use feat/x", "Use main" and,
-    once lines are ticked, "Use 3 selected lines" (the ticked lines of the first side, then
-    the second's), and under it the two sides' lines next to each other, each with a tick box
-    and a tint in its branch's colour. A conflict already settled in the result dims, says so
-    and loses its buttons. The branches are named, never "mine" or "theirs", in line with
-    principle 5. The header has the same "Changes" and "Whole file" chips as a diff, and they
-    are the same setting: "Changes" shows each conflict with three lines of context around it
-    and "⋯ 17 unchanged lines" for what was left out, "Whole file" shows every line and marks
-    each conflict beside the scrollbar in Peach. Before the chips, quiet "Previous" and "Next"
+  - **Both versions**, the whole file as each branch has it, next to each other, as a list of
+    rows that draws only those in view, so a file of any size costs the same. There is no
+    view of only the changes: resolving needs the whole file. A bar over it names the two
+    branches, each over its own column. A line both versions have shows in both columns,
+    each with its line number in that version. Each conflict is a header row across both,
+    "Conflict 2 of 3 · line 40" with "Use feat/x", "Use main" and, once lines are ticked,
+    "Use 3 selected lines" (the ticked lines of the first side, then the second's), and
+    under it each side's lines in its own column, with their line numbers, a tick box and a
+    tint in the branch's colour; the side with fewer lines leaves the rest of its column
+    empty. A conflict already settled in the result dims, says so and loses its buttons.
+    Each conflict is marked beside the scrollbar in Peach. The branches are named, never
+    "mine" or "theirs", in line with principle 5. In the header, quiet "Previous" and "Next"
     buttons (`Alt ↑`, `Alt ↓`) bring the next conflict still left in the result to the top of
     the list, going on from the last one gone to, or from the top of the view once it has been
     scrolled past. They skip settled conflicts, go round at either end, and are dimmed when
     none is left.
   - **Result**, the whole file in an editor, which starts as the file as it stands with its
     conflict markers. Its lines don't wrap, as in a diff, so a file of any length opens
-    quickly. The cards edit it, and so can the user, by hand, anywhere. A conflict
+    quickly. The versions and the result scroll together: scrolling either brings the other
+    to the same place in the file, line for line, with each conflict lined up with where it
+    is in the result. The cards edit it, and so can the user, by hand, anywhere. A conflict
     counts as settled when its markers are gone from the result, however that happened. The
     top bar says how many are left ("2 conflicts left in the result", Peach) or "Ready to
     save" (Green).

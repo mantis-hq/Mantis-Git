@@ -73,6 +73,25 @@ fn copy(text: &str, what: &'static str) -> Command {
     }
 }
 
+/// The line that checks out a branch, remote branch or tag, or says it already is.
+fn check_out_ref_line(current: Option<&str>, kind: RefKind, name: &str) -> Line {
+    if kind == RefKind::Branch && current == Some(name) {
+        return Line::unavailable(format!("{name} is already checked out"));
+    }
+    let label = match kind {
+        RefKind::Remote => format!("Check out {name} as a local branch"),
+        RefKind::Tag => format!("Check out {name} without a branch"),
+        _ => format!("Check out {name}"),
+    };
+    Line::item(
+        label,
+        Command::CheckOutRef {
+            kind,
+            name: name.to_owned(),
+        },
+    )
+}
+
 /// The menu for a branch, remote branch or tag.
 pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
     let current = refs.head_branch.as_deref();
@@ -80,22 +99,7 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
     let is_current = kind == RefKind::Branch && current == Some(name.as_str());
     let mut lines = vec![Line::Heading(name.clone())];
 
-    lines.push(if is_current {
-        Line::unavailable(format!("{name} is already checked out"))
-    } else {
-        let label = match kind {
-            RefKind::Remote => format!("Check out {name} as a local branch"),
-            RefKind::Tag => format!("Check out {name} without a branch"),
-            _ => format!("Check out {name}"),
-        };
-        Line::item(
-            label,
-            Command::CheckOutRef {
-                kind,
-                name: name.clone(),
-            },
-        )
-    });
+    lines.push(check_out_ref_line(current, kind, &name));
 
     if let Some(current) = current.filter(|_| !is_current) {
         lines.push(Line::item(
@@ -272,9 +276,21 @@ pub fn stash_menu(refs: &Refs, indexes: &[usize]) -> Vec<Line> {
     ]
 }
 
-/// The menu for a file in the inspector. `side` is the list it is in when these are the
-/// working changes, and `None` for a commit's files, which have nothing to stage.
-pub fn file_menu(path: &str, index: usize, side: Option<Side>) -> Vec<Line> {
+/// Where a file in the inspector comes from: one of the two lists of working changes, or a
+/// commit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileSource<'a> {
+    Working(Side),
+    Commit {
+        oid: &'a str,
+        /// Where a renamed file came from.
+        old_path: Option<&'a str>,
+    },
+}
+
+/// The menu for a file in the inspector. A working file can be staged or unstaged, and a
+/// commit's file can be applied to the working changes. `None` offers neither.
+pub fn file_menu(path: &str, index: usize, source: Option<FileSource>) -> Vec<Line> {
     let name = path.rsplit('/').next().unwrap_or(path);
     let mut lines = vec![
         Line::Heading(path.to_owned()),
@@ -283,15 +299,27 @@ pub fn file_menu(path: &str, index: usize, side: Option<Side>) -> Vec<Line> {
             Command::ShowFile { index },
         ),
     ];
-    if let Some(side) = side {
-        lines.push(Line::Separator);
-        lines.push(Line::item(
+    let action = match source {
+        Some(FileSource::Working(side)) => Some(Line::item(
             side.action(name),
             Command::StageFiles {
                 paths: vec![path.to_owned()],
                 unstage: side.unstages(),
             },
-        ));
+        )),
+        Some(FileSource::Commit { oid, old_path }) => Some(Line::item(
+            format!("Apply changes in {name} to working changes"),
+            Command::ApplyFile {
+                oid: oid.to_owned(),
+                path: path.to_owned(),
+                old_path: old_path.map(str::to_owned),
+            },
+        )),
+        None => None,
+    };
+    if let Some(action) = action {
+        lines.push(Line::Separator);
+        lines.push(action);
     }
     lines.push(Line::Separator);
     lines.push(Line::item("Copy path", copy(path, "the path")));
@@ -382,6 +410,12 @@ pub fn submodule_menu(refs: &Refs, path: &str) -> Vec<Line> {
         lines.push(Line::item(label, Command::UpdateSubmodules));
     }
     lines.push(Line::Separator);
+    lines.push(Line::item(
+        format!("Edit {name}"),
+        Command::Form(Form::Submodule {
+            original: Some(module.path.clone()),
+        }),
+    ));
     lines.push(Line::item(
         "Copy path",
         copy(&module.folder.to_string_lossy(), "the path"),
@@ -486,16 +520,27 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
         commit.subject
     ))];
 
-    lines.push(if actions.can_check_out {
+    // Each ref at the commit, as its chip shows it, then the commit itself.
+    let current = refs.head_branch.as_deref();
+    for chip in refs.chips_at(&oid) {
+        if chip.label.kind != RefKind::DetachedHead {
+            lines.push(check_out_ref_line(
+                current,
+                chip.label.kind,
+                &chip.label.name,
+            ));
+        }
+    }
+    lines.push(if !actions.can_check_out && current.is_none() {
+        Line::unavailable("This commit is already checked out")
+    } else {
         Line::item(
-            actions.check_out_label(),
+            format!("Check out {} without a branch", short_oid(&oid)),
             Command::CheckOutCommit {
-                branch: actions.branch.clone(),
+                branch: None,
                 oid: oid.clone(),
             },
         )
-    } else {
-        Line::unavailable("This commit is already checked out")
     });
     if let Some(current) = refs
         .head_branch
@@ -640,7 +685,7 @@ mod tests {
 
     #[test]
     fn a_working_file_can_be_shown_staged_or_unstaged_and_copied() {
-        let lines = file_menu("src/a.rs", 3, Some(Side::Unstaged));
+        let lines = file_menu("src/a.rs", 3, Some(FileSource::Working(Side::Unstaged)));
         assert_eq!(
             shown_lines(&lines),
             [
@@ -657,7 +702,7 @@ mod tests {
                 unstage: false
             })
         );
-        let lines = file_menu("src/a.rs", 3, Some(Side::Staged));
+        let lines = file_menu("src/a.rs", 3, Some(FileSource::Working(Side::Staged)));
         assert!(matches!(
             lines[3].command(),
             Some(Command::StageFiles { unstage: true, .. })
@@ -666,7 +711,33 @@ mod tests {
     }
 
     #[test]
-    fn a_commits_file_has_nothing_to_stage() {
+    fn a_commits_file_can_be_applied_to_the_working_changes() {
+        let source = FileSource::Commit {
+            oid: "1a2b3c4d",
+            old_path: Some("src/old.rs"),
+        };
+        let lines = file_menu("src/a.rs", 0, Some(source));
+        assert_eq!(
+            shown_lines(&lines),
+            [
+                "src/a.rs",
+                "Show changes in a.rs",
+                "Apply changes in a.rs to working changes",
+                "Copy path"
+            ]
+        );
+        assert_eq!(
+            lines[3].command(),
+            Some(&Command::ApplyFile {
+                oid: "1a2b3c4d".to_owned(),
+                path: "src/a.rs".to_owned(),
+                old_path: Some("src/old.rs".to_owned()),
+            })
+        );
+    }
+
+    #[test]
+    fn a_file_with_no_source_can_only_be_shown_and_copied() {
         let lines = file_menu("a.rs", 0, None);
         assert_eq!(
             shown_lines(&lines),
@@ -841,11 +912,18 @@ mod tests {
                 "Open current in a new tab",
                 "Update current",
                 "Update 2 submodules",
+                "Edit current",
                 "Copy path",
                 "Copy URL",
             ]
         );
         assert!(current[2].command().unwrap().confirmation().is_none());
+        assert_eq!(
+            current[5].command(),
+            Some(&Command::Form(Form::Submodule {
+                original: Some("current".into())
+            }))
+        );
 
         let moved = submodule_menu(&refs, "moved");
         let update = moved[2].command().unwrap();
@@ -983,22 +1061,26 @@ mod tests {
     fn a_commit_names_the_branches_it_acts_on() {
         let head = commit("aaaaaaaa", &["cccccccc"]);
         let other = commit("bbbbbbbb", &["cccccccc"]);
-        let on_head = commit_menu(&refs(), &[head]);
+        let mut refs = refs();
+        refs.by_commit
+            .insert("aaaaaaaa".into(), vec![named(RefKind::Branch, "main")]);
+        let on_head = commit_menu(&refs, &[head]);
         assert_eq!(
             labels(&on_head),
             [
-                "This commit is already checked out",
+                "main is already checked out",
+                "Check out aaaaaaa without a branch",
                 "Revert",
                 "New branch from aaaaaaa",
                 "Copy hash",
                 "Copy subject"
             ]
         );
-        let elsewhere = commit_menu(&refs(), &[other]);
+        let elsewhere = commit_menu(&refs, &[other]);
         assert_eq!(
             labels(&elsewhere),
             [
-                "Check out",
+                "Check out bbbbbbb without a branch",
                 "Merge into main",
                 "Cherry-pick onto main",
                 "Revert",
@@ -1008,6 +1090,72 @@ mod tests {
                 "Copy hash",
                 "Copy subject"
             ]
+        );
+    }
+
+    fn named(kind: RefKind, name: &str) -> crate::history::refs::Ref {
+        crate::history::refs::Ref {
+            kind,
+            name: name.into(),
+            is_head: false,
+            color: LaneColor::default(),
+        }
+    }
+
+    #[test]
+    fn a_commit_with_several_refs_checks_out_any_of_them_or_itself() {
+        let mut refs = refs();
+        refs.by_commit.insert(
+            "bbbbbbbb".into(),
+            vec![
+                named(RefKind::Branch, "feat/x"),
+                named(RefKind::Remote, "origin/feat/x"),
+                named(RefKind::Remote, "origin/feat/y"),
+                named(RefKind::Tag, "v1.0.0"),
+            ],
+        );
+        let lines = commit_menu(&refs, &[commit("bbbbbbbb", &["cccccccc"])]);
+        assert_eq!(
+            labels(&lines)[..4],
+            [
+                "Check out feat/x",
+                "Check out origin/feat/y as a local branch",
+                "Check out v1.0.0 without a branch",
+                "Check out bbbbbbb without a branch",
+            ],
+            "a remote branch whose local copy is here is the same chip, so one line"
+        );
+        assert_eq!(
+            lines[1].command(),
+            Some(&Command::CheckOutRef {
+                kind: RefKind::Branch,
+                name: "feat/x".into()
+            })
+        );
+        assert_eq!(
+            lines[4].command(),
+            Some(&Command::CheckOutCommit {
+                branch: None,
+                oid: "bbbbbbbb".into()
+            })
+        );
+    }
+
+    #[test]
+    fn a_detached_head_is_already_checked_out_but_its_branches_are_not() {
+        let mut refs = refs();
+        refs.head_branch = None;
+        refs.by_commit.insert(
+            "aaaaaaaa".into(),
+            vec![
+                named(RefKind::DetachedHead, "HEAD"),
+                named(RefKind::Branch, "main"),
+            ],
+        );
+        let lines = commit_menu(&refs, &[commit("aaaaaaaa", &["cccccccc"])]);
+        assert_eq!(
+            labels(&lines)[..2],
+            ["Check out main", "This commit is already checked out"]
         );
     }
 

@@ -149,6 +149,73 @@ impl Progress {
             .collect()
     }
 
+    /// Reads a file's result once for which of its conflicts still stand, and where each
+    /// conflict is in it by line, so that the result can be lined up with the file's two
+    /// versions. `agreed[k]` is how many lines both sides agree on before conflict `k`, and
+    /// `settled[k]` how many lines a settled conflict was given, where that is known.
+    ///
+    /// A conflict still standing is where its markers are. A settled one is reckoned from
+    /// the lines before it, taken to be unchanged, and from its length, or the length of
+    /// the branch's own side when that isn't known; the next one standing puts the count
+    /// right again.
+    pub fn check_result(
+        &self,
+        path: &str,
+        text: &str,
+        agreed: &[usize],
+        settled: &[Option<usize>],
+    ) -> ResultCheck {
+        let open = self.open_chunks(path, text);
+        let decisions: Vec<&Decision> = self
+            .decisions
+            .iter()
+            .filter(|decision| decision.path == path && !decision.whole_file)
+            .collect();
+
+        // Line numbers of the blocks' edges, counted in one pass down the text.
+        let (mut line, mut counted) = (0, 0);
+        let mut line_at = |byte: usize| {
+            line += text[counted..byte].matches('\n').count();
+            counted = byte;
+            line
+        };
+        let edges: Vec<Option<Range<usize>>> = open
+            .iter()
+            .map(|block| {
+                let block = block.as_ref()?;
+                let start = line_at(block.start);
+                Some(start..line_at(block.end))
+            })
+            .collect();
+
+        let mut places = Vec::with_capacity(open.len());
+        let mut at = 0;
+        for (index, edge) in edges.iter().enumerate() {
+            at += agreed.get(index).copied().unwrap_or(0);
+            let place = match edge {
+                Some(edge) => edge.clone(),
+                None => {
+                    let guess = || decisions.get(index).map_or(0, |d| lines_of(&d.mine).len());
+                    let length = settled.get(index).copied().flatten().unwrap_or_else(guess);
+                    at..at + length
+                }
+            };
+            at = place.end;
+            places.push(place);
+        }
+        // A guess that ran past the next conflict standing is pulled back to it.
+        let mut limit = usize::MAX;
+        for place in places.iter_mut().rev() {
+            place.end = place.end.min(limit);
+            place.start = place.start.min(place.end);
+            limit = place.start;
+        }
+        ResultCheck {
+            standing: open.iter().map(Option::is_some).collect(),
+            places,
+        }
+    }
+
     /// A file's text cut into what both sides agree on and what they fight over, in order,
     /// with each conflict's sides put in the order mine, other.
     pub fn pieces(&self, text: &str) -> Vec<Piece> {
@@ -471,6 +538,35 @@ fn whole_file_sides(repo: &Path, path: &str, progress: &Progress) -> (String, St
         describe(mine, &progress.mine),
         describe(other, &progress.other),
     )
+}
+
+/// What [`Progress::check_result`] found in a file's result.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ResultCheck {
+    /// For each conflict, whether it still stands.
+    pub standing: Vec<bool>,
+    /// For each conflict, the lines it takes in the result.
+    pub places: Vec<Range<usize>>,
+}
+
+/// Where a position in one of two texts that are lined up falls in the other. `anchors`
+/// are pairs of places, in lines, that match, in order in both; between two anchors the
+/// lines are spread evenly. With `back`, `at` is in the second text and the answer in the
+/// first.
+pub fn line_up(anchors: &[(f32, f32)], at: f32, back: bool) -> f32 {
+    let pick = |pair: &(f32, f32)| if back { (pair.1, pair.0) } else { *pair };
+    let after = anchors.partition_point(|pair| pick(pair).0 <= at);
+    match (
+        after.checked_sub(1).map(|i| pick(&anchors[i])),
+        anchors.get(after).map(pick),
+    ) {
+        (Some((from, to)), Some((next_from, next_to))) if next_from > from => {
+            to + (at - from) / (next_from - from) * (next_to - to)
+        }
+        (Some((from, to)), _) => to + (at - from),
+        (None, Some((next_from, next_to))) => next_to - (next_from - at),
+        (None, None) => at,
+    }
 }
 
 /// A part of a conflicted file: text both sides agree on, or a conflict.
@@ -958,6 +1054,39 @@ mod tests {
         assert_eq!(next_standing(&standing, 9, false), Some(3));
         assert_eq!(next_standing(&[false, false], 0, true), None);
         assert_eq!(next_standing(&[], 0, false), None);
+    }
+
+    #[test]
+    fn conflicts_are_placed_in_the_result_by_line() {
+        let (progress, text) = two_conflicts();
+        // "a", the first block (5 lines), "b", the second, "c".
+        let agreed = [1, 1];
+        let check = progress.check_result("f", &text, &agreed, &[None, None]);
+        assert_eq!(check.standing, [true, true]);
+        assert_eq!(check.places, [1..6, 7..12]);
+
+        // The first taken with two lines: known, so the second is found where it is.
+        let block = blocks(&text).remove(0);
+        let picked = replace_block(&text, &block, "x\ny\n");
+        let check = progress.check_result("f", &picked, &agreed, &[Some(2), None]);
+        assert_eq!(check.standing, [false, true]);
+        assert_eq!(check.places, [1..3, 4..9]);
+
+        // Not known, it is taken to be as long as the branch's own side, one line, and
+        // still ends where the next one standing starts.
+        let check = progress.check_result("f", &picked, &agreed, &[None, None]);
+        assert_eq!(check.places, [1..2, 4..9]);
+    }
+
+    #[test]
+    fn two_texts_are_lined_up_between_anchors() {
+        // Ten rows above take four lines below, and the rest match one to one.
+        let anchors = [(0., 0.), (5., 5.), (15., 9.)];
+        assert_eq!(line_up(&anchors, 3., false), 3.);
+        assert_eq!(line_up(&anchors, 10., false), 7.);
+        assert_eq!(line_up(&anchors, 20., false), 14.);
+        assert_eq!(line_up(&anchors, 7., true), 10.);
+        assert_eq!(line_up(&[], 4., false), 4.);
     }
 
     #[test]

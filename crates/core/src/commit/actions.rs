@@ -1,8 +1,11 @@
 //! The commands that act on commits: check one out, copy it onto this branch, revert it,
-//! or move the branch to it. Each says how to undo what it did.
+//! move the branch to it, or apply one file of it to the working changes. Each says how to
+//! undo what it did.
 
+use super::details;
 use crate::ops;
 use crate::text::{count, short_oid};
+use std::fs;
 use std::path::Path;
 
 /// Switches to a branch, or to the bare commit when no branch names it.
@@ -73,10 +76,240 @@ pub fn reset(repo: &Path, oid: &str, hard: bool) -> Result<Option<String>, Strin
     )))
 }
 
+/// Applies what one commit changed in one file to the working tree, leaving the index and
+/// the branch alone. `old_path` is where a renamed file came from, so the rename carries
+/// over. A file that has moved on since the commit's parent no longer takes the patch, so
+/// the two changes are merged instead; where they clash, the file is left as it was.
+pub fn apply_file(
+    repo: &Path,
+    oid: &str,
+    path: &str,
+    old_path: Option<&str>,
+) -> Result<Option<String>, String> {
+    let base = details::first_parent(repo, oid);
+    let mut args = vec!["diff-tree", "--root", "-r", "-p", "-M", "--binary"];
+    args.push("--no-commit-id");
+    args.extend(base.as_deref());
+    args.extend([oid, "--", path]);
+    args.extend(old_path);
+    let patch = ops::run(repo, &args)?;
+    let name = file_name(path);
+    if patch.trim().is_empty() {
+        return Err(format!(
+            "{} changed nothing in {name} to apply.",
+            short_oid(oid)
+        ));
+    }
+    let applied = |undo: &str| {
+        Ok(Some(format!(
+            "Applied the changes in {name} from {} to your working changes. To undo it, run \
+             `{undo}`.",
+            short_oid(oid)
+        )))
+    };
+    if let Err(error) = ops::run_with_input(repo, &["apply"], patch.as_bytes()) {
+        let merged = match old_path {
+            None => merge_file(repo, oid, base.as_deref(), path)?,
+            Some(_) => Merge::Clash,
+        };
+        return match merged {
+            Merge::Done { saved } => {
+                applied(&format!("git cat-file blob {} > {path}", short_oid(&saved)))
+            }
+            Merge::AlreadyThere => Err(format!(
+                "{name} already has the changes from {}, so nothing was changed.",
+                short_oid(oid)
+            )),
+            Merge::Clash => Err(apply_error(name, error)),
+        };
+    }
+
+    let mut undo = String::from("git show ");
+    if base.is_some() {
+        undo.push_str("--diff-merges=first-parent ");
+    }
+    undo.push_str(&format!("{} -- {path}", short_oid(oid)));
+    if let Some(old_path) = old_path {
+        undo.push_str(&format!(" {old_path}"));
+    }
+    undo.push_str(" | git apply -R");
+    applied(&undo)
+}
+
+/// How merging a commit's change into a file went.
+enum Merge {
+    /// Written. `saved` is the id of the file's contents before, kept in git's object
+    /// store so the merge can be undone.
+    Done { saved: String },
+    /// The file already holds the change.
+    AlreadyThere,
+    /// The two changes clash, or the file can't be merged line by line.
+    Clash,
+}
+
+/// Merges what a commit changed in a file it modified into the file as it is now, for when
+/// the patch no longer fits. Nothing is written unless the merge is clean.
+fn merge_file(repo: &Path, oid: &str, base: Option<&str>, path: &str) -> Result<Merge, String> {
+    let parent = base.map_or_else(|| format!("{oid}^"), str::to_owned);
+    let target = repo.join(path);
+    let (Ok(current), Some(old), Some(new)) = (
+        fs::read(&target),
+        working_blob(repo, &parent, path),
+        working_blob(repo, oid, path),
+    ) else {
+        return Ok(Merge::Clash);
+    };
+    let dir = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let mut files = Vec::new();
+    for (side, bytes) in [("current", &current), ("base", &old), ("theirs", &new)] {
+        let file = dir.path().join(side);
+        fs::write(&file, bytes).map_err(|error| error.to_string())?;
+        files.push(file);
+    }
+    // The exit status is how many places clash, and any of them leaves the file alone.
+    let merged = ops::run_unchecked(ops::git(repo).args(["merge-file", "-p"]).args(&files), None)?;
+    if !merged.success {
+        return Ok(Merge::Clash);
+    }
+    if merged.stdout == current {
+        return Ok(Merge::AlreadyThere);
+    }
+    let saved = ops::run(repo, &["hash-object", "-w", "--no-filters", "--", path])?;
+    fs::write(&target, merged.stdout).map_err(|error| error.to_string())?;
+    Ok(Merge::Done {
+        saved: saved.trim().to_owned(),
+    })
+}
+
+/// A file's contents at a commit, as they would be checked out, with line endings and other
+/// filters applied. `None` when the commit has no such file.
+fn working_blob(repo: &Path, rev: &str, path: &str) -> Option<Vec<u8>> {
+    let spec = format!("{rev}:{path}");
+    let finished = ops::run_unchecked(ops::git(repo).args(["cat-file", "--filters", &spec]), None);
+    finished.ok().filter(|f| f.success).map(|f| f.stdout)
+}
+
+fn file_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// Says in a sentence why a patch didn't go on, when git's reason is that the file isn't
+/// what the commit expected.
+fn apply_error(name: &str, error: String) -> String {
+    let stale = [
+        "does not apply",
+        "already exists",
+        "does not exist",
+        "No such file",
+    ];
+    if stale.iter().any(|reason| error.contains(reason)) {
+        format!("The changes in {name} don't fit the file as it is now, so nothing was changed.")
+    } else {
+        error
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::testing::Repo;
+
+    /// Runs the shell line a message gives as its undo.
+    fn run_undo(repo: &Repo, message: &str) {
+        let line = message.split('`').nth(1).unwrap();
+        let status = std::process::Command::new("sh")
+            .args(["-c", line])
+            .current_dir(repo.path())
+            .status()
+            .unwrap();
+        assert!(status.success(), "{line}");
+    }
+
+    #[test]
+    fn applying_one_file_of_a_commit_leaves_the_rest_and_the_index_alone() {
+        let repo = Repo::new();
+        repo.write("a", "1\n2\n3\n");
+        repo.write("b", "x\n");
+        repo.commit("base");
+        repo.git(&["checkout", "-q", "-b", "side"]);
+        repo.write("a", "1\ntwo\n3\n");
+        repo.write("b", "y\n");
+        let side = repo.commit("change both");
+        repo.git(&["checkout", "-q", "main"]);
+        repo.write("a", "0\n1\n2\n3\n");
+
+        let message = apply_file(repo.path(), &side, "a", None).unwrap().unwrap();
+        assert_eq!(repo.read("a"), "0\n1\ntwo\n3\n");
+        assert_eq!(repo.read("b"), "x\n");
+        assert_eq!(repo.git(&["diff", "--cached", "--name-only"]), "");
+        assert_eq!(
+            repo.git(&["rev-parse", "HEAD"]),
+            repo.git(&["rev-parse", "main"])
+        );
+
+        run_undo(&repo, &message);
+        assert_eq!(repo.read("a"), "0\n1\n2\n3\n");
+    }
+
+    #[test]
+    fn applying_a_file_from_the_first_commit_or_a_rename() {
+        let repo = Repo::new();
+        repo.write("a", "1\n");
+        let root = repo.commit("base");
+        repo.git(&["mv", "a", "b"]);
+        let moved = repo.commit("rename");
+        repo.git(&["checkout", "-q", "--detach", &root]);
+        std::fs::remove_file(repo.path().join("a")).unwrap();
+
+        apply_file(repo.path(), &root, "a", None).unwrap();
+        assert_eq!(repo.read("a"), "1\n");
+
+        let message = apply_file(repo.path(), &moved, "b", Some("a"))
+            .unwrap()
+            .unwrap();
+        assert!(!repo.path().join("a").exists());
+        assert_eq!(repo.read("b"), "1\n");
+        run_undo(&repo, &message);
+        assert_eq!(repo.read("a"), "1\n");
+    }
+
+    #[test]
+    fn a_patch_that_fits_is_undone_by_reversing_it() {
+        let repo = Repo::new();
+        repo.write("a", "1\n2\n3\n4\n5\n6\n7\n8\n");
+        repo.commit("base");
+        repo.write("a", "1\n2\n3\n4\nfive\n6\n7\n8\n");
+        let change = repo.commit("change");
+        repo.git(&["reset", "-q", "--hard", "HEAD^"]);
+
+        let message = apply_file(repo.path(), &change, "a", None)
+            .unwrap()
+            .unwrap();
+        assert!(message.contains("| git apply -R`"), "{message}");
+        assert_eq!(repo.read("a"), "1\n2\n3\n4\nfive\n6\n7\n8\n");
+        run_undo(&repo, &message);
+        assert_eq!(repo.read("a"), "1\n2\n3\n4\n5\n6\n7\n8\n");
+    }
+
+    #[test]
+    fn a_change_the_file_already_has_or_one_that_clashes_changes_nothing() {
+        let repo = Repo::new();
+        repo.write("a", "1\n");
+        repo.commit("base");
+        repo.write("a", "2\n");
+        let head = repo.commit("change");
+
+        let error = apply_file(repo.path(), &head, "a", None).unwrap_err();
+        assert!(error.starts_with("a already has the changes"), "{error}");
+
+        repo.write("a", "3\n");
+        let error = apply_file(repo.path(), &head, "a", None).unwrap_err();
+        assert_eq!(
+            error,
+            "The changes in a don't fit the file as it is now, so nothing was changed."
+        );
+        assert_eq!(repo.read("a"), "3\n");
+    }
 
     #[test]
     fn checking_out_a_commit_says_how_to_get_back() {
