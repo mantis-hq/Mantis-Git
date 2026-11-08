@@ -149,7 +149,7 @@ impl Form {
                 // The remote that has a branch of the same name is the usual answer, else
                 // the first one. The branch is the local one's name, which the remote may
                 // not have yet.
-                let remotes = self.options(0, &[], refs);
+                let remotes = self.options(0, refs);
                 let same = remotes
                     .iter()
                     .find(|remote| existing.contains(&format!("{remote}/{branch}")));
@@ -162,8 +162,8 @@ impl Form {
     }
 
     /// Whether field `index` is picked from `options` instead of typed.
-    pub fn is_pick(&self, _index: usize) -> bool {
-        matches!(self, Self::Upstream { .. })
+    pub fn is_pick(&self, index: usize) -> bool {
+        matches!(self, Self::Upstream { .. }) && index == 0
     }
 
     /// What goes between two fields drawn on one row, such as the `/` of `origin/main`.
@@ -172,44 +172,38 @@ impl Form {
         matches!(self, Self::Upstream { .. }).then_some("/")
     }
 
-    /// What a picked field offers, given what the earlier fields hold.
-    pub fn options(&self, index: usize, values: &[String], refs: &Refs) -> Vec<String> {
+    /// What a picked field offers.
+    pub fn options(&self, index: usize, refs: &Refs) -> Vec<String> {
         match (self, index) {
             (Self::Upstream { .. }, 0) => refs
                 .remote_configs
                 .iter()
                 .map(|remote| remote.name.clone())
                 .collect(),
-            (Self::Upstream { branch, existing }, _) => {
-                let prefix = format!("{}/", value(values, 0));
-                let mut names: Vec<String> = existing
-                    .iter()
-                    .filter_map(|name| name.strip_prefix(&prefix))
-                    .filter(|name| *name != "HEAD")
-                    .map(str::to_owned)
-                    .collect();
-                // The local branch's own name comes first when the remote has no such
-                // branch, so following it is a choice that pushes it.
-                if !names.contains(branch) {
-                    names.insert(0, branch.clone());
-                }
-                names
-            }
             _ => Vec::new(),
         }
     }
 
-    /// What a dropdown shows for one of its options, which is the option itself unless
-    /// choosing it would make a new branch on the remote.
-    pub fn option_label(&self, value: &str, values: &[String]) -> String {
-        match self.is_new_upstream(&format!("{}/{value}", self.remote_of(values))) {
-            true => format!("{value} · new on {}", self.remote_of(values)),
-            false => value.to_owned(),
+    /// Existing things the typed field could be filled with instead, such as the remote's
+    /// branches that contain what has been typed, a few at most.
+    pub fn suggestions(&self, index: usize, values: &[String]) -> Vec<String> {
+        const MOST: usize = 5;
+        let Self::Upstream { existing, .. } = self else {
+            return Vec::new();
+        };
+        if index != 1 {
+            return Vec::new();
         }
-    }
-
-    fn remote_of<'a>(&self, values: &'a [String]) -> &'a str {
-        value(values, 0)
+        let prefix = format!("{}/", value(values, 0));
+        let typed = value(values, 1).to_lowercase();
+        existing
+            .iter()
+            .filter_map(|name| name.strip_prefix(&prefix))
+            .filter(|name| *name != "HEAD" && name.to_lowercase().contains(&typed))
+            .filter(|name| name.to_lowercase() != typed)
+            .take(MOST)
+            .map(str::to_owned)
+            .collect()
     }
 
     /// Whether following `upstream` (`origin/x`) means making it on the remote first.
@@ -273,7 +267,7 @@ impl Form {
                 if value(values, 0).is_empty() {
                     Some("This repository has no remote to follow a branch of.")
                 } else if value(values, 1).is_empty() {
-                    Some("Pick the remote branch to follow.")
+                    Some("Type the name of the remote branch to follow.")
                 } else {
                     None
                 }
@@ -387,37 +381,26 @@ mod tests {
     }
 
     #[test]
-    fn an_upstream_form_picks_a_remote_then_one_of_its_branches() {
+    fn an_upstream_form_picks_a_remote_and_types_a_branch() {
         let refs = upstream_refs();
         let form = upstream_form("feat/x", &refs);
         assert_eq!(form.separator(), Some("/"));
-        assert!(form.is_pick(0) && form.is_pick(1));
-        assert_eq!(form.options(0, &[], &refs), ["origin", "fork"]);
-        assert_eq!(
-            form.options(1, &values(&["origin"]), &refs),
-            ["feat/x", "main"],
-            "the local name leads when the remote lacks it"
-        );
-        assert_eq!(form.options(1, &values(&["fork"]), &refs), ["feat/x"]);
-        // The remote with a branch of the same name starts picked, with that branch.
-        assert_eq!(form.initial_values(&refs), values(&["fork", "feat/x"]));
-        assert_eq!(
-            form.action(&values(&["fork", "feat/x"])),
-            "Follow fork/feat/x"
-        );
-        assert_eq!(form.problem(&values(&["fork", "feat/x"])), None);
+        assert!(form.is_pick(0) && !form.is_pick(1));
+        assert_eq!(form.options(0, &refs), ["origin", "fork"]);
+        // The remote with a branch of the same name starts picked, with that name typed.
+        let start = values(&["fork", "feat/x"]);
+        assert_eq!(form.initial_values(&refs), start);
+        assert_eq!(form.action(&start), "Follow fork/feat/x");
+        assert_eq!(form.problem(&start), None);
     }
 
     #[test]
-    fn an_upstream_form_without_a_match_offers_the_branch_as_new_on_the_remote() {
+    fn typing_a_branch_the_remote_lacks_names_the_push() {
         let refs = upstream_refs();
         let form = upstream_form("topic", &refs);
-        // It starts on the first remote with the local name, which the remote lacks.
+        // It starts on the first remote with the local name typed in.
         let start = values(&["origin", "topic"]);
         assert_eq!(form.initial_values(&refs), start);
-        assert_eq!(form.options(1, &start, &refs), ["topic", "main"]);
-        assert_eq!(form.option_label("topic", &start), "topic · new on origin");
-        assert_eq!(form.option_label("main", &start), "main");
         assert_eq!(form.action(&start), "Push topic to origin and follow it");
         assert_eq!(form.problem(&start), None);
         assert_eq!(
@@ -428,10 +411,24 @@ mod tests {
         assert!(
             form.problem(&values(&["origin", ""]))
                 .unwrap()
-                .contains("Pick")
+                .contains("Type")
         );
         let none = form.initial_values(&Refs::default());
         assert!(form.problem(&none).unwrap().contains("no remote"));
+    }
+
+    #[test]
+    fn what_is_typed_narrows_the_branches_suggested_from_the_remote() {
+        let refs = upstream_refs();
+        let form = upstream_form("topic", &refs);
+        assert_eq!(form.suggestions(1, &values(&["origin", ""])), ["main"]);
+        assert_eq!(form.suggestions(1, &values(&["origin", "MA"])), ["main"]);
+        assert!(form.suggestions(1, &values(&["origin", "zzz"])).is_empty());
+        assert!(
+            form.suggestions(1, &values(&["origin", "main"])).is_empty(),
+            "an exact match needs no suggestion"
+        );
+        assert!(form.suggestions(0, &values(&["origin", ""])).is_empty());
     }
 
     #[test]
