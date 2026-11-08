@@ -55,6 +55,39 @@ pub fn apply_many(repo: &Path, indexes: &[usize]) -> Result<Option<String>, Stri
     )))
 }
 
+/// Applies stashes and deletes each once it applied. Oldest first, as `apply_many` does, so
+/// the numbers of the rest don't move under it. Stops at the first that git can't apply,
+/// which stays in the list, and says which.
+pub fn pop_many(repo: &Path, indexes: &[usize]) -> Result<Option<String>, String> {
+    let mut ordered = indexes.to_vec();
+    ordered.sort_unstable_by(|a, b| b.cmp(a));
+    ordered.dedup();
+    let mut kept = Vec::new();
+    for (done, index) in ordered.iter().enumerate() {
+        let name = format!("stash@{{{index}}}");
+        let oid = ops::run(repo, &["rev-parse", &name])?.trim().to_owned();
+        ops::run(repo, &["stash", "pop", "-q", &name]).map_err(|error| {
+            if done == 0 {
+                error
+            } else {
+                format!("Popped {} then stopped at {name}: {error}", stashes(done))
+            }
+        })?;
+        kept.push((*index, oid));
+    }
+    let undo = kept
+        .iter()
+        .rev()
+        .map(|(_, oid)| format!("`git stash store {oid}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(Some(format!(
+        "Popped {}. To put {} back in the list, run {undo}.",
+        stashes(kept.len()),
+        if kept.len() == 1 { "it" } else { "them" }
+    )))
+}
+
 /// Deletes stashes. The newest go first, so the numbers of the rest don't move under it.
 /// The notice gives the command that brings each one back.
 pub fn drop_many(repo: &Path, indexes: &[usize]) -> Result<Option<String>, String> {
@@ -111,6 +144,15 @@ pub fn apply_label(n: usize) -> String {
         "Apply stash".to_owned()
     } else {
         format!("Apply {n} stashes")
+    }
+}
+
+/// The result a menu line names for popping `n` stashes.
+pub fn pop_label(n: usize) -> String {
+    if n == 1 {
+        "Pop stash".to_owned()
+    } else {
+        format!("Pop {n} stashes")
     }
 }
 
@@ -222,6 +264,21 @@ mod tests {
             repo.git(&["stash", "push", "-q", "-m", &format!("note {n}")]);
         }
         repo
+    }
+
+    #[test]
+    fn popping_applies_a_stash_and_removes_only_it() {
+        let repo = repo_with_stashes();
+        let notice = pop_many(repo.path(), &[0]).unwrap().unwrap();
+        assert!(notice.contains("Popped 1 stash"), "{notice}");
+        assert!(notice.contains("stash store"), "{notice}");
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("file")).unwrap(),
+            "three"
+        );
+        let left = ops::run(repo.path(), &["stash", "list"]).unwrap();
+        assert_eq!(left.lines().count(), 2);
+        assert!(!left.contains("note 2"));
     }
 
     #[test]

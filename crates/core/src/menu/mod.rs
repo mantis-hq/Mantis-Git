@@ -237,7 +237,7 @@ pub fn worktree_menu(refs: &Refs, path: &Path) -> Vec<Line> {
 }
 
 /// The menu for the picked stashes in the sidebar, by their numbers. A stash is applied and
-/// kept, or deleted after asking.
+/// kept, popped (applied and deleted), or deleted after asking.
 pub fn stash_menu(refs: &Refs, indexes: &[usize]) -> Vec<Line> {
     let indexes: Vec<usize> = indexes
         .iter()
@@ -260,6 +260,12 @@ pub fn stash_menu(refs: &Refs, indexes: &[usize]) -> Vec<Line> {
         Line::item(
             stash::apply_label(indexes.len()),
             Command::ApplyStashes {
+                indexes: indexes.clone(),
+            },
+        ),
+        Line::item(
+            stash::pop_label(indexes.len()),
+            Command::PopStashes {
                 indexes: indexes.clone(),
             },
         ),
@@ -834,7 +840,10 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(labels, ["Apply stash", "Copy names", "Delete stash"]);
+        assert_eq!(
+            labels,
+            ["Apply stash", "Pop stash", "Copy names", "Delete stash"]
+        );
         let both = stash_menu(&refs, &[0, 1, 9]);
         assert_eq!(both[0], Line::Heading("2 selected".into()));
         let Some(Command::DeleteStashes { indexes, .. }) = both.last().unwrap().command().cloned()

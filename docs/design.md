@@ -381,7 +381,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   `Ctrl`-click adds or removes one, `Shift`-click picks the run from the last. Right-clicking
   opens a menu for every picked stash, or the one under the pointer when it isn't picked:
   "Apply 3 stashes" (applies them and keeps them, oldest first, stopping at the first git
-  can't apply), "Copy names", and in red "Delete 3 stashes", which asks first. The band
+  can't apply), "Pop 3 stashes" (the same, deleting each as it applies, so one that git can't
+  apply stays; the band gives the `git stash store <hash>` that puts each back), "Copy names", and in red "Delete 3 stashes", which asks first. The band
   after a delete gives the `git stash store <hash>` that brings each one back.
 - **File lists:** the inspector's lists of a commit's (or the working changes') files share
   one choice. Its header always holds two chips, "List" (every file by its path, the
