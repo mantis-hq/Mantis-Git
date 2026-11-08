@@ -259,7 +259,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   that is neither merged into the default branch nor pushed loses commits nothing else
   keeps, so `Enter` has to be pressed twice within 600 ms: the first press turns the key
   line Red and says "Press Enter again to delete." Rules for which is which live in core
-  (`Weight` in `crates/core/src/menu.rs`). Other risky steps (rebase, force push, hard
+  (`Weight` in `crates/core/src/menu/command.rs`). Other risky steps (rebase, force push, hard
   reset) still use the band.
 - **Double-click:** double-clicking a branch, in the sidebar or on a chip, checks it out. A
   remote branch gets a local copy that follows it. The checked-out branch does nothing.

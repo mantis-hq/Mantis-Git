@@ -1,6 +1,6 @@
 //! What the app remembers between runs: which repositories were open, and the few
 //! preferences that belong to the app rather than to git. Git settings and identities
-//! stay in git's own config, see `config.rs` and `identity.rs`.
+//! stay in git's own config, see `config.rs` and `identity.rs` beside this file.
 //!
 //! The file is plain `key=value` lines, so it can be read and mended by hand. Unknown
 //! lines are ignored and kept out of the way of newer versions. Reading never fails: a

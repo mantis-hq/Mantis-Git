@@ -21,6 +21,22 @@ interface on top of it. If something doesn't need a window, it belongs in `crate
   and `src/view/parts.rs` for anything more than one region draws.
 - Tests that need a repository use `gitclient_core::testing::Repo`, not their own fixture.
 
+Where things go in `crates/core/src`:
+
+- `history/`: commits as they load, the refs that point at them (`refs.rs`), lanes, and
+  which commits and branches are picked.
+- `commit/`: one commit's files and diffs (`details.rs`) and the commands that act on it
+  (`actions.rs`).
+- `working/`: staging and committing, with the commit's wording and version bumps.
+- `repo/`: branches, remotes, worktrees, submodules, a paused operation, and status.
+- `settings/`: git config, identities, SSH suggestions, and what the app remembers.
+- `menu/`: what each menu offers, and in `command.rs` what its lines run.
+- `cache/`, `patch.rs`, `tree.rs`, `log.rs`, `terminal.rs`, `ops.rs` and `text.rs` stand
+  alone.
+
+In `src/view`, a region with more than one file gets a folder (`sidebar/`, `inspector/`,
+`conflicts/`, `dock/`, `settings/`), and `view.rs` holds `GraphView` and the layout.
+
 ## UI style
 
 All UI work must follow [docs/design.md](docs/design.md): Catppuccin Mocha, Blue as the
