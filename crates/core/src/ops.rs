@@ -158,19 +158,10 @@ impl Process {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // ssh would otherwise ask on the terminal the app was started from, where nobody
+        // sees it and git waits forever. The question goes to the app's popup instead.
         #[cfg(unix)]
-        if std::env::var_os("SSH_ASKPASS").is_none() {
-            // ssh would otherwise ask for a passphrase on the terminal the app was started
-            // from, where nobody sees it and git waits forever. With the askpass program
-            // forced it asks in a window, or, with none installed, fails at once. git falls
-            // back to the same program for HTTPS logins.
-            command
-                .env(
-                    "SSH_ASKPASS",
-                    askpass_helper().unwrap_or("/bin/false".into()),
-                )
-                .env("SSH_ASKPASS_REQUIRE", "force");
-        }
+        crate::askpass::configure(command);
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt as _;
@@ -248,30 +239,6 @@ impl Drop for Process {
             self.record.finish(true, "stopped early");
         }
     }
-}
-
-/// A graphical askpass program installed on this machine, if any.
-#[cfg(unix)]
-fn askpass_helper() -> Option<std::path::PathBuf> {
-    const NAMES: [&str; 5] = [
-        "ksshaskpass",
-        "ssh-askpass",
-        "lxqt-openssh-askpass",
-        "x11-ssh-askpass",
-        "ssh-askpass-fullscreen",
-    ];
-    const FIXED: [&str; 3] = [
-        "/usr/lib/seahorse/ssh-askpass",
-        "/usr/lib/ssh/gnome-ssh-askpass",
-        "/usr/libexec/openssh/gnome-ssh-askpass",
-    ];
-    // A helper draws a window, so there has to be a display for it.
-    std::env::var_os("DISPLAY").or_else(|| std::env::var_os("WAYLAND_DISPLAY"))?;
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    std::env::split_paths(&path)
-        .flat_map(|dir| NAMES.iter().map(move |name| dir.join(name)))
-        .chain(FIXED.iter().map(std::path::PathBuf::from))
-        .find(|candidate| candidate.is_file())
 }
 
 /// Whether `text` is a question git or ssh is waiting on: no newline, ending in a colon and
