@@ -358,14 +358,16 @@ pub fn create_branch(
     )))
 }
 
-/// Makes the local branch `branch` follow the remote branch `upstream` (`origin/main`).
-pub fn set_upstream(repo: &Path, branch: &str, upstream: &str) -> Result<Option<String>, String> {
-    let upstream = upstream.trim();
-    if !ops::resolves(repo, &format!("refs/remotes/{upstream}")) {
-        return Err(format!(
-            "There is no remote branch called {upstream}. Fetch first if it is new."
-        ));
-    }
+/// Makes the local branch `branch` follow `name` on `remote`. A branch the remote doesn't
+/// have yet is pushed first, which is what makes it exist there.
+pub fn set_upstream(
+    repo: &Path,
+    branch: &str,
+    remote: &str,
+    name: &str,
+) -> Result<Option<String>, String> {
+    let (remote, name) = (remote.trim(), name.trim());
+    let upstream = format!("{remote}/{name}");
     let before = ops::run(
         repo,
         &[
@@ -375,19 +377,37 @@ pub fn set_upstream(repo: &Path, branch: &str, upstream: &str) -> Result<Option<
         ],
     )
     .ok()
-    .map(|name| name.trim().to_owned())
-    .filter(|name| !name.is_empty());
-    ops::run(
-        repo,
-        &["branch", &format!("--set-upstream-to={upstream}"), branch],
-    )?;
-    let undo = match before {
+    .map(|found| found.trim().to_owned())
+    .filter(|found| !found.is_empty());
+    let exists = ops::resolves(repo, &format!("refs/remotes/{upstream}"));
+    if exists {
+        ops::run(
+            repo,
+            &["branch", &format!("--set-upstream-to={upstream}"), branch],
+        )?;
+    } else {
+        ops::run(
+            repo,
+            &[
+                "push",
+                "--set-upstream",
+                remote,
+                &format!("{branch}:{name}"),
+            ],
+        )?;
+    }
+    let back = match before {
         Some(before) => format!("git branch --set-upstream-to={before} {branch}"),
         None => format!("git branch --unset-upstream {branch}"),
     };
-    Ok(Some(format!(
-        "{branch} now follows {upstream}. To undo it, run `{undo}`."
-    )))
+    Ok(Some(if exists {
+        format!("{branch} now follows {upstream}. To undo it, run `{back}`.")
+    } else {
+        format!(
+            "Pushed {branch} to {remote} as {name}, and it now follows {upstream}. To undo it, \
+             run `git push {remote} --delete {name} && {back}`."
+        )
+    }))
 }
 
 pub fn delete_tag(repo: &Path, name: &str) -> Result<Option<String>, String> {
@@ -444,7 +464,7 @@ mod tests {
         let repo = ahead();
         repo.git(&["remote", "add", "origin", "/nowhere"]);
         repo.git(&["update-ref", "refs/remotes/origin/side", "side"]);
-        let said = set_upstream(repo.path(), "side", " origin/side ")
+        let said = set_upstream(repo.path(), "side", "origin", " side ")
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -453,8 +473,27 @@ mod tests {
             "origin/side"
         );
         assert!(said.contains("--unset-upstream side"), "{said}");
-        let missing = set_upstream(repo.path(), "side", "origin/nope").unwrap_err();
-        assert!(missing.contains("no remote branch"), "{missing}");
+    }
+
+    #[test]
+    fn a_branch_the_remote_lacks_is_pushed_and_followed() {
+        let repo = ahead();
+        let remote = Repo::new();
+        repo.git(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
+        remote.git(&["config", "receive.denyCurrentBranch", "ignore"]);
+        let said = set_upstream(repo.path(), "side", "origin", "topic")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            repo.git(&["rev-parse", "--abbrev-ref", "side@{upstream}"])
+                .trim(),
+            "origin/topic"
+        );
+        assert_eq!(
+            remote.git(&["rev-parse", "topic"]),
+            repo.git(&["rev-parse", "side"])
+        );
+        assert!(said.contains("push origin --delete topic"), "{said}");
     }
 
     #[test]

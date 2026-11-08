@@ -131,6 +131,7 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
             format!("Set upstream of {name}"),
             Command::Form(Form::Upstream {
                 branch: name.clone(),
+                existing: refs.remotes.iter().map(|r| r.name.clone()).collect(),
             }),
         ));
     }

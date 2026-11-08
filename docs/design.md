@@ -250,11 +250,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Upstream: a local branch's menu has "Set upstream of <name>", which opens a form popup
   with the remote and the branch on one row, as `origin / main` reads: a "Remote" dropdown
   that starts on the remote holding a branch of the same name (or the first), a `/`, and a
-  searchable "Branch" dropdown of that remote's branches, filled with the same name when
-  there is one. Only a branch git already knows can be picked, so one that is new on the
-  remote needs a fetch first, which the popup says. "Follow origin/x" is its result, and the
-  band says how to undo it. A form can mix typed inputs and dropdowns, and fields that share a
-  row are joined by a separator (`Form::separator` in core).
+  searchable "Branch" dropdown of that remote's branches. When the remote has no branch
+  of the branch's own name, that name leads the list as "feat/x · new on origin", and it is
+  what the dropdown starts on, so following a branch the remote doesn't have yet is one
+  Enter. The result names what will happen: "Follow origin/main" for one that exists, and
+  "Push feat/x to origin and follow it" for a new one, which pushes it. The band says how to
+  undo either. A form can mix typed inputs and dropdowns, and fields that share a row are
+  joined by a separator (`Form::separator` in core).
 - New branch: a quiet "New branch" link ends the Branches heading, and branch, tag and
   commit menus have "New branch from <name or hash>". Either opens a form popup (see
   "Popups") that says where the branch starts ("New branch, starting at main"), with a
