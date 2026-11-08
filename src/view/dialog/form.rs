@@ -8,7 +8,6 @@ use crate::view::GraphView;
 use crate::view::parts::section_label;
 use gitclient_core::menu::form::Form;
 use gpui_kit::component::IndexPath;
-use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_kit::component::*;
@@ -91,34 +90,70 @@ impl FormDialog {
         }
     }
 
-    /// Existing things a typed field could be filled with, as quiet buttons under the
-    /// fields. Clicking one types it in.
-    fn suggestions(&self, values: &[String], cx: &mut Context<GraphView>) -> Option<AnyElement> {
-        let muted = cx.theme().muted_foreground;
-        let (index, names) = (0..values.len())
-            .map(|index| (index, self.form.suggestions(index, values)))
-            .find(|(_, names)| !names.is_empty())?;
-        let buttons = names.into_iter().enumerate().map(|(n, name)| {
+    /// The list that drops under a typed field while it has the cursor: existing things the
+    /// field could be filled with, narrowed by what is typed. A click types one in, and
+    /// typing something else is still allowed.
+    fn dropdown(
+        &self,
+        index: usize,
+        values: &[String],
+        window: &Window,
+        cx: &mut Context<GraphView>,
+    ) -> Option<AnyElement> {
+        let Some(Control::Text(input)) = self.inputs.get(index) else {
+            return None;
+        };
+        let names = self.form.suggestions(index, values);
+        if names.is_empty() || !input.focus_handle(cx).is_focused(window) {
+            return None;
+        }
+        let theme = cx.theme();
+        let (panel, border, hover) = (theme.title_bar, theme.border, theme.list_active);
+        let rows = names.into_iter().enumerate().map(|(n, name)| {
             let fill = name.clone();
-            Button::new(("suggestion", n))
-                .ghost()
-                .small()
-                .label(name)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.fill_form_field(index, &fill, window, cx)
-                }))
+            div()
+                .id(("suggestion", n))
+                .h(px(28.))
+                .px_2()
+                .flex()
+                .items_center()
+                .rounded(px(4.))
+                .cursor_pointer()
+                .hover(move |style| style.bg(hover))
+                .child(div().truncate().child(name))
+                // On press, not on release: the press is what takes the cursor out of the
+                // field, and the list goes with it.
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.fill_form_field(index, &fill, window, cx)
+                    }),
+                )
         });
         Some(
-            div()
-                .v_flex()
-                .gap_1()
-                .child(section_label(muted).child("Already there"))
-                .child(div().h_flex().flex_wrap().gap_1().children(buttons))
-                .into_any_element(),
+            deferred(
+                div()
+                    .absolute()
+                    .top_full()
+                    .left_0()
+                    .right_0()
+                    .mt_1()
+                    .v_flex()
+                    .p_1()
+                    .rounded(px(6.))
+                    .bg(panel)
+                    .border_1()
+                    .border_color(border)
+                    .occlude()
+                    .children(rows),
+            )
+            .with_priority(30)
+            .into_any_element(),
         )
     }
 
-    pub(super) fn frame(&self, cx: &mut Context<GraphView>) -> Frame {
+    pub(super) fn frame(&self, window: &Window, cx: &mut Context<GraphView>) -> Frame {
         let theme = cx.theme();
         let (text, muted) = (theme.foreground, theme.muted_foreground);
         let peach = tokens(theme.is_dark()).peach;
@@ -129,25 +164,28 @@ impl FormDialog {
                 .child(self.form.title())
                 .into_any_element(),
         ];
-        let fields = self
-            .form
-            .fields()
-            .iter()
-            .zip(&self.inputs)
-            .map(|(field, control)| {
+        let mut fields = Vec::new();
+        for (index, (field, control)) in self.form.fields().iter().zip(&self.inputs).enumerate() {
+            fields.push(
                 div()
                     .v_flex()
                     .gap_1()
                     .flex_1()
                     .min_w_0()
                     .child(section_label(muted).child(field.label))
-                    .child(control.element())
-            });
+                    .child(
+                        div()
+                            .relative()
+                            .child(control.element())
+                            .children(self.dropdown(index, &values, window, cx)),
+                    ),
+            );
+        }
         match self.form.separator() {
             // The fields share a row, as the two halves of `origin/main` do.
             Some(separator) => {
                 let mut row = div().h_flex().items_end().gap_2();
-                for (i, field) in fields.enumerate() {
+                for (i, field) in fields.into_iter().enumerate() {
                     if i > 0 {
                         row = row.child(
                             div()
@@ -161,9 +199,8 @@ impl FormDialog {
                 }
                 content.push(row.into_any_element());
             }
-            None => content.extend(fields.map(IntoElement::into_any_element)),
+            None => content.extend(fields.into_iter().map(IntoElement::into_any_element)),
         }
-        content.extend(self.suggestions(&values, cx));
         content.extend(
             self.problem
                 .clone()
