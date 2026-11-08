@@ -421,6 +421,54 @@ fn clicking_a_row_selects_it(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_read_of_tracked_files_alone_keeps_the_untracked_ones_it_had(cx: &mut TestAppContext) {
+    use super::inspector::Scan;
+    use gitclient_core::testing::Repo;
+    let repo = Repo::new();
+    repo.write("a", "1\n");
+    repo.commit("base");
+    repo.write("a", "2\n");
+    repo.write("new-1", "x\n");
+    let (view, mut cx) = open_view(cx);
+    load(&view, &["x"], &mut cx);
+    view.update(&mut cx, |view, cx| {
+        view.repo = Some(repo.path().to_owned());
+        view.entries[0].working = true;
+        view.select(0, cx);
+    });
+    cx.run_until_parked();
+    let listed = |cx: &VisualTestContext| {
+        view.read_with(cx, |view, _| {
+            let unstaged = &view.working_changes().unwrap().unstaged;
+            let names: Vec<String> = unstaged.iter().map(|f| f.path.clone()).collect();
+            (names, view.inspector.scanning_untracked)
+        })
+    };
+    assert_eq!(listed(&cx), (vec!["a".into(), "new-1".into()], false));
+
+    // A file appears, and a read of tracked files alone doesn't go looking for it, but
+    // changes to the files git knows are seen, and the untracked one stays listed.
+    repo.write("new-2", "y\n");
+    repo.write("a", "3\n4\n");
+    view.update(&mut cx, |view, cx| {
+        view.reload_working_as(Scan::Tracked, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(listed(&cx), (vec!["a".into(), "new-1".into()], false));
+    let lines = view.read_with(&cx, |view, _| {
+        view.working_changes().unwrap().unstaged[0].change.additions
+    });
+    assert_eq!(lines, 2, "the tracked file is read again");
+
+    // A full read finds it.
+    view.update(&mut cx, |view, cx| view.reload_working(cx));
+    cx.run_until_parked();
+    let (names, scanning) = listed(&cx);
+    assert_eq!(names, ["a", "new-1", "new-2"]);
+    assert!(!scanning, "the note goes once the scan is done");
+}
+
+#[gpui_kit::test]
 fn ticking_a_file_moves_it_between_the_lists_and_its_menu_follows(cx: &mut TestAppContext) {
     use gitclient_core::menu::command::Command;
     use gitclient_core::testing::Repo;
@@ -804,6 +852,7 @@ fn typing_over_picked_lines_keeps_what_was_typed(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn typing_in_the_result_is_checked_once_it_pauses(cx: &mut TestAppContext) {
     let (repo, view, mut cx) = resolving_a_conflict(cx);
+    let markers = repo.read("a");
     let editor = view.read_with(&cx, |view, _| view.conflict_editor().unwrap());
     let type_in = |text: &str, cx: &mut VisualTestContext| {
         let text = text.to_owned();
@@ -826,17 +875,76 @@ fn typing_in_the_result_is_checked_once_it_pauses(cx: &mut TestAppContext) {
     assert_eq!(view.read_with(&cx, |view, _| view.conflicts_left("a")), 0);
 
     // Saving straight after typing reads the newest text, even before a check has run.
-    type_in(
-        "top\n<<<<<<< HEAD\nmain\n=======\nfeat\n>>>>>>> feat\n",
-        &mut cx,
-    );
+    type_in(&markers, &mut cx);
     view.update(&mut cx, |view, cx| view.save_conflict(cx));
     cx.run_until_parked();
-    assert!(repo.read("a").contains("<<<<<<<"), "markers are not saved");
+    assert_eq!(
+        repo.read("a"),
+        markers,
+        "a file with its markers is not saved"
+    );
     type_in("top\nfinal\nbottom\n", &mut cx);
     view.update(&mut cx, |view, cx| view.save_conflict(cx));
     cx.run_until_parked();
     assert_eq!(repo.read("a"), "top\nfinal\nbottom\n");
+}
+
+#[gpui_kit::test]
+fn a_saved_conflict_counts_as_resolved_before_git_is_done(cx: &mut TestAppContext) {
+    use gitclient_core::repo::conflict::Side;
+    let (_repo, view, mut cx) = resolving_a_conflict(cx);
+    view.update_in(&mut cx, |view, window, cx| {
+        view.use_chunk(0, Side::Mine, window, cx)
+    });
+    view.update(&mut cx, |view, cx| view.save_conflict(cx));
+
+    // Nothing has run yet, and the screen already has the file resolved and has moved on,
+    // with a spinner on it. The graph isn't read again for a file that moves no branch.
+    view.read_with(&cx, |view, _| {
+        assert_eq!(view.saved_files(), [("a".to_owned(), true)]);
+        assert!(!view.resolver_is_open(), "the last file is done");
+        assert_eq!(*view.status(), Status::Loaded);
+    });
+
+    // Once git has it and has been read again, the spinner goes and the file stays listed.
+    cx.run_until_parked();
+    view.read_with(&cx, |view, _| {
+        assert_eq!(view.saved_files(), [("a".to_owned(), false)]);
+        assert_eq!(*view.status(), Status::Loaded, "no reload of the graph");
+        assert!(view.notice_text().is_some_and(|s| s.contains("resolved")));
+    });
+}
+
+#[gpui_kit::test]
+fn a_conflict_git_refuses_to_save_comes_back_with_the_reason(cx: &mut TestAppContext) {
+    use gitclient_core::repo::conflict::Side;
+    let (repo, view, mut cx) = resolving_a_conflict(cx);
+    view.update_in(&mut cx, |view, window, cx| {
+        view.use_chunk(0, Side::Mine, window, cx)
+    });
+    // With the index locked, `git add` fails.
+    let lock = repo.path().join(".git/index.lock");
+    std::fs::write(&lock, "").unwrap();
+    view.update(&mut cx, |view, cx| view.save_conflict(cx));
+    assert_eq!(view.read_with(&cx, |view, _| view.saved_files().len()), 1);
+    cx.run_until_parked();
+
+    view.read_with(&cx, |view, _| {
+        assert!(
+            view.saved_files().is_empty(),
+            "it is not resolved after all"
+        );
+        assert!(view.resolver_is_open(), "the file is open again");
+        assert!(matches!(view.notice, Some(super::Notice::Error(_))));
+    });
+
+    // Once the lock is gone, the same file saves.
+    std::fs::remove_file(&lock).unwrap();
+    view.update(&mut cx, |view, cx| view.save_conflict(cx));
+    cx.run_until_parked();
+    view.read_with(&cx, |view, _| {
+        assert_eq!(view.saved_files(), [("a".to_owned(), false)]);
+    });
 }
 
 #[gpui_kit::test]

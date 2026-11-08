@@ -18,6 +18,17 @@ pub(super) enum Notice {
     Error(SharedString),
 }
 
+/// What a view does once an operation has run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum After {
+    /// Reads the whole repository again.
+    Reload,
+    /// A file in conflict was saved. That moves no branch and adds no untracked file, so
+    /// only the paused operation and the tracked changes are read again, which stays quick
+    /// however large the history and the working tree are.
+    ConflictSaved,
+}
+
 impl GraphView {
     /// Runs a git operation in the background, then reloads. `operation` returns what to
     /// tell the user on success, if anything worth saying.
@@ -25,6 +36,17 @@ impl GraphView {
         &mut self,
         label: impl Into<SharedString>,
         operation: impl FnOnce(&Path) -> Result<Option<String>, String> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_operation_then(label, operation, After::Reload, cx);
+    }
+
+    /// Runs a git operation like [`Self::run_operation`], and catches up as `after` says.
+    pub(super) fn run_operation_then(
+        &mut self,
+        label: impl Into<SharedString>,
+        operation: impl FnOnce(&Path) -> Result<Option<String>, String> + Send + 'static,
+        after: After,
         cx: &mut Context<Self>,
     ) {
         let Some(workdir) = self.workdir() else {
@@ -37,7 +59,11 @@ impl GraphView {
         self.notice = None;
         self.confirm = None;
         cx.notify();
-        Self::spawn_blocking(move || operation(&workdir), Self::finish_operation, cx);
+        Self::spawn_blocking(
+            move || operation(&workdir),
+            move |this, result, cx| this.finish_operation_then(result, after, cx),
+            cx,
+        );
     }
 
     pub(super) fn finish_operation(
@@ -45,12 +71,30 @@ impl GraphView {
         result: Result<Option<String>, String>,
         cx: &mut Context<Self>,
     ) {
+        self.finish_operation_then(result, After::Reload, cx);
+    }
+
+    fn finish_operation_then(
+        &mut self,
+        result: Result<Option<String>, String>,
+        after: After,
+        cx: &mut Context<Self>,
+    ) {
         self.busy = None;
+        let saved = result.is_ok();
         self.notice = match result {
             Ok(message) => message.map(|message| Notice::Info(message.into())),
             Err(message) => Some(Notice::Error(message.into())),
         };
-        self.reload(cx);
+        match (after, saved) {
+            (After::ConflictSaved, true) => self.conflict_written(cx),
+            (After::ConflictSaved, false) => {
+                // The screen went ahead of git, so it goes back, and git is read again.
+                self.conflict_not_written(cx);
+                self.reload(cx);
+            }
+            (After::Reload, _) => self.reload(cx),
+        }
     }
 
     pub(super) fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

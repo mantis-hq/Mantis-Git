@@ -338,7 +338,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   one is "Staged" and holds only what the next commit contains. A file changed both ways is
   in both, each with its own diff. A list with no files says so in a sentence. Diffs open on
   a click, never on their own. The lists and an open diff refresh when the window is used
-  again.
+  again. Git walks the whole working tree to find untracked files, which in a large
+  repository takes seconds, so the changed files show first and the walk finishes after:
+  while it runs, "Unstaged" says "Looking for untracked files…" with a small spinner, and
+  an empty list says that instead of "Nothing left to stage."
 - **Staging:** the check marks of the commit form are the index. A file, a folder and a
   whole list each start with a tick box, ticked in "Staged" and clear in "Unstaged";
   ticking one in "Unstaged" stages it and clearing one in "Staged" unstages it, and the
@@ -451,6 +454,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   - **Save and mark as resolved**, a large blue button across the foot, enabled once no
     conflict is left. It writes the result and stages the file, which takes the conflict state
     off it, then opens the next file that needs a decision, or closes when there is none.
+    The screen doesn't wait for git: a file whose conflicts are all decided can't stay in
+    conflict, so it moves on and lists the file as resolved at once, with a small spinner
+    and "Saving…" in place of the tick and "Resolved" until git has taken it and been read
+    again. Saving moves no branch, so the graph isn't read again, and untracked files are
+    not looked for again. If git refuses, the file comes back open, with what was typed in
+    it, and the band says why. "Continue" doesn't wait for that read, only for the writes.
   A file with nothing to merge line by line, such as a binary file or a deleted one, has two
   cards with a "Use feat/x" choice each instead of the editor, saved with the same button.
   Right-clicking a conflicted file offers "Show both sides", "Use feat/x" and "Use main" for

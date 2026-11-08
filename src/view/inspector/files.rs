@@ -4,7 +4,9 @@
 use super::INDENT;
 use crate::theme::tokens;
 use crate::view::parts::TEXT_CHIP;
-use crate::view::parts::{checkbox, chip, file_path, panel_row, section_label, status_color};
+use crate::view::parts::{
+    checkbox, chip, file_path, panel_row, section_label, status_color, working_note,
+};
 use crate::view::{GraphView, Notice};
 use gitclient_core::commit::details::{CommitDetails, FileChange};
 use gitclient_core::menu;
@@ -19,6 +21,9 @@ use gpui_kit::*;
 use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;
+
+/// What the Unstaged list says while git is still walking the tree for untracked files.
+const SCANNING: &str = "Looking for untracked files…";
 
 /// One list of files the inspector can draw.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -212,6 +217,7 @@ impl GraphView {
             changes.side(side).iter().map(|f| f.path.clone()).collect()
         });
         let empty = paths.is_empty();
+        let scanning = side == Side::Unstaged && self.inspector.scanning_untracked;
         let unstage = side.unstages();
         let discard_all = (side == Side::Unstaged && !empty).then(|| {
             let what = format!("all {}", count(paths.len(), "file"));
@@ -246,6 +252,9 @@ impl GraphView {
                         )
                     })
                     .child(div().flex_1().min_w_0().truncate().child(heading))
+                    .when(scanning && !empty, |header| {
+                        header.child(working_note(SCANNING, muted))
+                    })
                     .children(discard_all.map(|command| {
                         Button::new("discard-all")
                             .ghost()
@@ -257,7 +266,11 @@ impl GraphView {
                             )
                     })),
             )
-            .when(empty, |list| {
+            // "Nothing left to stage" isn't known until the untracked files are found.
+            .when(empty && scanning, |list| {
+                list.child(div().px_2().child(working_note(SCANNING, muted)))
+            })
+            .when(empty && !scanning, |list| {
                 list.child(div().px_2().text_color(muted).child(side.empty()))
             })
             .when(!empty, |list| {

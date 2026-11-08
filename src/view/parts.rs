@@ -210,6 +210,19 @@ pub(super) fn loading(id: impl Into<ElementId>, label: &str, rows: usize, cx: &A
         )
 }
 
+/// A spinner and a short sentence in muted text, for something git is still doing after the
+/// screen already shows what it will come to ("Looking for untracked files…").
+pub(super) fn working_note(label: &str, muted: Hsla) -> Div {
+    div()
+        .h_flex()
+        .flex_none()
+        .gap_2()
+        .text_size(TEXT_SMALL)
+        .text_color(muted)
+        .child(Spinner::new().small())
+        .child(label.to_owned())
+}
+
 pub(super) fn file_path(path: &str, muted: Hsla) -> Div {
     let (folder, name) = split_path(path);
     div()

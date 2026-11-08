@@ -7,6 +7,7 @@ mod resolver;
 use resolver::FileView;
 
 use super::dialog::Confirm;
+use super::inspector::Scan;
 use super::parts::{
     TEXT_CHIP, TEXT_SMALL, checkbox, expand_tabs, file_path, loading, panel_row, pill,
     scroll_marks, section_label,
@@ -17,6 +18,7 @@ use gitclient_core::repo::conflict::{self, Decision, Piece, Progress, ResultChec
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -83,8 +85,14 @@ pub(super) struct State {
     picks: HashMap<String, HashMap<usize, HashSet<(Side, usize)>>>,
     /// Files saved at this stop. They stay listed until the operation goes on.
     resolved: Vec<String>,
-    /// The file being saved, so that once it is, the next one opens.
+    /// The file being saved, which already counts as resolved on screen while git writes it.
     saving: Option<String>,
+    /// Files git has written and staged, whose conflict git hasn't yet been seen to drop.
+    /// They are listed as resolved all the same, with a spinner until it is.
+    unconfirmed: HashSet<String>,
+    /// Counts the reads of the paused operation, so that one started before the latest is
+    /// dropped: it may not know of a file saved since.
+    check_seq: u64,
     /// An editor for each file whose result has been on show at this stop. Loading a large
     /// file into an editor takes a while, so coming back to one doesn't do it again.
     editors: HashMap<String, ResultEditor>,
@@ -125,6 +133,7 @@ impl State {
         self.picks.clear();
         self.resolved.clear();
         self.saving = None;
+        self.unconfirmed.clear();
         self.editors.clear();
         self.editing = None;
         self.behind = false;
@@ -160,6 +169,17 @@ impl GraphView {
         )
     }
 
+    /// The files listed as resolved, and whether git is still on each ("Saving…").
+    #[cfg(test)]
+    pub(super) fn saved_files(&self) -> Vec<(String, bool)> {
+        let settling = |path: &String| {
+            self.conflict.saving.as_ref() == Some(path) || self.conflict.unconfirmed.contains(path)
+        };
+        (self.conflict.resolved.iter())
+            .map(|path| (path.clone(), settling(path)))
+            .collect()
+    }
+
     #[cfg(test)]
     pub(super) fn conflict_editor(&self) -> Option<Entity<TextareaState>> {
         self.conflict.active_editor().cloned()
@@ -170,11 +190,49 @@ impl GraphView {
         let Some(repo) = self.workdir() else {
             return;
         };
+        self.conflict.check_seq += 1;
+        let seq = self.conflict.check_seq;
         Self::spawn_blocking(
             move || (conflict::detect(&repo), conflict::rebase_target(&repo)),
-            Self::paused_operation_read,
+            move |this, read, cx| {
+                // A newer read is on its way, and knows more.
+                if this.conflict.check_seq == seq {
+                    this.paused_operation_read(read, cx);
+                }
+            },
             cx,
         );
+    }
+
+    /// A file was saved, and git took it. It is resolved for certain, which the screen
+    /// already says, so what is left is to read what git reports and to say that this is
+    /// under way.
+    pub(super) fn conflict_written(&mut self, cx: &mut Context<Self>) {
+        if let Some(saved) = self.conflict.saving.take() {
+            self.conflict.unconfirmed.insert(saved);
+        }
+        self.check_paused_operation(cx);
+        if self.working_row_is_selected() {
+            self.reload_working_as(Scan::Tracked, cx);
+        }
+        cx.notify();
+    }
+
+    /// Git refused to save a file after the screen counted it resolved: it is back among
+    /// the files to decide, open, with what was typed in it, and the band says why.
+    pub(super) fn conflict_not_written(&mut self, cx: &mut Context<Self>) {
+        if let Some(saved) = self.conflict.saving.take() {
+            self.conflict.resolved.retain(|path| *path != saved);
+            self.show_conflict(&saved, cx);
+        }
+    }
+
+    /// The files with a decision still to make, leaving out those saved, which git may not
+    /// have dropped from its list yet.
+    fn files_to_decide(&self, progress: &Progress) -> Vec<conflict::ConflictFile> {
+        let mut files = progress.files();
+        files.retain(|file| !self.conflict.resolved.contains(&file.path));
+        files
     }
 
     fn paused_operation_read(
@@ -211,39 +269,37 @@ impl GraphView {
         cx.notify();
     }
 
-    /// Once a file is saved it is listed as resolved, and the resolver moves on to the next
-    /// file that needs one, or closes when there is none.
+    /// Once git is seen to have dropped the files it was given, they are confirmed, and the
+    /// resolver closes if there are none left to decide.
     fn after_save(&mut self, progress: &Progress, cx: &mut Context<Self>) {
-        let Some(saved) = self.conflict.saving.take() else {
+        let awaited = std::mem::take(&mut self.conflict.unconfirmed);
+        if awaited.is_empty() {
             return;
-        };
+        }
         let files = progress.files();
-        if files.iter().any(|file| file.path == saved) {
-            // It didn't save, and the band under the header says why.
-            return;
-        }
-        self.conflict.drafts.remove(&saved);
-        self.conflict.sides.remove(&saved);
-        self.conflict.editors.remove(&saved);
-        self.conflict.picks.remove(&saved);
-        self.conflict.picked.remove(&saved);
-        if self.conflict.editing.as_deref() == Some(saved.as_str()) {
-            self.conflict.editing = None;
-            self.conflict.behind = false;
-        }
-        if !self.conflict.resolved.contains(&saved) {
-            self.conflict.resolved.push(saved.clone());
-        }
-        if self.conflict.shown.as_deref() != Some(saved.as_str()) {
-            return;
-        }
-        match files.first() {
-            Some(next) => self.show_conflict(&next.path.clone(), cx),
-            None => {
-                self.conflict.open = false;
-                self.notice = Some(Notice::Info(progress.resolved_sentence().into()));
+        for saved in awaited {
+            if files.iter().any(|file| file.path == saved) {
+                // Git still has it in conflict, which is the last word: it needs deciding.
+                self.conflict.resolved.retain(|path| *path != saved);
+                continue;
+            }
+            self.conflict.drafts.remove(&saved);
+            self.conflict.sides.remove(&saved);
+            self.conflict.editors.remove(&saved);
+            self.conflict.picks.remove(&saved);
+            self.conflict.picked.remove(&saved);
+            if self.conflict.editing.as_deref() == Some(saved.as_str()) {
+                self.conflict.editing = None;
+                self.conflict.behind = false;
             }
         }
+        // The screen moved on to the next file when this one was saved, so what is left is
+        // to say so when it was the last.
+        if self.files_to_decide(progress).is_empty() {
+            self.conflict.open = false;
+            self.notice = Some(Notice::Info(progress.resolved_sentence().into()));
+        }
+        cx.notify();
     }
 
     /// Shows the working changes, where the conflicts are listed, so that a paused
@@ -467,7 +523,7 @@ impl GraphView {
         let Some(progress) = self.conflict.progress.clone() else {
             return;
         };
-        if !progress.decisions.is_empty() {
+        if !self.files_to_decide(&progress).is_empty() {
             return;
         }
         let kind = progress.kind;
@@ -494,9 +550,9 @@ impl GraphView {
         let colors = tokens(theme.is_dark());
         let (border, muted, success) = (theme.border, theme.muted_foreground, theme.success);
         let kind = progress.kind.title().to_lowercase();
-        let ready = progress.decisions.is_empty();
+        let files = self.files_to_decide(progress);
+        let ready = files.is_empty();
         let busy = self.busy.is_some();
-        let files = progress.files();
         let shown_path = self.conflict.shown.clone().filter(|_| self.conflict.open);
 
         let mut rows: Vec<Stateful<Div>> = Vec::new();
@@ -537,8 +593,11 @@ impl GraphView {
                 ),
             );
         }
-        // Saved files stay in the list, ticked, until the operation goes on.
+        // Saved files stay in the list, ticked, until the operation goes on. One git hasn't
+        // finished with has a spinner and says "Saving…", though it is resolved for sure.
         for (index, path) in self.conflict.resolved.iter().enumerate() {
+            let settling = self.conflict.saving.as_ref() == Some(path)
+                || self.conflict.unconfirmed.contains(path);
             rows.push(
                 panel_row(("resolved-file", index), false, cx)
                     .h(px(28.))
@@ -547,10 +606,15 @@ impl GraphView {
                         div()
                             .w(px(12.))
                             .flex_none()
+                            .h_flex()
                             .text_size(TEXT_CHIP)
                             .font_semibold()
                             .text_color(success)
-                            .child("✓"),
+                            .child(if settling {
+                                Spinner::new().xsmall().into_any_element()
+                            } else {
+                                "✓".into_any_element()
+                            }),
                     )
                     .child(file_path(path, muted))
                     .child(
@@ -558,7 +622,7 @@ impl GraphView {
                             .flex_none()
                             .text_size(TEXT_CHIP)
                             .text_color(muted)
-                            .child("Resolved"),
+                            .child(if settling { "Saving…" } else { "Resolved" }),
                     ),
             );
         }
