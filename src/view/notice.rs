@@ -89,9 +89,8 @@ impl GraphView {
         match (after, saved) {
             (After::ConflictSaved, true) => self.conflict_written(cx),
             (After::ConflictSaved, false) => {
-                // The screen went ahead of git, so it goes back, and git is read again.
+                // The screen went ahead of git, so it goes back. Nothing changed in git.
                 self.conflict_not_written(cx);
-                self.reload(cx);
             }
             (After::Reload, _) => self.reload(cx),
         }

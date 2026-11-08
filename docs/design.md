@@ -415,9 +415,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   the working changes are selected when one appears. The inspector then holds a Peach pill
   ("Rebase paused"), the sentence that says where it stopped, a "Conflicts" list of the files
   that need a decision (a "!" and how many conflicts are left, or a tick and "Resolved" once
-  saved, which stay listed until the operation goes on), and at the foot "Cancel rebase" and
-  the one blue "Continue rebase", which waits until every file is saved. The two lists and the
-  commit form wait while it is paused.
+  saved, which stay listed until the operation goes on, including those saved before the app
+  was opened: git keeps a record of them in the index), then the "Staged" list as in the
+  working changes, with its own List and Tree chips, so everything the next commit holds can
+  be looked at and opened, and at the foot "Cancel rebase" and the one blue "Continue
+  rebase", which waits until every file is saved. The "Unstaged" list and the commit form
+  wait while it is paused.
   Clicking a file opens the resolver over the graph, as a diff does, at the file's first
   conflict still standing, and `Esc` or "Close" brings the graph back. It is one file at a
   time, in three parts that share the height:

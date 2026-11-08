@@ -134,7 +134,7 @@ impl GraphView {
     }
 
     /// The Tree and List chips, which every list in the inspector shares.
-    pub(super) fn render_view_chips(&self, cx: &mut Context<Self>) -> Div {
+    pub(in crate::view) fn render_view_chips(&self, cx: &mut Context<Self>) -> Div {
         div().h_flex().children(FileView::ALL.map(|view| {
             chip(
                 ("inspector-files-view", view as usize),
@@ -205,7 +205,7 @@ impl GraphView {
 
     /// One of the two lists of working changes. Its box stages everything in it, or
     /// unstages everything, and a list with nothing in it says so.
-    pub(super) fn render_working_list(
+    pub(in crate::view) fn render_working_list(
         &self,
         side: Side,
         details: &Arc<CommitDetails>,

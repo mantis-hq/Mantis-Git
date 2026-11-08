@@ -15,6 +15,7 @@ use super::parts::{
 use super::{GraphView, Notice};
 use crate::theme::{lane_color, tokens};
 use gitclient_core::repo::conflict::{self, Decision, Piece, Progress, ResultCheck, Side};
+use gitclient_core::working;
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
@@ -254,8 +255,14 @@ impl GraphView {
                     self.after_save(&new, cx);
                 } else {
                     self.conflict.reset();
-                    self.conflict.progress = Some(new);
+                    self.conflict.progress = Some(new.clone());
                     self.focus_conflicts(cx);
+                }
+                // Files resolved before this window knew of the stop are listed too.
+                for path in &new.resolved {
+                    if !self.conflict.resolved.contains(path) {
+                        self.conflict.resolved.push(path.clone());
+                    }
                 }
             }
             None => {
@@ -637,11 +644,17 @@ impl GraphView {
                     .v_flex()
                     .flex_none()
                     .gap_2()
-                    .child(div().h_flex().gap_2().child(pill(
-                        &format!("{} paused", progress.kind.title()),
-                        colors.peach,
-                        cx,
-                    )))
+                    .child(
+                        div()
+                            .h_flex()
+                            .justify_between()
+                            .child(pill(
+                                &format!("{} paused", progress.kind.title()),
+                                colors.peach,
+                                cx,
+                            ))
+                            .child(self.render_view_chips(cx)),
+                    )
                     .child(div().text_color(colors.subtext0).child(progress.sentence())),
             )
             .child(
@@ -668,6 +681,10 @@ impl GraphView {
                             .children(rows),
                     ),
             )
+            // What the next commit holds, listed as it is in the working changes.
+            .when_some(self.shown_details().cloned(), |panel, details| {
+                panel.child(self.render_working_list(working::Side::Staged, &details, cx))
+            })
             .child(
                 div()
                     .v_flex()
