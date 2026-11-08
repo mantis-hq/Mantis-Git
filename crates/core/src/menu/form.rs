@@ -226,10 +226,11 @@ impl Form {
             Self::Submodule {
                 original: Some(path),
             } => format!("Save {path}"),
-            Self::Upstream { branch: local, .. } => match (value(values, 0), value(values, 1)) {
+            Self::Upstream { .. } => match (value(values, 0), value(values, 1)) {
                 (remote, name) if !remote.is_empty() && !name.is_empty() => {
                     if self.is_new_upstream(&format!("{remote}/{name}")) {
-                        format!("Push {local} to {remote} and follow it")
+                        // The whole remote branch, as it will be on the remote.
+                        format!("Create {remote}/{name}")
                     } else {
                         format!("Follow {remote}/{name}")
                     }
@@ -401,7 +402,7 @@ mod tests {
         // It starts on the first remote with the local name typed in.
         let start = values(&["origin", "topic"]);
         assert_eq!(form.initial_values(&refs), start);
-        assert_eq!(form.action(&start), "Push topic to origin and follow it");
+        assert_eq!(form.action(&start), "Create origin/topic");
         assert_eq!(form.problem(&start), None);
         assert_eq!(
             form.action(&values(&["origin", "main"])),

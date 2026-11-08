@@ -254,7 +254,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   the remote's existing branches that contain what is typed show as quiet buttons under
   "Already there", and a click types one in. Typing a name the remote doesn't have is how a
   new upstream is made. The result names what will happen: "Follow origin/main" for one
-  that exists, and "Push feat/x to origin and follow it" for a new one, which pushes it.
+  that exists, and "Create origin/feat/x" for a new one, which pushes the branch there and follows it.
   The band says how to undo either. A form can mix typed inputs and dropdowns, and fields
   that share a row are joined by a separator (`Form::separator` in core).
 - New branch: a quiet "New branch" link ends the Branches heading, and branch, tag and
@@ -294,8 +294,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Popups:** a 420 px card centred over the window, on Mantle with a Surface 0 border
   and 8 px radius. It holds a sentence, then any inputs, then a line naming the keys
   ("Press Enter to create feat/x, or Esc to cancel.", in Overlay 2), and "Cancel" as a
-  quiet button and the result as an outlined one (a 1 px Surface 1 border, so it reads as a
-  button whatever its words), never blue. `Enter` answers and `Esc` cancels; clicking outside
+  quiet button and the result as the popup's one primary button (Blue fill, Crust text), so
+  it reads as a button whatever its words. The buttons wrap onto a second line when the
+  result is too long for the card. `Enter` answers and `Esc` cancels; clicking outside
   cancels too. A held-down key never answers. The answering button is off while git runs.
   Every popup is drawn by one frame (`src/view/dialog/mod.rs`), and there is at most one.
   - **Delete confirmation:** deleting a branch, tag, worktree or remote asks in a popup,
