@@ -3,8 +3,8 @@
 //! runs, so the interface only draws lines and hands the chosen command back to be run.
 
 use crate::branch::{self, Doomed, Dragged, DropAction, Relation};
+use crate::commit::actions;
 use crate::conflict;
-use crate::details;
 use crate::history::Commit;
 use crate::history::refs::{RefKind, Refs};
 use crate::remote;
@@ -284,7 +284,7 @@ impl Command {
         match self {
             Self::CheckOutRef { kind, name } => branch::check_out_ref(repo, *kind, name),
             Self::CheckOutCommit { branch, oid } => {
-                details::check_out(repo, branch.as_deref(), oid)
+                actions::check_out(repo, branch.as_deref(), oid)
             }
             Self::MergeIntoCurrent { source } => branch::merge_into_current(repo, source),
             Self::Drop {
@@ -299,14 +299,14 @@ impl Command {
             },
             Self::DeleteMany { refs } => branch::delete_many(repo, refs),
             Self::CherryPick { oids } => match oids.as_slice() {
-                [oid] => details::cherry_pick(repo, oid),
-                _ => details::cherry_pick_many(repo, oids),
+                [oid] => actions::cherry_pick(repo, oid),
+                _ => actions::cherry_pick_many(repo, oids),
             },
             Self::Revert { oids, is_merge } => match oids.as_slice() {
-                [oid] => details::revert(repo, oid, *is_merge),
-                _ => details::revert_many(repo, oids),
+                [oid] => actions::revert(repo, oid, *is_merge),
+                _ => actions::revert_many(repo, oids),
             },
-            Self::Reset { oid, hard } => details::reset(repo, oid, *hard),
+            Self::Reset { oid, hard } => actions::reset(repo, oid, *hard),
             Self::RemoveWorktree { path, .. } => worktree::remove(repo, path),
             Self::UpdateSubmodule { path, .. } => submodule::update(repo, path),
             Self::UpdateSubmodules => submodule::update_all(repo),

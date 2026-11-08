@@ -1,7 +1,7 @@
 //! Uncommitted changes: what is staged, what is not, and turning the staged part into a
 //! commit.
 
-use crate::details::{self, FileChange};
+use crate::commit::details::{self, FileChange};
 use crate::ops::{self, Cancel};
 use crate::patch::{self, DiffView, FilePatch};
 use crate::text::count;

@@ -7,7 +7,8 @@ use super::parts::{
 use super::{GraphView, Notice, Status};
 use crate::theme::tokens;
 use chrono::{Local, TimeZone};
-use gitclient_core::details::{self, CommitDetails, FileChange};
+use gitclient_core::commit::actions;
+use gitclient_core::commit::details::{self, CommitDetails, FileChange};
 use gitclient_core::history::{Commit, Entry, split_subject};
 use gitclient_core::ops::{self, Cancel};
 use gitclient_core::text::{count, short_oid};
@@ -504,7 +505,7 @@ impl GraphView {
                 let (oid, branch) = (oid.clone(), branch.clone());
                 this.run_operation(
                     "Checking out",
-                    move |repo| details::check_out(repo, branch.as_deref(), &oid),
+                    move |repo| actions::check_out(repo, branch.as_deref(), &oid),
                     cx,
                 );
             })
@@ -515,7 +516,7 @@ impl GraphView {
                 let oid = oid.clone();
                 this.run_operation(
                     "Cherry-picking",
-                    move |repo| details::cherry_pick(repo, &oid),
+                    move |repo| actions::cherry_pick(repo, &oid),
                     cx,
                 );
             })
@@ -524,7 +525,7 @@ impl GraphView {
             let oid = oid.clone();
             this.run_operation(
                 "Reverting",
-                move |repo| details::revert(repo, &oid, is_merge),
+                move |repo| actions::revert(repo, &oid, is_merge),
                 cx,
             );
         });

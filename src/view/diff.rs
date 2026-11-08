@@ -4,7 +4,7 @@ use super::parts::{LineStyle, checkbox, chip, expand_tabs, file_path, line_style
 use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
 use super::{GraphView, Notice};
 use crate::theme::tokens;
-use gitclient_core::details::{self, FileChange};
+use gitclient_core::commit::details::{self, FileChange};
 use gitclient_core::patch::{DiffView, FilePatch, Line, LineKind};
 use gitclient_core::working::{self, Side};
 use gpui_kit::component::button::*;

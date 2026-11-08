@@ -9,7 +9,7 @@
 //! The caches themselves are in [`crate::cache`]; this file only says what goes in them.
 
 use super::{Cache, Config, DiskSettings, hash64};
-use crate::details::{self, CommitDetails, FileChange};
+use crate::commit::details::{self, CommitDetails, FileChange};
 use crate::ops::{self, Cancel};
 use crate::patch::{DiffView, FilePatch};
 use std::path::{Path, PathBuf};

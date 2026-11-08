@@ -3,9 +3,9 @@
 
 pub mod branch;
 pub mod cache;
+pub mod commit;
 pub mod config;
 pub mod conflict;
-pub mod details;
 pub mod history;
 pub mod identity;
 pub mod log;
