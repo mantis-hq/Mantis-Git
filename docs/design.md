@@ -152,7 +152,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     (100, 500 by default, 1000, 5000, 20000), kept as `commit_limit` in the same file. The
     newest commits by history order come first. Scrolling to within 200 rows of the end
     loads the next as many, in the same lanes, and a reload keeps what was already
-    scrolled into view. A change applies the next time a repository loads.
+    scrolled into view. When refs only moved forward, a reload reads just the new commits
+    and lays out the rest again; after a rewrite or a deleted branch it reads everything.
+    A change applies the next time a repository loads.
     Under "Cache", a tick box "Keep a cache on disk" (on by default) says that what git
     reports about commits and their file diffs is kept between runs, so a commit seen before
     opens at once. When it is on, a row of chips picks the size limit (64 MB, 256 MB by
