@@ -224,18 +224,26 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   `git worktree add` that brings it back. The main worktree, the one on show and a locked
   one stay, and the menu says why. Git refuses to remove one with uncommitted changes,
   and the app never forces it. With one working tree the section isn't drawn.
-- Submodules: when a repository has any, the sidebar lists them under "Submodules", open
-  by default, as the last section, after Stashes. A row is the submodule's path, then where it stands in
+- Submodules: the sidebar ends in a "Submodules" section pinned to its foot, under a
+  Surface 0 border, so it stays in view however long the lists above run. It is open by
+  default and always drawn: with no submodules it says "This repository has no
+  submodules." Its header ends in a quiet blue "+ Add", as Remotes does, which opens a form
+  popup ("Add a submodule") with an "Address" and a "Folder" input (left empty, git names
+  the folder after the address) and "Add submodule" as its result. It shows up to 5 rows
+  and scrolls past that. A row is the submodule's path, then where it stands in
   Overlay 2 (its short commit, `moved to <hash>`, `not downloaded` or `in conflict`), with
   a dot that says the same: Green at the commit the repository records, Yellow on another,
   Peach in conflict, Overlay 2 when not downloaded. Clicking a downloaded one opens it in
   a tab of its own, or brings its tab forward. Right-clicking opens the usual menu: "Open
   <path> in a new tab", a line that names its result ("Download lib at 1a2b3c4", "Check
   out 1a2b3c4 in lib", "Update lib"), "Update 2 submodules" when more than one needs it,
-  and "Copy path" and "Copy URL". A line that can't be used stays and says why. Checking
-  out the recorded commit in a submodule that is on another one asks first, and gives the
-  `git -C <path> checkout <hash>` that goes back. The app never forces anything. With no
-  submodules the section isn't drawn.
+  "Edit <path>" (the same form, filled in, saved with "Save <path>"; a new address is set
+  with `git submodule set-url`, a new folder moves it with `git mv`), and "Copy path" and
+  "Copy URL". Adding and editing stage the change, ready to commit, and the band says so.
+  A folder outside the repository is turned down in the popup, before git runs. A line
+  that can't be used stays and says why. Checking out the recorded commit in a submodule
+  that is on another one asks first, and gives the `git -C <path> checkout <hash>` that
+  goes back. The app never forces anything.
 - New branch: a quiet "New branch" link ends the Branches heading, and branch, tag and
   commit menus have "New branch from <name or hash>". Either opens a form popup (see
   "Popups") that says where the branch starts ("New branch, starting at main"), with a
@@ -280,7 +288,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     first press turns the key line Red and says "Press Enter again to delete." Rules for
     which is which live in core (`Weight` in `crates/core/src/menu/command.rs`). Other risky
     steps (rebase, force push, hard reset) still use the band.
-  - **Forms** ask for a few words: a new branch's name, or a remote's name and address. The
+  - **Forms** ask for a few words: a new branch's name, a remote's name and address, or a
+    submodule's address and folder. The
     sentence says what the form makes or changes, and each input sits under its section
     label, with the cursor in the first. `Tab` and `Shift Tab` move between inputs. The
     result is named for what was typed ("Create feat/x"). What can't work is said in Peach

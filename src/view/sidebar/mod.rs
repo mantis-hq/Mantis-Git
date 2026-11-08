@@ -12,7 +12,7 @@ use gitclient_core::history::refs::RefKind;
 use gitclient_core::history::spotlight::Spotlight;
 use gitclient_core::menu::form::Form;
 use gitclient_core::repo::branch::Dragged;
-use gitclient_core::repo::submodule::State as SubmoduleState;
+use gitclient_core::repo::submodule::{self, State as SubmoduleState};
 use gitclient_core::tree::branches::{self, Folder};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
@@ -80,7 +80,6 @@ enum Item {
         depth: usize,
     },
     Worktree(usize),
-    Submodule(usize),
     /// A remote that has no remote branches yet, such as one just added. Index into
     /// `remote_configs`.
     Remote(usize),
@@ -89,6 +88,9 @@ enum Item {
 
 /// Every row is this tall: a 30 px row and the 2 px gap under it.
 const ITEM_HEIGHT: Pixels = px(32.);
+/// The pinned submodules show this many rows at most, and scroll past that, so the
+/// branches above keep their room.
+const PINNED_ROWS: usize = 5;
 
 /// What a ref row needs to be drawn.
 struct RefRow {
@@ -118,6 +120,7 @@ pub(super) struct State {
     /// Folders the user closed, as `<list>/<path>`. Folders start open.
     closed_folders: Vec<String>,
     scroll: UniformListScrollHandle,
+    submodule_scroll: UniformListScrollHandle,
 }
 
 impl State {
@@ -146,7 +149,7 @@ fn toggle<T: PartialEq>(list: &mut Vec<T>, item: T) {
 }
 
 impl GraphView {
-    pub(super) fn sidebar_is_open(&self) -> bool {
+    pub fn sidebar_is_open(&self) -> bool {
         self.sidebar.open.unwrap_or(self.sidebar.window_is_wide)
     }
 
@@ -155,7 +158,7 @@ impl GraphView {
         cx.emit(SwitchWorktree(path));
     }
 
-    pub(super) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar.open = Some(!self.sidebar_is_open());
         cx.notify();
     }
@@ -342,20 +345,7 @@ impl GraphView {
         if self.sidebar.expanded.contains(&Section::Stashes) {
             items.extend((0..stashes).map(Item::Stash));
         }
-
-        // Last, since a repository seldom has them and they are rarely what one is after.
-        let modules = self.refs.submodules.len();
-        if modules > 0 {
-            let section = Section::Submodules;
-            items.push(Item::Header {
-                section,
-                title: "Submodules",
-                count: modules,
-            });
-            if self.sidebar.expanded.contains(&section) {
-                items.extend((0..modules).map(Item::Submodule));
-            }
-        }
+        // Submodules are pinned to the foot of the panel, apart from this list.
         items
     }
 
@@ -452,10 +442,6 @@ impl GraphView {
                 None => slot,
             },
             Item::Worktree(index) => match self.render_worktree_row(*index, cx) {
-                Some(row) => slot.child(row),
-                None => slot,
-            },
-            Item::Submodule(index) => match self.render_submodule_row(*index, cx) {
                 Some(row) => slot.child(row),
                 None => slot,
             },
@@ -566,7 +552,7 @@ impl GraphView {
                         .w_full()
                         .px_2()
                         .pt_3()
-                        .pb_3()
+                        .pb_2()
                         .child(
                             div()
                                 .relative()
@@ -588,8 +574,68 @@ impl GraphView {
                                 .scrollbar(&self.sidebar.scroll, ScrollbarAxis::Vertical),
                         ),
                 )
+                .child(self.render_submodules(cx))
                 .into_any_element(),
         )
+    }
+
+    /// The submodules, pinned to the foot of the panel under a border so they stay in
+    /// view however long the branches run. The header is always there, with "+ Add", and
+    /// says so in a sentence when the repository has none.
+    fn render_submodules(&self, cx: &mut Context<Self>) -> Div {
+        let theme = cx.theme();
+        let (border, muted) = (theme.border, theme.muted_foreground);
+        let section = Section::Submodules;
+        let modules = self.refs.submodules.len();
+        let body = self.sidebar.expanded.contains(&section).then(|| {
+            if modules == 0 {
+                return div()
+                    .h_flex()
+                    .h(px(30.))
+                    .px_2()
+                    .text_color(muted)
+                    .child(div().min_w_0().truncate().child(submodule::NONE))
+                    .into_any_element();
+            }
+            let shown = modules.min(PINNED_ROWS);
+            div()
+                .relative()
+                .w_full()
+                .h(ITEM_HEIGHT * shown as f32)
+                .child(
+                    uniform_list(
+                        "sidebar-submodules",
+                        modules,
+                        cx.processor(|this, range: Range<usize>, _, cx| {
+                            range
+                                .map(|index| {
+                                    let slot = div().h(ITEM_HEIGHT).flex_none();
+                                    match this.render_submodule_row(index, cx) {
+                                        Some(row) => slot.child(row),
+                                        None => slot,
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                    .track_scroll(&self.sidebar.submodule_scroll)
+                    .size_full(),
+                )
+                .when(modules > PINNED_ROWS, |list| {
+                    list.scrollbar(&self.sidebar.submodule_scroll, ScrollbarAxis::Vertical)
+                })
+                .into_any_element()
+        });
+        div()
+            .flex_none()
+            .w_full()
+            .px_2()
+            .pt_2()
+            .pb_3()
+            .border_t_1()
+            .border_color(border)
+            .child(self.render_section_header(section, "Submodules", modules, cx))
+            .children(body)
     }
 
     fn render_heading(&self, cx: &mut Context<Self>) -> Div {
@@ -833,16 +879,21 @@ impl GraphView {
     ) -> Stateful<Div> {
         let theme = cx.theme();
         let link = theme.primary;
+        let add = match section {
+            Section::Remotes => Some(("add-remote", Form::Remote { original: None })),
+            Section::Submodules => Some(("add-submodule", Form::Submodule { original: None })),
+            _ => None,
+        };
         panel_row(title, false, cx)
             .h(px(30.))
             .justify_between()
             .text_color(tokens(theme.is_dark()).subtext0)
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_section(section, cx)))
             .child(div().flex_1().child(title))
-            .when(section == Section::Remotes, |row| {
+            .when_some(add, |row, (id, form)| {
                 row.child(
                     div()
-                        .id("add-remote")
+                        .id(id)
                         .flex_none()
                         .px_1()
                         .rounded(px(4.))
@@ -850,10 +901,10 @@ impl GraphView {
                         .text_color(link)
                         .font_semibold()
                         .child("+ Add")
-                        .on_click(cx.listener(|this, _, _, cx| {
+                        .on_click(cx.listener(move |this, _, _, cx| {
                             // The header under it would otherwise fold the section.
                             cx.stop_propagation();
-                            this.open_form(Form::Remote { original: None }, cx);
+                            this.open_form(form.clone(), cx);
                         })),
                 )
             })

@@ -878,6 +878,54 @@ fn editing_a_remote_opens_a_form_that_starts_from_it_and_escape_closes_it(cx: &m
     });
 }
 
+#[gpui_kit::test]
+fn editing_a_submodule_opens_a_form_that_starts_from_it(cx: &mut TestAppContext) {
+    use gitclient_core::menu::command::Command;
+    use gitclient_core::menu::form::Form;
+    use gitclient_core::repo::submodule::{State, Submodule};
+    let (view, mut cx) = open_view(cx);
+    view.update(&mut cx, |view, cx| {
+        let mut refs = gitclient_core::history::refs::Refs::default();
+        refs.submodules = vec![Submodule {
+            name: "vendor/lib".into(),
+            path: "vendor/lib".into(),
+            folder: "/code/app/vendor/lib".into(),
+            url: Some("https://example.com/lib.git".into()),
+            recorded: "a".repeat(40),
+            head: Some("a".repeat(40)),
+            state: State::Current,
+        }];
+        view.refs = Arc::new(refs);
+
+        view.open_submodule_menu("vendor/lib", point(px(10.), px(10.)), cx);
+        let edit = view
+            .menu
+            .as_ref()
+            .unwrap()
+            .lines()
+            .iter()
+            .find_map(|line| match line {
+                gitclient_core::menu::Line::Item {
+                    command: Some(Command::Form(form)),
+                    ..
+                } => Some(form.clone()),
+                _ => None,
+            });
+        view.open_form(edit.expect("the menu edits the submodule"), cx);
+        assert_eq!(
+            view.form_values(cx),
+            Some(vec![
+                "https://example.com/lib.git".to_owned(),
+                "vendor/lib".to_owned()
+            ])
+        );
+
+        view.press_escape(cx);
+        view.open_form(Form::Submodule { original: None }, cx);
+        assert_eq!(view.form_values(cx), Some(vec![String::new(); 2]));
+    });
+}
+
 /// A view on a repository with one commit on `main`, loaded.
 fn open_repo(
     cx: &mut TestAppContext,

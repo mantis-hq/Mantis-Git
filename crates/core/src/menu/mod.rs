@@ -342,6 +342,12 @@ pub fn submodule_menu(refs: &Refs, path: &str) -> Vec<Line> {
     }
     lines.push(Line::Separator);
     lines.push(Line::item(
+        format!("Edit {name}"),
+        Command::Form(Form::Submodule {
+            original: Some(module.path.clone()),
+        }),
+    ));
+    lines.push(Line::item(
         "Copy path",
         copy(&module.folder.to_string_lossy(), "the path"),
     ));
@@ -776,11 +782,18 @@ mod tests {
                 "Open current in a new tab",
                 "Update current",
                 "Update 2 submodules",
+                "Edit current",
                 "Copy path",
                 "Copy URL",
             ]
         );
         assert!(current[2].command().unwrap().confirmation().is_none());
+        assert_eq!(
+            current[5].command(),
+            Some(&Command::Form(Form::Submodule {
+                original: Some("current".into())
+            }))
+        );
 
         let moved = submodule_menu(&refs, "moved");
         let update = moved[2].command().unwrap();
