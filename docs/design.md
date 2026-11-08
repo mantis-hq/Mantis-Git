@@ -247,6 +247,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   that can't be used stays and says why. Checking out the recorded commit in a submodule
   that is on another one asks first, and gives the `git -C <path> checkout <hash>` that
   goes back. The app never forces anything.
+- Upstream: a local branch's menu has "Set upstream of <name>", which opens a form popup
+  with one "Remote branch" input, filled with the remote branch of the same name when
+  there is one, and "Follow origin/x" as its result. A remote branch that doesn't exist is
+  turned down in the popup, and the band says how to undo it.
 - New branch: a quiet "New branch" link ends the Branches heading, and branch, tag and
   commit menus have "New branch from <name or hash>". Either opens a form popup (see
   "Popups") that says where the branch starts ("New branch, starting at main"), with a

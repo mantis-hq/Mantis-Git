@@ -358,6 +358,38 @@ pub fn create_branch(
     )))
 }
 
+/// Makes the local branch `branch` follow the remote branch `upstream` (`origin/main`).
+pub fn set_upstream(repo: &Path, branch: &str, upstream: &str) -> Result<Option<String>, String> {
+    let upstream = upstream.trim();
+    if !ops::resolves(repo, &format!("refs/remotes/{upstream}")) {
+        return Err(format!(
+            "There is no remote branch called {upstream}. Fetch first if it is new."
+        ));
+    }
+    let before = ops::run(
+        repo,
+        &[
+            "rev-parse",
+            "--abbrev-ref",
+            &format!("{branch}@{{upstream}}"),
+        ],
+    )
+    .ok()
+    .map(|name| name.trim().to_owned())
+    .filter(|name| !name.is_empty());
+    ops::run(
+        repo,
+        &["branch", &format!("--set-upstream-to={upstream}"), branch],
+    )?;
+    let undo = match before {
+        Some(before) => format!("git branch --set-upstream-to={before} {branch}"),
+        None => format!("git branch --unset-upstream {branch}"),
+    };
+    Ok(Some(format!(
+        "{branch} now follows {upstream}. To undo it, run `{undo}`."
+    )))
+}
+
 pub fn delete_tag(repo: &Path, name: &str) -> Result<Option<String>, String> {
     ops::run(repo, &["tag", "-d", name]).map(|_| Some(format!("Deleted the tag {name}.")))
 }
@@ -405,6 +437,24 @@ mod tests {
         // Without a start it grows from where you are.
         create_branch(repo.path(), "next", None).unwrap();
         assert_eq!(repo.git(&["rev-parse", "next"]), side);
+    }
+
+    #[test]
+    fn a_branch_can_follow_a_remote_branch() {
+        let repo = ahead();
+        repo.git(&["remote", "add", "origin", "/nowhere"]);
+        repo.git(&["update-ref", "refs/remotes/origin/side", "side"]);
+        let said = set_upstream(repo.path(), "side", " origin/side ")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            repo.git(&["rev-parse", "--abbrev-ref", "side@{upstream}"])
+                .trim(),
+            "origin/side"
+        );
+        assert!(said.contains("--unset-upstream side"), "{said}");
+        let missing = set_upstream(repo.path(), "side", "origin/nope").unwrap_err();
+        assert!(missing.contains("no remote branch"), "{missing}");
     }
 
     #[test]

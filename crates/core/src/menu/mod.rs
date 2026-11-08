@@ -126,6 +126,14 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
             label: name.clone(),
         }),
     ));
+    if kind == RefKind::Branch {
+        lines.push(Line::item(
+            format!("Set upstream of {name}"),
+            Command::Form(Form::Upstream {
+                branch: name.clone(),
+            }),
+        ));
+    }
     lines.push(Line::Separator);
     lines.push(Line::item("Copy name", copy(&name, "the name")));
 
@@ -1012,6 +1020,7 @@ mod tests {
                 "Merge feat/x into main",
                 "Rebase main onto feat/x",
                 "New branch from feat/x",
+                "Set upstream of feat/x",
                 "Copy name",
                 "Delete branch feat/x"
             ]
@@ -1029,6 +1038,7 @@ mod tests {
             [
                 "main is already checked out",
                 "New branch from main",
+                "Set upstream of main",
                 "Copy name"
             ]
         );
