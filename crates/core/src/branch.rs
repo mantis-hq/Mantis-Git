@@ -3,7 +3,7 @@
 //! that the menu only offers what makes sense for how the two histories relate.
 
 use crate::conflict;
-use crate::git::RefKind;
+use crate::history::refs::RefKind;
 use crate::ops::{self, git};
 use crate::text::short_oid;
 use std::path::Path;
@@ -226,7 +226,7 @@ pub fn delete_warning(kind: RefKind, name: &str, tip: Option<&str>) -> String {
 /// Whether deleting a ref loses commits that nothing else keeps: a local branch the default
 /// branch doesn't contain, with commits its remote branch doesn't have either (or none).
 /// A tag, a merged branch and a pushed branch can all be brought back from elsewhere.
-pub fn loses_commits(refs: &crate::git::Refs, kind: RefKind, name: &str) -> bool {
+pub fn loses_commits(refs: &crate::history::refs::Refs, kind: RefKind, name: &str) -> bool {
     if kind != RefKind::Branch {
         return false;
     }

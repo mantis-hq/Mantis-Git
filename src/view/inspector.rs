@@ -8,7 +8,7 @@ use super::{GraphView, Notice, Status};
 use crate::theme::tokens;
 use chrono::{Local, TimeZone};
 use gitclient_core::details::{self, CommitDetails, FileChange};
-use gitclient_core::git::{Commit, Entry, split_subject};
+use gitclient_core::history::{Commit, Entry, split_subject};
 use gitclient_core::ops::{self, Cancel};
 use gitclient_core::text::{count, short_oid};
 use gitclient_core::tree::{self, FileView, TreeRow};

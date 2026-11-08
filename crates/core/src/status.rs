@@ -1,6 +1,6 @@
 //! Where a repository stands, and the one thing to do next.
 
-use crate::git::pick_default_branch;
+use crate::history::refs::pick_default_branch;
 use crate::ops;
 use crate::text::{count, short_oid};
 use std::path::Path;

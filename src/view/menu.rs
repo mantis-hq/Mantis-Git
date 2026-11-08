@@ -7,7 +7,7 @@ use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
 use super::{GraphView, OpenWorktreeInTab, SwitchWorktree};
 use crate::theme::selected_row;
 use gitclient_core::branch::{self, Dragged, Relation};
-use gitclient_core::git::RefKind;
+use gitclient_core::history::refs::RefKind;
 use gitclient_core::menu::{self, Command, Line};
 use gitclient_core::working::Side;
 use gpui_kit::component::*;

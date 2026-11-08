@@ -1,7 +1,7 @@
 //! Works out what stays lit when branches are spotlighted. One click picks a branch, and
 //! picking more adds to it.
 
-use crate::git::Entry;
+use crate::history::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -90,8 +90,8 @@ impl Spotlight {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::Commit;
-    use crate::graph::GraphBuilder;
+    use crate::history::Commit;
+    use crate::history::lanes::GraphBuilder;
 
     fn entries(commits: &[(&str, &[&str])]) -> Vec<Entry> {
         let mut builder = GraphBuilder::new();

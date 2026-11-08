@@ -1,7 +1,7 @@
 //! Which commits are selected. One is the main selection, which the inspector shows, and
 //! the rest are marked with ctrl-click or shift-click.
 
-use crate::git::{Commit, Entry};
+use crate::history::{Commit, Entry};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -84,7 +84,7 @@ impl Selection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::GraphBuilder;
+    use crate::history::lanes::GraphBuilder;
 
     /// Linear history, newest first. The first row stands in for the working changes.
     fn entries(count: usize) -> Vec<Entry> {

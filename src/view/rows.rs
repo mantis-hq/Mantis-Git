@@ -6,9 +6,10 @@ use super::parts::{TEXT_BODY, TEXT_CHIP};
 use crate::theme::{lane_color, selected_row, tokens};
 use chrono::{Datelike, Local, TimeZone, Utc};
 use gitclient_core::branch::Dragged;
-use gitclient_core::git::{Chip, Commit, RefKind, split_subject};
-use gitclient_core::graph::{Lane, Row};
-use gitclient_core::spotlight::Spotlight;
+use gitclient_core::history::lanes::{Lane, Row};
+use gitclient_core::history::refs::{Chip, RefKind};
+use gitclient_core::history::spotlight::Spotlight;
+use gitclient_core::history::{Commit, split_subject};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -598,8 +599,8 @@ fn paint_circle(x: Pixels, y: Pixels, radius: f32, color: Hsla, window: &mut Win
 mod tests {
     use super::{MAX_VISIBLE_LANES, format_when, is_clipped};
     use chrono::{Local, TimeZone};
-    use gitclient_core::git::Commit;
-    use gitclient_core::graph::GraphBuilder;
+    use gitclient_core::history::Commit;
+    use gitclient_core::history::lanes::GraphBuilder;
     use std::sync::Arc;
 
     #[test]

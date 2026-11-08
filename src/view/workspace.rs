@@ -619,7 +619,7 @@ mod tests {
             main.display(),
             linked.display()
         );
-        let mut refs = gitclient_core::git::Refs::default();
+        let mut refs = gitclient_core::history::refs::Refs::default();
         refs.worktrees = gitclient_core::worktree::parse(&listing);
         refs.worktrees[0].is_current = true;
         let main = main.to_owned();
@@ -690,7 +690,7 @@ mod tests {
             head: Some("a".repeat(40)),
             state: gitclient_core::submodule::State::Current,
         };
-        let mut refs = gitclient_core::git::Refs::default();
+        let mut refs = gitclient_core::history::refs::Refs::default();
         refs.submodules = vec![module];
         let main = main.path().to_owned();
         tab.update(&mut cx, |tab, _| {

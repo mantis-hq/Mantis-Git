@@ -5,7 +5,8 @@
 use crate::branch::{self, Doomed, Dragged, DropAction, Relation};
 use crate::conflict;
 use crate::details;
-use crate::git::{Commit, RefKind, Refs};
+use crate::history::Commit;
+use crate::history::refs::{RefKind, Refs};
 use crate::remote;
 use crate::submodule;
 use crate::text::{count, short_oid};
@@ -715,7 +716,7 @@ pub fn refs_menu(refs: &Refs, targets: &[Dragged]) -> Vec<Line> {
             .map(|target| Doomed {
                 kind: target.kind,
                 name: target.name.clone(),
-                tip: crate::picks::tip_of(refs, target).map(|tip| tip.to_string()),
+                tip: crate::history::picks::tip_of(refs, target).map(|tip| tip.to_string()),
                 at_risk: branch::loses_commits(refs, target.kind, &target.name),
             })
             .collect();
@@ -948,8 +949,8 @@ mod tests {
         let lines = folder_menu("src", Vec::new(), None);
         assert_eq!(shown_lines(&lines), ["src/", "Copy path"]);
     }
-    use crate::git::{Branch, NamedRef};
-    use crate::graph::LaneColor;
+    use crate::history::lanes::LaneColor;
+    use crate::history::refs::{Branch, NamedRef};
 
     fn commit(oid: &str, parents: &[&str]) -> Commit {
         Commit {

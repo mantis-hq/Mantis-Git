@@ -1,7 +1,7 @@
 //! The app's look, per `docs/design.md`: Catppuccin colours, the bundled Maple Mono, and
 //! following the OS appearance.
 
-use gitclient_core::graph::LaneColor;
+use gitclient_core::history::lanes::LaneColor;
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeRegistry};
 use gpui_kit::{App, Hsla, Window, rgb};
 use std::borrow::Cow;

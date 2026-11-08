@@ -76,8 +76,10 @@ impl GraphView {
     fn render_sentence(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let current = theme.primary;
-        let other =
-            crate::theme::lane_color(gitclient_core::graph::LaneColor::Branch(0), theme.is_dark());
+        let other = crate::theme::lane_color(
+            gitclient_core::history::lanes::LaneColor::Branch(0),
+            theme.is_dark(),
+        );
         let spans = self.refs.status.sentence().into_iter().map(|span| {
             let (text, color) = match span {
                 Span::Text(text) => (text, None),

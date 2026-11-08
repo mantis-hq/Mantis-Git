@@ -2,7 +2,7 @@
 //! their histories, and the menu acts on all of them.
 
 use crate::branch::Dragged;
-use crate::git::{RefKind, Refs};
+use crate::history::refs::{RefKind, Refs};
 use std::sync::Arc;
 
 /// How a click changes the picks.

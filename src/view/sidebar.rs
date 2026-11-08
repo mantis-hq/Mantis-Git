@@ -7,9 +7,9 @@ use super::{GraphView, OpenWorktreeInTab, SwitchWorktree};
 use crate::theme::{lane_color, tokens};
 use gitclient_core::branch;
 use gitclient_core::branch::Dragged;
-use gitclient_core::git::RefKind;
-use gitclient_core::picks::{Click, Picks, tip_of};
-use gitclient_core::spotlight::Spotlight;
+use gitclient_core::history::picks::{Click, Picks, tip_of};
+use gitclient_core::history::refs::RefKind;
+use gitclient_core::history::spotlight::Spotlight;
 use gitclient_core::submodule::State as SubmoduleState;
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -601,7 +601,7 @@ impl GraphView {
         section: Section,
         title: &'static str,
         list: RefList,
-        refs: &[gitclient_core::git::NamedRef],
+        refs: &[gitclient_core::history::refs::NamedRef],
         items: &mut Vec<Item>,
     ) {
         items.push(Item::Header {

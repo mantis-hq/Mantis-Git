@@ -21,8 +21,9 @@ pub use settings::{OpenSettings, Settings, open as open_settings, should_quit};
 pub use workspace::Workspace;
 
 use gitclient_core::caches::{self, Caches};
-use gitclient_core::git::{self, Entry, LoadEvent, Refs};
-use gitclient_core::selection::Selection;
+use gitclient_core::history::refs::Refs;
+use gitclient_core::history::selection::Selection;
+use gitclient_core::history::{self, Entry, LoadEvent};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
@@ -263,7 +264,7 @@ impl GraphView {
         self.pending_refs = None;
         self.refresh_fingerprint(cx);
         let limit = self.commit_limit();
-        let events = git::spawn_load(repo, limit);
+        let events = history::spawn_load(repo, limit);
         self.load_task = Some(cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 if this.update(cx, |this, cx| this.apply(event, cx)).is_err() {
@@ -304,7 +305,7 @@ impl GraphView {
         }
         let current = self.refs.fingerprint().to_owned();
         Self::spawn_blocking(
-            move || git::read_refs(&repo),
+            move || history::refs::read_refs(&repo),
             move |this, refs, cx| {
                 let moved = !matches!(&refs, Ok(refs) if refs.fingerprint() == current);
                 if moved {
@@ -685,8 +686,9 @@ mod tests {
     // Not `super::*`: that would bring in GPUI's `test` macro, which shadows Rust's.
     use super::{Entry, GraphView, LoadEvent, Status, bind_keys};
     use gitclient_core::branch::Dragged;
-    use gitclient_core::git::{Commit, RefKind};
-    use gitclient_core::graph::GraphBuilder;
+    use gitclient_core::history::Commit;
+    use gitclient_core::history::lanes::GraphBuilder;
+    use gitclient_core::history::refs::RefKind;
     use gpui_kit::{Entity, Modifiers, TestAppContext, VisualTestContext, point, px};
     use std::sync::Arc;
 
@@ -770,7 +772,7 @@ mod tests {
     fn load_with(
         view: &Entity<GraphView>,
         names: &[&str],
-        refs: Arc<gitclient_core::git::Refs>,
+        refs: Arc<gitclient_core::history::refs::Refs>,
         cx: &mut VisualTestContext,
     ) {
         view.update(cx, |view, cx| {
@@ -988,11 +990,11 @@ mod tests {
     }
 
     /// Refs for branches named like the commits they point at.
-    fn branches(names: &[&str]) -> Arc<gitclient_core::git::Refs> {
-        let mut refs = gitclient_core::git::Refs::default();
+    fn branches(names: &[&str]) -> Arc<gitclient_core::history::refs::Refs> {
+        let mut refs = gitclient_core::history::refs::Refs::default();
         refs.branches = names
             .iter()
-            .map(|name| gitclient_core::git::Branch {
+            .map(|name| gitclient_core::history::refs::Branch {
                 name: (*name).into(),
                 tip: (*name).into(),
                 color: Default::default(),
@@ -1468,7 +1470,7 @@ mod tests {
     ) {
         let (view, mut cx) = open_view(cx);
         view.update(&mut cx, |view, cx| {
-            let mut refs = gitclient_core::git::Refs::default();
+            let mut refs = gitclient_core::history::refs::Refs::default();
             refs.remote_configs = vec![gitclient_core::remote::Remote {
                 name: "origin".into(),
                 url: "git@host:a.git".into(),
