@@ -206,7 +206,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   colour at the graph's right edge, so no commit disappears.
 - Your branch line is blue down to where it forks. Shared history below that takes
   `main`'s colour.
-- Clicking a branch spotlights it: everything outside its history fades to about 28%.
+- Clicking a branch spotlights it: everything outside its history fades to about 28%,
+  and clicking it again brings everything back.
   `Ctrl`-click adds or removes branches, `Shift`-click picks the range down from the last
   one, and the graph lights all of their histories. Right-clicking one of several picked
   refs opens a menu for all of them ("Delete 3 branches"), which asks first and lists the
