@@ -12,6 +12,7 @@ use gitclient_core::history::refs::RefKind;
 use gitclient_core::history::spotlight::Spotlight;
 use gitclient_core::menu::form::Form;
 use gitclient_core::repo::branch::Dragged;
+use gitclient_core::repo::stash::{self, Picks as StashPicks};
 use gitclient_core::repo::submodule::State as SubmoduleState;
 use gitclient_core::tree::branches::{self, Folder};
 use gpui_kit::component::button::*;
@@ -114,6 +115,8 @@ pub(super) struct State {
     pub(super) spotlight: Option<Arc<Spotlight>>,
     /// The refs picked in the list, which `spotlight` is worked out from.
     pub(super) picks: Picks,
+    /// The stashes picked in the list, by their number.
+    stash_picks: StashPicks,
     expanded: Vec<Section>,
     /// Folders the user closed, as `<list>/<path>`. Folders start open.
     closed_folders: Vec<String>,
@@ -202,6 +205,9 @@ impl GraphView {
     /// Refs or history changed, so the picks and their lit commits need working out again.
     pub(super) fn refresh_spotlight(&mut self) {
         self.sidebar.picks.retain_existing(&self.refs);
+        self.sidebar
+            .stash_picks
+            .retain_below(self.refs.stashes.len());
         self.update_spotlight();
     }
 
@@ -463,19 +469,97 @@ impl GraphView {
                 Some(row) => slot.child(row),
                 None => slot,
             },
-            Item::Stash(index) => {
-                let subtext = tokens(cx.theme().is_dark()).subtext0;
-                let stash = self.refs.stashes.get(*index).cloned().unwrap_or_default();
-                slot.child(
-                    div()
-                        .h_flex()
-                        .h(px(30.))
-                        .px_2()
-                        .text_color(subtext)
-                        .child(div().min_w_0().truncate().child(stash)),
-                )
-            }
+            Item::Stash(index) => match self.render_stash_row(*index, cx) {
+                Some(row) => slot.child(row),
+                None => slot,
+            },
         }
+    }
+
+    /// A click on a stash. Plain picks it alone, `Ctrl` adds or removes it and `Shift`
+    /// picks everything down from the last one.
+    fn pick_stash(&mut self, index: usize, modifiers: Modifiers, cx: &mut Context<Self>) {
+        let click = if modifiers.shift {
+            stash::Click::Range
+        } else if modifiers.secondary(cx) {
+            stash::Click::Add
+        } else {
+            stash::Click::Plain
+        };
+        self.sidebar.stash_picks.click(index, click);
+        cx.notify();
+    }
+
+    /// One stash: what it says, then the branch it was made on. Right-clicking opens a menu
+    /// for every stash picked, or for this one when it isn't among them.
+    fn render_stash_row(&self, index: usize, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let subject = self.refs.stashes.get(index)?;
+        let theme = cx.theme();
+        let (muted, text, strong) = (
+            theme.muted_foreground,
+            theme.secondary_foreground,
+            theme.foreground,
+        );
+        let on = self.sidebar.stash_picks.contains(index);
+        let title = stash::title(subject).to_owned();
+        let branch = stash::branch(subject).map(str::to_owned);
+        Some(
+            panel_row(("stash", index), on, cx)
+                .h(px(30.))
+                .pl(indent(0))
+                .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                    this.pick_stash(index, event.modifiers(), cx)
+                }))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.open_stash_menu(index, event.position, cx);
+                    }),
+                )
+                .child(
+                    div()
+                        .w(px(22.))
+                        .flex_none()
+                        .text_size(TEXT_CHIP)
+                        .text_color(muted)
+                        .child(index.to_string()),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(if on { strong } else { text })
+                        .child(title),
+                )
+                .when_some(branch, |row, branch| {
+                    row.child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(TEXT_CHIP)
+                            .text_color(muted)
+                            .child(branch),
+                    )
+                }),
+        )
+    }
+
+    pub(super) fn open_stash_menu(
+        &mut self,
+        index: usize,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        // A right-click on one of several picked stashes acts on all of them; one outside
+        // them starts over.
+        if !self.sidebar.stash_picks.contains(index) {
+            self.sidebar.stash_picks.click(index, stash::Click::Plain);
+        }
+        let picked = self.sidebar.stash_picks.indexes();
+        let lines = gitclient_core::menu::stash_menu(&self.refs, &picked);
+        self.show_menu(position, lines, cx);
     }
 
     fn ref_row(

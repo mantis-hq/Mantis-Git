@@ -7,6 +7,7 @@ use crate::history::refs::RefKind;
 use crate::repo::branch::{self, Doomed, DropAction};
 use crate::repo::conflict;
 use crate::repo::remote;
+use crate::repo::stash;
 use crate::repo::submodule;
 use crate::repo::worktree;
 use crate::text::short_oid;
@@ -114,6 +115,20 @@ pub enum Command {
         path: String,
         side: conflict::Side,
     },
+    /// Sets what is staged aside. `message` names the stash, when one was typed.
+    StashStaged {
+        staged: usize,
+        message: Option<String>,
+    },
+    /// Applies stashes by their number and keeps them.
+    ApplyStashes {
+        indexes: Vec<usize>,
+    },
+    DeleteStashes {
+        indexes: Vec<usize>,
+        /// What deleting them does, worked out when the menu opened.
+        warning: String,
+    },
     /// Handled by the interface, which owns the clipboard.
     Copy {
         text: String,
@@ -196,6 +211,9 @@ impl Command {
             Self::UpdateSubmodule { .. } | Self::UpdateSubmodules => "Updating",
             Self::RemoveRemote { .. } => "Removing the remote",
             Self::Copy { .. } => "Copying",
+            Self::StashStaged { .. } => "Stashing",
+            Self::ApplyStashes { .. } => "Applying",
+            Self::DeleteStashes { .. } => "Deleting",
             Self::ShowFile { .. } | Self::ShowConflict { .. } => "Opening",
             Self::UseSide { .. } => "Resolving",
             Self::StageFiles { unstage: false, .. } => "Staging",
@@ -243,6 +261,11 @@ impl Command {
                 message: warning.clone(),
                 action: "Check out",
                 weight: Weight::Banner,
+            }),
+            Self::DeleteStashes { warning, .. } => Some(Confirmation {
+                message: warning.clone(),
+                action: "Delete",
+                weight: Weight::Popup,
             }),
             Self::DeleteMany { refs } => Some(Confirmation {
                 message: branch::delete_many_warning(refs),
@@ -305,6 +328,11 @@ impl Command {
             Self::UpdateSubmodule { path, .. } => submodule::update(repo, path),
             Self::UpdateSubmodules => submodule::update_all(repo),
             Self::RemoveRemote { name, .. } => remote::remove(repo, name),
+            Self::StashStaged { staged, message } => {
+                stash::push_staged(repo, *staged, message.as_deref())
+            }
+            Self::ApplyStashes { indexes } => stash::apply_many(repo, indexes),
+            Self::DeleteStashes { indexes, .. } => stash::drop_many(repo, indexes),
             Self::SwitchWorktree { .. }
             | Self::OpenWorktreeInTab { .. }
             | Self::OpenSubmoduleInTab { .. }

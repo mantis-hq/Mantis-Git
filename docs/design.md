@@ -338,6 +338,18 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   It commits exactly what is staged. After a commit the form empties, and the band under the
   header says how to undo it. If a hook refuses, the message stays. The form takes at most
   42% of the inspector and scrolls past that, and each list keeps at least 110 px.
+  A quiet "Stash 2 files" button sits beside the blue one and runs `git stash push --staged`,
+  so only what is staged is set aside and unstaged changes stay. A typed summary names the
+  stash. The band says how to bring it back. When the repository has stashes, a "Stashes"
+  label under the form lists the newest three, each with a quiet "Apply", and says how many
+  more the sidebar holds.
+- **Stashes:** the sidebar lists them under "Stashes", each row its number, what it says and
+  the branch it was made on in Overlay 2. They pick like branches: a click picks one,
+  `Ctrl`-click adds or removes one, `Shift`-click picks the run from the last. Right-clicking
+  opens a menu for every picked stash, or the one under the pointer when it isn't picked:
+  "Apply 3 stashes" (applies them and keeps them, oldest first, stopping at the first git
+  can't apply), "Copy names", and in red "Delete 3 stashes", which asks first. The band
+  after a delete gives the `git stash store <hash>` that brings each one back.
 - **File lists:** the inspector's lists of a commit's (or the working changes') files share
   one choice. Its header always holds two chips, "List" (every file by its path, the
   default) and "Tree" (files grouped by folder), the picked one with a tick. A folder row

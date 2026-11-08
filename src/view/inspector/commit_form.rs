@@ -3,6 +3,8 @@
 use crate::theme::tokens;
 use crate::view::parts::{TEXT_CHIP, TEXT_SMALL, checkbox, section_label};
 use crate::view::{GraphView, Notice};
+use gitclient_core::menu::command::Command;
+use gitclient_core::repo::stash;
 use gitclient_core::settings::state::{self, AppState};
 use gitclient_core::tree::FileView;
 use gitclient_core::working;
@@ -16,6 +18,8 @@ use gpui_kit::*;
 use std::path::PathBuf;
 
 const SUBJECT_LIMIT: usize = 72;
+/// How many stashes the form lists before sending the rest to the sidebar.
+const STASHES_SHOWN: usize = 3;
 
 #[derive(Default)]
 pub(in crate::view) struct State {
@@ -120,6 +124,16 @@ impl GraphView {
             move |repo| working::commit(repo, &message).map(|_| Some(notice)),
             cx,
         );
+    }
+
+    /// Sets what is staged aside. A typed summary names the stash.
+    fn stash_staged(&mut self, cx: &mut Context<Self>) {
+        let staged = self.staged_count();
+        if staged == 0 || self.busy.is_some() {
+            return;
+        }
+        let message = Some(self.subject_text(cx)).filter(|text| !text.trim().is_empty());
+        self.run_command(Command::StashStaged { staged, message }, cx);
     }
 
     /// Empties the form once a commit has landed. Until then the message stays, so that a
@@ -233,6 +247,13 @@ impl GraphView {
             )
             .when(!collapsed, |row| {
                 row.child(
+                    Button::new("stash-staged")
+                        .ghost()
+                        .label(stash::push_label(staged))
+                        .disabled(staged == 0 || self.busy.is_some())
+                        .on_click(cx.listener(|this, _, _, cx| this.stash_staged(cx))),
+                )
+                .child(
                     Button::new("commit")
                         .primary()
                         .label(message::commit_label(staged))
@@ -303,6 +324,67 @@ impl GraphView {
             .gap_2()
             .child(heading)
             .when(!collapsed, |root| root.child(body))
+            .when(!collapsed && !self.refs.stashes.is_empty(), |root| {
+                root.child(self.render_stash_list(cx))
+            })
+    }
+
+    /// The newest stashes under the form, each with a button that applies it. The sidebar
+    /// holds all of them, and deletes.
+    fn render_stash_list(&self, cx: &mut Context<Self>) -> Div {
+        let theme = cx.theme();
+        let (muted, quiet) = (theme.muted_foreground, theme.secondary_foreground);
+        let total = self.refs.stashes.len();
+        let rows: Vec<_> = self
+            .refs
+            .stashes
+            .iter()
+            .take(STASHES_SHOWN)
+            .enumerate()
+            .map(|(index, subject)| {
+                div()
+                    .h_flex()
+                    .h(px(26.))
+                    .gap_2()
+                    .text_size(TEXT_SMALL)
+                    .text_color(quiet)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(stash::title(subject).to_owned()),
+                    )
+                    .child(
+                        Button::new(("apply-stash", index))
+                            .ghost()
+                            .small()
+                            .label("Apply")
+                            .disabled(self.busy.is_some())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.run_command(
+                                    Command::ApplyStashes {
+                                        indexes: vec![index],
+                                    },
+                                    cx,
+                                )
+                            })),
+                    )
+            })
+            .collect();
+        div()
+            .v_flex()
+            .gap_1()
+            .child(section_label(muted).child(format!("Stashes · {total}")))
+            .children(rows)
+            .when(total > STASHES_SHOWN, |list| {
+                list.child(
+                    div()
+                        .text_size(TEXT_CHIP)
+                        .text_color(muted)
+                        .child(format!("{} more in the sidebar", total - STASHES_SHOWN)),
+                )
+            })
     }
 }
 
