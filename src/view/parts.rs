@@ -11,6 +11,29 @@ use std::time::Duration;
 
 const TAB: &str = "    ";
 
+/// Marks for a scrollbar's track: each run of rows, as (first row, rows, colour), drawn at
+/// its place among `total` rows. Add them to the list's container before its scrollbar, which
+/// then stays on top of them.
+pub(super) fn scroll_marks(
+    runs: impl IntoIterator<Item = (usize, usize, Hsla)>,
+    total: usize,
+) -> Vec<Div> {
+    let total = total.max(1) as f32;
+    runs.into_iter()
+        .map(|(start, rows, color)| {
+            div()
+                .absolute()
+                .right(px(2.))
+                .w(px(4.))
+                .top(relative(start as f32 / total))
+                .h(relative(rows as f32 / total))
+                .min_h(px(2.))
+                .rounded(px(1.))
+                .bg(color)
+        })
+        .collect()
+}
+
 /// A small solid label such as "Rebase paused", in the colour that says what it means.
 pub(super) fn pill(label: &str, color: Hsla, cx: &App) -> Div {
     div()

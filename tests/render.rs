@@ -274,7 +274,10 @@ mod render {
     fn assert_conflict_screen_opens() {
         let repo = Repo::new();
         let path = repo.path();
-        let write = |text: &str| repo.write("parser.rs", text);
+        // Unchanged lines around the conflict, so the context shows and the whole file is long.
+        let above: String = (1..=30).map(|n| format!("// helper {n}\n")).collect();
+        let below: String = (1..=30).map(|n| format!("// rule {n}\n")).collect();
+        let write = |text: &str| repo.write("parser.rs", &format!("{above}{text}{below}"));
         write("fn parse(input: &str) {\n    input.trim();\n}\n");
         commit(path, "Add the parser");
         git(path, &["checkout", "-q", "-b", "feat/parser"]);
@@ -309,6 +312,23 @@ mod render {
             std::thread::sleep(Duration::from_millis(10));
         }
         capture(&mut cx, handle, "resolver");
+
+        // The same setting as a diff's: the whole file instead of only the changes.
+        cx.update_window(handle, |_, _, cx| {
+            view.update(cx, |view, cx| {
+                let whole = gitclient_core::patch::DiffView {
+                    whole_file: true,
+                    ..Default::default()
+                };
+                view.set_diff_view(whole, cx);
+            });
+        })
+        .unwrap();
+        for _ in 0..50 {
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        capture(&mut cx, handle, "resolver-whole");
     }
 
     /// The dock over a loaded repository: the log with the commands that loaded it, then a

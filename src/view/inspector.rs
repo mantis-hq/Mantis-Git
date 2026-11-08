@@ -196,19 +196,24 @@ impl GraphView {
             return;
         };
         Self::spawn_blocking(
-            move || working::read(&repo),
-            move |this, changes, cx| {
+            move || {
+                // Counting the lines of every patch is work for this thread, not the window's.
+                working::read(&repo).map(|changes| {
+                    let details = CommitDetails {
+                        oid: WORKING_ID.into(),
+                        body: String::new(),
+                        files: changes.all().map(WorkingFile::change).collect(),
+                    };
+                    (changes, details)
+                })
+            },
+            move |this, read, cx| {
                 if !this.working_row_is_selected() {
                     return;
                 }
-                let Ok(changes) = changes else {
+                let Ok((changes, details)) = read else {
                     this.inspector.working = None;
                     return cx.notify();
-                };
-                let details = CommitDetails {
-                    oid: WORKING_ID.into(),
-                    body: String::new(),
-                    files: changes.all().map(WorkingFile::change).collect(),
                 };
                 this.inspector.working = Some(Working {
                     changes,

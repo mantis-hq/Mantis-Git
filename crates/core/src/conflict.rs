@@ -148,6 +148,24 @@ impl Progress {
             .collect()
     }
 
+    /// A file's text cut into what both sides agree on and what they fight over, in order,
+    /// with each conflict's sides put in the order mine, other.
+    pub fn pieces(&self, text: &str) -> Vec<Piece> {
+        split_conflicts(text)
+            .into_iter()
+            .map(|segment| match segment {
+                Segment::Text(text) => Piece::Text(text.to_owned()),
+                Segment::Conflict { first, second } => {
+                    let (mine, other) = self.by_side(first, second);
+                    Piece::Conflict {
+                        mine: mine.to_owned(),
+                        other: other.to_owned(),
+                    }
+                }
+            })
+            .collect()
+    }
+
     /// The files with decisions to make, in the order their first decision comes.
     pub fn files(&self) -> Vec<ConflictFile> {
         let mut files: Vec<ConflictFile> = Vec::new();
@@ -452,6 +470,13 @@ fn whole_file_sides(repo: &Path, path: &str, progress: &Progress) -> (String, St
         describe(mine, &progress.mine),
         describe(other, &progress.other),
     )
+}
+
+/// A part of a conflicted file: text both sides agree on, or a conflict.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Piece {
+    Text(String),
+    Conflict { mine: String, other: String },
 }
 
 /// What the resolver says about a file's result, given how many conflicts it still holds.
@@ -849,6 +874,30 @@ mod tests {
         let open = progress.open_chunks("f", &by_hand);
         assert!(open[0].is_none());
         assert!(open[1].is_some());
+    }
+
+    #[test]
+    fn a_file_is_cut_into_agreed_text_and_conflicts_with_the_sides_in_order() {
+        let (mut progress, text) = two_conflicts();
+        let pieces = progress.pieces(&text);
+        assert_eq!(pieces.len(), 5);
+        assert_eq!(pieces[0], Piece::Text("a\n".to_owned()));
+        assert_eq!(
+            pieces[1],
+            Piece::Conflict {
+                mine: "m1\n".to_owned(),
+                other: "o1\n".to_owned()
+            }
+        );
+        // In a rebase git writes the sides the other way round.
+        progress.mine_is_second = true;
+        assert_eq!(
+            progress.pieces(&text)[1],
+            Piece::Conflict {
+                mine: "o1\n".to_owned(),
+                other: "m1\n".to_owned()
+            }
+        );
     }
 
     #[test]
