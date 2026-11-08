@@ -9,7 +9,7 @@ use crate::history::Commit;
 use crate::history::refs::{RefKind, Refs};
 use crate::repo::branch::{self, Doomed, Dragged, Relation};
 use crate::repo::conflict;
-use crate::repo::forge::Site;
+use crate::repo::forge::{self, Forge, Hosting, Site};
 use crate::repo::remote;
 use crate::repo::stash;
 use crate::repo::submodule;
@@ -20,6 +20,27 @@ use command::Command;
 use form::Form;
 use std::path::Path;
 
+/// A small picture that starts a line, saying what the line is about. The interface draws
+/// it, since this crate knows nothing of icons.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Glyph {
+    GitHub,
+    GitLab,
+    Gitea,
+    /// A question: what the line does depends on something that isn't known.
+    Unknown,
+}
+
+impl From<Forge> for Glyph {
+    fn from(forge: Forge) -> Self {
+        match forge {
+            Forge::GitHub => Self::GitHub,
+            Forge::GitLab => Self::GitLab,
+            Forge::Gitea => Self::Gitea,
+        }
+    }
+}
+
 /// One line of a menu.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Line {
@@ -29,6 +50,8 @@ pub enum Line {
         command: Option<Command>,
         /// Drawn in red, for what removes something.
         danger: bool,
+        /// Drawn before the label.
+        glyph: Option<Glyph>,
     },
     /// A quiet line that says what the lines below it apply to.
     Heading(String),
@@ -41,6 +64,7 @@ impl Line {
             label: label.into(),
             command: Some(command),
             danger: false,
+            glyph: None,
         }
     }
 
@@ -49,6 +73,7 @@ impl Line {
             label: label.into(),
             command: None,
             danger: false,
+            glyph: None,
         }
     }
 
@@ -57,6 +82,20 @@ impl Line {
             *danger = true;
         }
         self
+    }
+
+    fn with_glyph(mut self, picture: impl Into<Glyph>) -> Self {
+        if let Self::Item { glyph, .. } = &mut self {
+            *glyph = Some(picture.into());
+        }
+        self
+    }
+
+    pub fn glyph(&self) -> Option<Glyph> {
+        match self {
+            Self::Item { glyph, .. } => *glyph,
+            _ => None,
+        }
     }
 
     pub fn command(&self) -> Option<&Command> {
@@ -705,52 +744,56 @@ pub fn request_drop_menu(
     target: &Dragged,
     relation: Result<Relation, String>,
 ) -> Vec<Line> {
-    let heading = Line::Heading(format!("{} onto {}", source.name, target.name));
-    let said = |message: String| vec![heading.clone(), Line::unavailable(message)];
-
     let remotes = &refs.remote_configs;
     let (Some((from, head)), Some((onto, base))) = (
         remote::split_branch(remotes, &source.name),
         remote::split_branch(remotes, &target.name),
     ) else {
-        return said("These branches aren't on a remote this repository knows.".to_owned());
+        return vec![
+            Line::Heading(format!("{} onto {}", source.name, target.name)),
+            Line::unavailable("These branches aren't on a known remote."),
+        ];
     };
+    let heading = Line::Heading(format!("{head} onto {base}"));
+    let said = |message: String| vec![heading.clone(), Line::unavailable(message)];
     if from.name != onto.name {
-        return said(format!(
-            "{} and {} are on different remotes, and a request between two repositories \
-             isn't supported yet.",
-            source.name, target.name
-        ));
+        return said("Branches on different remotes can't be proposed yet.".to_owned());
     }
-    let Some(site) = Site::of(onto) else {
-        return said(format!(
-            "gitclient can't tell whether {} is on GitHub, GitLab or Gitea.",
-            onto.name
-        ));
-    };
     match relation {
         Err(message) => return said(message),
         Ok(Relation::Same | Relation::Contained) => {
-            return said(format!(
-                "{base} already has everything in {head}, so there is nothing to propose."
-            ));
+            return said(format!("Nothing to propose: {base} has all of {head}."));
         }
         Ok(Relation::FastForward | Relation::Diverged) => {}
     }
 
-    let noun = site.forge.noun();
-    let url = site.new_request_url(base, head);
-    vec![
-        heading,
-        Line::item(
-            format!("Open a {noun} for {head} into {base}"),
-            Command::OpenUrl {
-                url: url.clone(),
-                what: format!("the page that starts a {noun} on {}", site.forge.name()),
+    let line = match forge::hosting(onto, refs.forge) {
+        Some(Hosting::Known(site)) => {
+            let noun = site.forge.noun();
+            let url = site.new_request_url(base, head);
+            return vec![
+                heading,
+                Line::item(
+                    format!("Open a {noun} for {head} into {base}"),
+                    Command::OpenUrl {
+                        url: url.clone(),
+                        what: format!("the page that starts a {noun} on {}", site.forge.name()),
+                    },
+                )
+                .with_glyph(site.forge),
+                Line::item("Copy link", copy(&url, "the link")),
+            ];
+        }
+        Some(Hosting::Unknown(_)) => Line::item(
+            format!("Open a request for {head} into {base}"),
+            Command::AskForge {
+                message: forge::choice::unknown_question(&onto.name),
             },
-        ),
-        Line::item("Copy link", copy(&url, "the link")),
-    ]
+        )
+        .with_glyph(Glyph::Unknown),
+        None => Line::unavailable(format!("{} isn't on the web.", onto.name)),
+    };
+    vec![heading, line]
 }
 
 /// The menu of one pull or merge request in the sidebar.
@@ -765,7 +808,8 @@ pub fn request_menu(site: &Site, number: u64) -> Vec<Line> {
                 url: url.clone(),
                 what: format!("{} {label}", site.forge.noun()),
             },
-        ),
+        )
+        .with_glyph(site.forge),
         Line::item("Copy link", copy(&url, "the link")),
     ]
 }
@@ -1403,6 +1447,9 @@ mod tests {
             labels(&lines),
             ["Open a pull request for feat/x into main", "Copy link"]
         );
+        assert_eq!(shown_lines(&lines)[0], "feat/x onto main");
+        assert_eq!(lines[1].glyph(), Some(Glyph::GitHub));
+        assert_eq!(lines[2].glyph(), None);
         let open = lines[1].command().unwrap();
         assert_eq!(
             open.url(),
@@ -1420,6 +1467,46 @@ mod tests {
         assert_eq!(
             labels(&lines)[0],
             "Open a merge request for feat/x into main"
+        );
+        assert_eq!(lines[1].glyph(), Some(Glyph::GitLab));
+    }
+
+    #[test]
+    fn a_forge_that_is_not_known_still_gets_the_line_with_a_question_on_it() {
+        // Nothing at this address answers, so only a choice can settle which forge it is.
+        let mut refs = refs_on(&[("origin", "http://127.0.0.1:1/me/app.git")]);
+        let (from, onto) = (
+            target(RefKind::Remote, "origin/feat/x"),
+            target(RefKind::Remote, "origin/main"),
+        );
+        let lines = request_drop_menu(&refs, &from, &onto, Ok(Relation::Diverged));
+        assert_eq!(
+            labels(&lines),
+            ["Open a request for feat/x into main"],
+            "the line is there, and it is short"
+        );
+        assert_eq!(lines[1].glyph(), Some(Glyph::Unknown));
+        let ask = lines[1].command().unwrap();
+        assert_eq!(ask.url(), None);
+        assert!(
+            ask.forge_question()
+                .unwrap()
+                .starts_with("gitclient can't tell whether origin is on GitHub, GitLab or Gitea")
+        );
+        assert_eq!(ask.run(Path::new(".")), Ok(None));
+        assert!(ask.confirmation().is_none());
+
+        // Choosing a forge for the repository settles it.
+        refs.forge = Some(Forge::Gitea);
+        let lines = request_drop_menu(&refs, &from, &onto, Ok(Relation::Diverged));
+        assert_eq!(
+            labels(&lines),
+            ["Open a pull request for feat/x into main", "Copy link"]
+        );
+        assert_eq!(lines[1].glyph(), Some(Glyph::Gitea));
+        assert_eq!(
+            lines[1].command().unwrap().url(),
+            Some("http://127.0.0.1:1/me/app/compare/main...feat/x")
         );
     }
 
@@ -1439,20 +1526,19 @@ mod tests {
 
         assert_eq!(
             said(&github, Ok(Relation::Contained)),
-            "main already has everything in feat/x, so there is nothing to propose."
+            "Nothing to propose: main has all of feat/x."
         );
         assert_eq!(said(&github, Err("gone".into())), "gone");
         assert_eq!(
-            said(
-                &refs_on(&[("origin", "git@git.acme.com:o/r.git")]),
-                Ok(Relation::Diverged)
-            ),
-            "gitclient can't tell whether origin is on GitHub, GitLab or Gitea."
-        );
-        assert_eq!(
             said(&refs_on(&[]), Ok(Relation::Diverged)),
-            "These branches aren't on a remote this repository knows."
+            "These branches aren't on a known remote."
         );
+        for message in [
+            "Nothing to propose: main has all of feat/x.",
+            "Branches on different remotes can't be proposed yet.",
+        ] {
+            assert!(message.len() < 60, "short enough to read in a menu line");
+        }
 
         let across = request_drop_menu(
             &refs_on(&[
@@ -1468,13 +1554,18 @@ mod tests {
 
     #[test]
     fn a_request_opens_on_its_forge_or_is_copied() {
-        let site = Site::of(&remote::Remote {
-            name: "origin".into(),
-            url: "https://gitlab.com/team/cat.git".into(),
-            push_url: None,
-        })
-        .unwrap();
+        let Some(Hosting::Known(site)) = forge::hosting(
+            &remote::Remote {
+                name: "origin".into(),
+                url: "https://gitlab.com/team/cat.git".into(),
+                push_url: None,
+            },
+            None,
+        ) else {
+            panic!("gitlab.com is a known forge");
+        };
         let lines = request_menu(&site, 42);
+        assert_eq!(lines[1].glyph(), Some(Glyph::GitLab));
         assert_eq!(
             shown_lines(&lines),
             ["merge request !42", "Open !42 on GitLab", "Copy link"]

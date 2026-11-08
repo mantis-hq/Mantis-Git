@@ -184,7 +184,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     result: "Check now", "Update to 0.2.0" or "Restart now".
   - **Repository** holds what belongs to the open repository alone, apart from its git
     config, and is only in the side panel while a repository is open. The header says which
-    one. Under "History", a "Commit graph" row says whether git's commit graph lists every
+    one. Under "Hosting", a "Forge" row says which forge the remote is on ("gitclient can tell
+    that origin is on GitLab", or that it can't tell) beside a row of chips, Automatic then
+    GitHub, GitLab and Gitea, the picked one ticked and never blue. Automatic leaves it to
+    gitclient (see "Forges"), and a choice is kept in the repository's own git config as
+    `gitclient.forge`. A choice applies at once, and the header says what it now does. Under "History", a "Commit graph" row says whether git's commit graph lists every
     commit the branches and tags reach ("The commit graph lists 72712 of the 73143 commits
     your branches and tags reach."), and why git can't use one in a shallow clone, with
     `core.commitGraph` off, or with replace refs. When something is missing a quiet button
@@ -287,9 +291,19 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   in, saved with "Save <name>"; renaming also renames its remote branches), "Copy address",
   and in red "Remove remote <name>", which asks first and gives the `git remote add` that
   brings it back. Names that can't work are turned down in the popup, before git runs.
-- Pull and merge requests: when a remote's address is on GitHub, GitLab or Gitea (told
-  apart by the host: `github.com` or `github.*`, `gitlab.com` or `gitlab.*`, `gitea.com`,
-  `codeberg.org`, `gitea.*` or `forgejo.*`), the sidebar has a section between Remotes and
+- Forges: gitclient tells which of GitHub, GitLab and Gitea a remote is on in this order.
+  The forge chosen for the repository wins (the Repository page, kept as `gitclient.forge`
+  in its git config). Then the host's name: `github.com` or `github.*`, `gitlab.com` or
+  `gitlab.*`, `gitea.com`, `codeberg.org`, `gitea.*` or `forgejo.*`. Then, for a server
+  whose name says nothing, the server itself: after a repository loads, and before a drop
+  menu opens, it is asked three questions at once over HTTP, one each forge answers in its
+  own way without a sign-in (`/api/v1/version`, `/api/v3/meta`, `/api/v4/version`), with 2
+  seconds to answer. A server that answered is asked once a session, whatever it said; one
+  that didn't answer (a VPN that is down, a certificate nobody trusts) is asked again later.
+  Hosts known to be something else, such as Bitbucket and Azure DevOps, are never asked.
+  What is still unknown stays unknown, and the interface says so with a question mark.
+- Pull and merge requests: when a remote is on GitHub, GitLab or Gitea (see "Forges"),
+  the sidebar has a section between Remotes and
   Worktrees in that forge's own word, "Pull requests" or "Merge requests", for `origin` or
   else the first such remote. It starts closed, because asking reaches over the network,
   and opening it asks once. A quiet blue "Refresh" in its header asks again, and the count
@@ -317,9 +331,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   A branch and its remote at the same commit are one chip with a small cloud.
 - **Menus:** right-clicking a branch, tag or commit opens one menu, and so does dropping
   a branch or tag on a branch. A card on Mantle with a Surface 0 border, 8 px radius and
-  28 px lines, no shadow. A quiet heading says what it applies to; lines name their result
-  ("Merge feat/x into main", "Rebase main onto feat/x"). A line that can't be used stays,
-  in Overlay 2, and says why. Only lines that remove something are red, and they ask
+  28 px lines, no shadow. It is 300 px wide, or as wide as its longest line up to 460 px, so
+  a line can name its whole result. A quiet heading says what it applies to; lines name their
+  result ("Merge feat/x into main", "Rebase main onto feat/x"). A line can start with a 14 px
+  picture saying what it is about: the mark of a forge (GitHub, GitLab or Gitea) in the line's
+  own colour, or a question mark in Peach when the line depends on something not known. The
+  pictures are plain shapes served by the app (`src/icons.rs`), never emoji. A line that can't
+  be used stays, in Overlay 2, and says why in as many rows as it needs, never cut short. Only lines that remove something are red, and they ask
   first, saying how to undo. `Up`/`Down` move, `Enter` chooses, `Esc` closes.
   A commit's menu starts with a check-out line for each of its refs, as its chips show
   them ("Check out feat/x", "Check out origin/y as a local branch", "Check out v1.0.0
@@ -384,10 +402,16 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   A remote branch also takes another remote branch of the same remote, tinted the same,
   and the menu then proposes a pull or merge request bringing the dragged branch into the
   one it was dropped on: "Open a pull request for feat/x into main", which opens the page
-  that starts one on the forge in the browser, and "Copy link". Git can't make a request,
-  so gitclient opens the page and the band says so. A line that can't be used says why:
-  the base already has everything, the two are on different remotes (a request between
-  repositories isn't supported), or the remote isn't on GitHub, GitLab or Gitea.
+  that starts one on the forge in the browser, with the forge's mark before it, and "Copy
+  link". Git can't make a request, so gitclient opens the page and the band says so. The
+  heading names the branches without their remote ("feat/x onto main"). When the forge isn't
+  known, even after asking the server, the line is still there as "Open a request for feat/x
+  into main", with a Peach question mark. Choosing it opens a popup that says gitclient can't
+  tell which forge the remote is on, so it doesn't know which page starts a request, and that
+  the repository's settings can say; its result is "Open settings", which opens the
+  Repository page. A line that can't be used says why, briefly: the base already has all of
+  the branch, or the two are on different remotes (a request between repositories isn't
+  supported yet).
 - **Selecting commits:** a click selects one, `Ctrl`-click adds or removes one, and
   `Shift`-click adds the range. Selected rows take the selected-row fill, and the menu
   then acts on all of them.

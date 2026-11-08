@@ -138,6 +138,8 @@ pub(super) struct State {
     /// What was last asked of the forge. It stays closed until opened, since asking reaches
     /// over the network.
     requests: requests::Asked,
+    /// The server last asked what forge it is, so that it is asked once, not at every load.
+    probed: Option<String>,
 }
 
 impl State {

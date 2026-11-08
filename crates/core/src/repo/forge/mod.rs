@@ -6,6 +6,9 @@
 //! What git can't say is a request's title or whether it is still open, so the list is the
 //! newest few and says so.
 
+pub mod choice;
+pub mod probe;
+
 use super::remote::Remote;
 use crate::ops;
 use crate::text::{count, short_oid};
@@ -23,6 +26,25 @@ pub enum Forge {
 }
 
 impl Forge {
+    pub const ALL: [Forge; 3] = [Self::GitHub, Self::GitLab, Self::Gitea];
+
+    /// How the choice is written in git config, and read back.
+    pub fn config_value(self) -> &'static str {
+        match self {
+            Self::GitHub => "github",
+            Self::GitLab => "gitlab",
+            Self::Gitea => "gitea",
+        }
+    }
+
+    /// The forge a config value names, in any case.
+    pub fn from_config(value: &str) -> Option<Self> {
+        let value = value.trim();
+        Self::ALL
+            .into_iter()
+            .find(|forge| forge.config_value().eq_ignore_ascii_case(value))
+    }
+
     /// What the host calls it.
     pub fn name(self) -> &'static str {
         match self {
@@ -83,10 +105,9 @@ impl Forge {
     }
 }
 
-/// A repository on a forge's website.
+/// Where a remote's repository is on the web, whichever server that is.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Site {
-    pub forge: Forge,
+pub struct Address {
     /// `http` or `https`, which is how the website is reached.
     scheme: &'static str,
     /// The host, with its port when the address names one for the web.
@@ -95,21 +116,63 @@ pub struct Site {
     path: String,
 }
 
-impl Site {
-    /// The repository a remote is, or `None` when its address isn't on a known forge.
+impl Address {
+    /// Where a remote is on the web, or `None` for a local path or an address with no
+    /// `owner/repo` in it.
     pub fn of(remote: &Remote) -> Option<Self> {
         let (scheme, host, path) = split_address(&remote.url)?;
-        Some(Self {
-            forge: Forge::of_host(&host)?,
-            scheme,
-            host,
-            path,
-        })
+        Some(Self { scheme, host, path })
     }
 
     /// The repository's home page.
     pub fn web(&self) -> String {
-        format!("{}://{}/{}", self.scheme, self.host, self.path)
+        format!("{}/{}", self.origin(), self.path)
+    }
+
+    /// The server's own address, which the probe asks and the cache is keyed by.
+    pub fn origin(&self) -> String {
+        format!("{}://{}", self.scheme, self.host)
+    }
+
+    /// The forge the host's name says it is, if it says.
+    fn forge_by_name(&self) -> Option<Forge> {
+        Forge::of_host(&self.host)
+    }
+}
+
+/// A repository on a forge's website.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Site {
+    pub forge: Forge,
+    address: Address,
+}
+
+/// What is known of the forge a remote is on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Hosting {
+    Known(Site),
+    /// The name doesn't say, nothing was chosen, and the server hasn't been recognised.
+    Unknown(Address),
+}
+
+/// Where `remote` is hosted: the forge that was chosen for the repository, else the one
+/// its host's name says, else the one the server was recognised as earlier this session
+/// (see [`probe`]). `None` when the remote isn't on the web at all.
+pub fn hosting(remote: &Remote, chosen: Option<Forge>) -> Option<Hosting> {
+    let address = Address::of(remote)?;
+    let forge = chosen
+        .or_else(|| address.forge_by_name())
+        .or_else(|| probe::remembered(&address).flatten());
+    Some(match forge {
+        Some(forge) => Hosting::Known(Site { forge, address }),
+        None => Hosting::Unknown(address),
+    })
+}
+
+impl Site {
+    /// The page of this repository on its forge.
+    pub fn web(&self) -> String {
+        self.address.web()
     }
 
     /// The page that starts a request to bring `head` into `base`, both branches of this
@@ -153,13 +216,41 @@ impl Site {
     }
 }
 
+/// The remotes to look at, `origin` first.
+fn origin_first(remotes: &[Remote]) -> impl Iterator<Item = &Remote> {
+    let origin = remotes.iter().filter(|remote| remote.name == "origin");
+    origin.chain(remotes.iter())
+}
+
 /// The remote whose requests to show: `origin` when it is on a known forge, else the first
 /// that is.
-pub fn pick(remotes: &[Remote]) -> Option<(&Remote, Site)> {
-    let origin = remotes.iter().filter(|remote| remote.name == "origin");
-    origin
-        .chain(remotes.iter())
-        .find_map(|remote| Some((remote, Site::of(remote)?)))
+pub fn pick(remotes: &[Remote], chosen: Option<Forge>) -> Option<(&Remote, Site)> {
+    origin_first(remotes).find_map(|remote| match hosting(remote, chosen)? {
+        Hosting::Known(site) => Some((remote, site)),
+        Hosting::Unknown(_) => None,
+    })
+}
+
+/// The first remote, `origin` before the others, whose server is still unrecognised and
+/// worth asking about.
+pub fn pick_unknown(remotes: &[Remote], chosen: Option<Forge>) -> Option<(&Remote, Address)> {
+    origin_first(remotes).find_map(|remote| match hosting(remote, chosen)? {
+        Hosting::Unknown(address) if probe::worth_asking(&address) => Some((remote, address)),
+        _ => None,
+    })
+}
+
+/// Asks the server of `remote_branch`'s remote what it is, when nothing else says, so
+/// that [`hosting`] can answer. This reaches over the network, so call it off the UI thread.
+pub fn warm(remotes: &[Remote], remote_branch: &str, chosen: Option<Forge>) {
+    let Some((remote, _)) = super::remote::split_branch(remotes, remote_branch) else {
+        return;
+    };
+    if let Some(Hosting::Unknown(address)) = hosting(remote, chosen)
+        && probe::worth_asking(&address)
+    {
+        probe::detect(&address, &probe::Web);
+    }
 }
 
 /// Splits a remote's address into how the website is reached, its host and the repository's
@@ -353,7 +444,10 @@ mod tests {
     }
 
     fn site(url: &str) -> Site {
-        Site::of(&remote("origin", url)).unwrap()
+        match hosting(&remote("origin", url), None) {
+            Some(Hosting::Known(site)) => site,
+            other => panic!("{url} is not on a known forge: {other:?}"),
+        }
     }
 
     #[test]
@@ -391,8 +485,10 @@ mod tests {
 
     #[test]
     fn hosts_are_told_apart_by_name() {
-        let forge =
-            |host: &str| Site::of(&remote("o", &format!("https://{host}/a/b"))).map(|s| s.forge);
+        let forge = |host: &str| match hosting(&remote("o", &format!("https://{host}/a/b")), None) {
+            Some(Hosting::Known(site)) => Some(site.forge),
+            _ => None,
+        };
         assert_eq!(forge("github.com"), Some(Forge::GitHub));
         assert_eq!(forge("github.acme.com"), Some(Forge::GitHub));
         assert_eq!(forge("gitlab.com"), Some(Forge::GitLab));
@@ -416,7 +512,7 @@ mod tests {
             "https://github.com/cat",
             "",
         ] {
-            assert_eq!(Site::of(&remote("origin", url)), None, "{url:?}");
+            assert_eq!(hosting(&remote("origin", url), None), None, "{url:?}");
         }
     }
 
@@ -461,7 +557,7 @@ mod tests {
             remote("fork", "git@github.com:me/cat.git"),
             remote("origin", "git@gitlab.com:team/cat.git"),
         ];
-        let (picked, site) = pick(&remotes).unwrap();
+        let (picked, site) = pick(&remotes, None).unwrap();
         assert_eq!(
             (picked.name.as_str(), site.forge),
             ("origin", Forge::GitLab)
@@ -471,8 +567,8 @@ mod tests {
             remote("origin", "/srv/git/cat.git"),
             remote("fork", "git@github.com:me/cat.git"),
         ];
-        assert_eq!(pick(&remotes).unwrap().0.name, "fork");
-        assert!(pick(&[remote("origin", "/srv/git/cat.git")]).is_none());
+        assert_eq!(pick(&remotes, None).unwrap().0.name, "fork");
+        assert!(pick(&[remote("origin", "/srv/git/cat.git")], None).is_none());
     }
 
     #[test]
@@ -525,12 +621,7 @@ mod tests {
         let address = upstream.path().to_string_lossy().into_owned();
         local.git(&["remote", "add", "origin", &address]);
         let origin = remote("origin", &address);
-        let site = Site {
-            forge: Forge::GitHub,
-            scheme: "https",
-            host: "github.com".into(),
-            path: "o/r".into(),
-        };
+        let site = site("https://github.com/o/r");
 
         // The commit isn't here yet, so only its hash can be shown.
         let found = list(local.path(), &origin, &site).unwrap();
@@ -553,12 +644,7 @@ mod tests {
         let local = Repo::new();
         local.git(&["remote", "add", "origin", "/no/such/place"]);
         let origin = remote("origin", "/no/such/place");
-        let site = Site {
-            forge: Forge::GitLab,
-            scheme: "https",
-            host: "gitlab.com".into(),
-            path: "o/r".into(),
-        };
+        let site = site("https://gitlab.com/o/r");
         let error = list(local.path(), &origin, &site).unwrap_err();
         assert!(
             error.starts_with("Couldn't ask origin for its requests."),

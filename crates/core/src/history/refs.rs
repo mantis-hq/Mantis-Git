@@ -4,6 +4,7 @@
 use super::lanes::{LaneColor, Plan};
 use super::{Commit, CommitActions};
 use crate::ops;
+use crate::repo::forge::{self, Forge};
 use crate::repo::remote::{self, Remote};
 use crate::repo::status::{self, RepoStatus};
 use crate::repo::submodule::{self, Submodule};
@@ -140,6 +141,8 @@ pub struct Refs {
     pub submodules: Vec<Submodule>,
     /// The remotes the repository is set up with, which can have no branches yet.
     pub remote_configs: Vec<Remote>,
+    /// The forge chosen for the repository when it can't be told, `gitclient.forge`.
+    pub forge: Option<Forge>,
     /// How to lay out the graph for this repository.
     pub plan: Plan,
     /// The top of the working tree, or the repository itself when it is bare.
@@ -277,15 +280,17 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
     let worktrees = worktree::list(repo, &workdir);
     let submodules = submodule::list(&workdir);
     let remote_configs = remote::list(repo);
+    let forge = forge::choice::chosen(repo);
 
     let mut refs = Refs {
         fingerprint: format!(
-            "{listing}\0{head_ref:?}\0{head:?}\0{status:?}\0{worktrees:?}\0{submodules:?}\0{remote_configs:?}"
+            "{listing}\0{head_ref:?}\0{head:?}\0{status:?}\0{worktrees:?}\0{submodules:?}\0{remote_configs:?}\0{forge:?}"
         ),
         workdir: Some(workdir),
         worktrees,
         submodules,
         remote_configs,
+        forge,
         status,
         ..Refs::default()
     };

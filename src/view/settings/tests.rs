@@ -582,6 +582,57 @@ fn the_repository_page_writes_a_missing_commit_graph(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui_kit::test]
+fn the_repository_page_sets_and_clears_the_forge_the_repository_is_on(cx: &mut TestAppContext) {
+    use gitclient_core::repo::forge::{Forge, choice};
+
+    let repo = Repo::new();
+    repo.commit("a");
+    // Nothing answers at this address, so the forge is only ever what is chosen.
+    repo.git(&["remote", "add", "origin", "http://127.0.0.1:1/me/app.git"]);
+    let (_dir, scope) = file_scope();
+    let (view, mut cx) = open(Some(repo.path().to_owned()), scope, cx);
+
+    view.update(&mut cx, |settings, cx| settings.show_page(3, cx));
+    settle(&mut cx);
+    view.read_with(&cx, |settings, _| {
+        let choice = settings.forge_choice.as_ref().expect("the choice was read");
+        assert_eq!(choice.chosen, None);
+        assert!(
+            choice
+                .sentence()
+                .starts_with("gitclient can't tell whether origin")
+        );
+    });
+
+    view.update(&mut cx, |settings, cx| {
+        settings.choose_forge(Some(Forge::GitLab), cx)
+    });
+    settle(&mut cx);
+    assert_eq!(choice::chosen(repo.path()), Some(Forge::GitLab));
+    view.read_with(&cx, |settings, _| {
+        assert_eq!(
+            settings.forge_choice.as_ref().unwrap().chosen,
+            Some(Forge::GitLab)
+        );
+        assert!(matches!(
+            &settings.feedback,
+            Feedback::Saved(message) if message == "Pull and merge requests are now made for GitLab."
+        ));
+    });
+
+    view.update(&mut cx, |settings, cx| settings.choose_forge(None, cx));
+    settle(&mut cx);
+    assert_eq!(choice::chosen(repo.path()), None);
+    view.read_with(&cx, |settings, _| {
+        assert!(matches!(
+            &settings.feedback,
+            Feedback::Saved(message) if message == "gitclient tells which forge it is by itself again."
+        ));
+    });
+    draw(&view, &mut cx);
+}
+
 /// Draws the window once, so that a page that panics while rendering fails its test.
 fn draw(view: &Entity<Settings>, cx: &mut VisualTestContext) {
     view.update(cx, |_, cx| cx.notify());

@@ -158,6 +158,11 @@ pub enum Command {
         url: String,
         what: String,
     },
+    /// Handled by the interface, which asks in a popup whether to open the settings where
+    /// the forge is chosen. `message` is the question.
+    AskForge {
+        message: String,
+    },
 }
 
 /// What to ask before running a command that can lose something.
@@ -236,7 +241,7 @@ impl Command {
             Self::UpdateSubmodule { .. } | Self::UpdateSubmodules => "Updating",
             Self::RemoveRemote { .. } => "Removing the remote",
             Self::Copy { .. } => "Copying",
-            Self::OpenUrl { .. } => "Opening",
+            Self::OpenUrl { .. } | Self::AskForge { .. } => "Opening",
             Self::StashStaged { .. } => "Stashing",
             Self::ApplyStashes { .. } => "Applying",
             Self::PopStashes { .. } => "Popping",
@@ -337,6 +342,14 @@ impl Command {
         }
     }
 
+    /// The question to ask about the forge, for a command that does that.
+    pub fn forge_question(&self) -> Option<&str> {
+        match self {
+            Self::AskForge { message } => Some(message),
+            _ => None,
+        }
+    }
+
     /// What to say after opening the browser.
     pub fn opened_notice(&self) -> Option<String> {
         match self {
@@ -400,6 +413,7 @@ impl Command {
             | Self::UseSide { .. }
             | Self::StageFiles { .. }
             | Self::OpenUrl { .. }
+            | Self::AskForge { .. }
             | Self::Copy { .. } => Ok(None),
         }
     }
