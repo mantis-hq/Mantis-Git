@@ -28,6 +28,14 @@ pub enum Command {
     MergeIntoCurrent {
         source: String,
     },
+    /// Fast-forwards a local branch to the remote branch it follows.
+    PullBranch {
+        branch: String,
+    },
+    /// Sends a local branch to the remote branch it follows.
+    PushBranch {
+        branch: String,
+    },
     Drop {
         action: DropAction,
         source: String,
@@ -219,6 +227,8 @@ impl Command {
         match self {
             Self::CheckOutRef { .. } | Self::CheckOutCommit { .. } => "Checking out",
             Self::MergeIntoCurrent { .. } => "Merging",
+            Self::PullBranch { .. } => "Pulling",
+            Self::PushBranch { .. } => "Pushing",
             Self::Drop {
                 action: DropAction::FastForward,
                 ..
@@ -366,6 +376,8 @@ impl Command {
                 actions::check_out(repo, branch.as_deref(), oid)
             }
             Self::MergeIntoCurrent { source } => branch::merge_into_current(repo, source),
+            Self::PullBranch { branch } => branch::pull_branch(repo, branch),
+            Self::PushBranch { branch } => branch::push_branch(repo, branch),
             Self::Drop {
                 action,
                 source,

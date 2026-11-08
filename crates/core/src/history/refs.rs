@@ -84,6 +84,8 @@ pub struct Branch {
     /// Commits this has that its remote branch doesn't, and the other way around. `None`
     /// when it tracks nothing, or the remote branch is gone.
     pub upstream: Option<(u32, u32)>,
+    /// The remote branch it tracks (`origin/feat/x`), even when that branch is gone.
+    pub upstream_name: Option<String>,
 }
 
 impl Branch {
@@ -375,7 +377,8 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
                 color,
                 is_head: head_branch == Some(name),
                 ahead_behind: ahead_behind.get(name).copied(),
-                upstream: upstream.get(name).copied(),
+                upstream: upstream.get(name).and_then(|(_, counts)| *counts),
+                upstream_name: upstream.get(name).map(|(found, _)| found.clone()),
             }),
             RefKind::Remote => refs.remotes.push(NamedRef {
                 name: name.to_owned(),
@@ -530,16 +533,17 @@ fn read_ahead_behind(
 
 /// How each local branch stands against the remote branch it tracks, in one git call.
 /// Branches that track nothing, or whose remote branch is gone, are left out.
-fn read_upstream(repo: &Path) -> HashMap<String, (u32, u32)> {
-    let format = "--format=%(refname:short)%00%(upstream)%00%(upstream:track)";
+fn read_upstream(repo: &Path) -> HashMap<String, (String, Option<(u32, u32)>)> {
+    let format = "--format=%(refname:short)%00%(upstream)%00%(upstream:track)%00%(upstream:short)";
     let listing = ops::run(repo, &["for-each-ref", format, "refs/heads"]).unwrap_or_default();
     listing
         .lines()
         .filter_map(|line| {
             let mut parts = line.split('\0');
-            let (name, upstream, track) = (parts.next()?, parts.next()?, parts.next()?);
+            let (name, upstream, track, short) =
+                (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
             (!upstream.is_empty()).then_some(())?;
-            Some((name.to_owned(), parse_track(track)?))
+            Some((name.to_owned(), (short.to_owned(), parse_track(track))))
         })
         .collect()
 }

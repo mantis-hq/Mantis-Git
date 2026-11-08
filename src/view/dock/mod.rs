@@ -19,6 +19,7 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -47,6 +48,16 @@ struct TerminalTab {
     pane: Entity<TerminalPane>,
 }
 
+/// The terminals of one repository tab, with the dock tab that was in front there.
+#[derive(Default)]
+struct Group {
+    /// 0 is the log, then one per terminal.
+    active: usize,
+    terminals: Vec<TerminalTab>,
+    /// Numbers terminal tabs, and doesn't reuse a closed one's number.
+    opened: usize,
+}
+
 pub struct Dock {
     open: bool,
     /// What the user dragged the body's height and the log's list width to.
@@ -54,11 +65,12 @@ pub struct Dock {
     log_width: Option<f32>,
     /// The window's height as last drawn, so a drag can leave history in view.
     window_height: f32,
-    /// 0 is the log, then one per terminal.
-    active: usize,
-    terminals: Vec<TerminalTab>,
-    /// Numbers terminal tabs, and doesn't reuse a closed one's number.
-    terminals_opened: usize,
+    /// The terminals of the repository tab on show. Each tab has its own, so a shell never
+    /// sits in another repository's folder.
+    group: Group,
+    /// Which repository tab `group` belongs to, and the groups of the tabs behind it.
+    scope: Option<EntityId>,
+    parked: HashMap<EntityId, Group>,
     /// Where new terminals start: the repository on show.
     directory: Option<PathBuf>,
     /// The command whose output is on show, or None to follow the newest.
@@ -98,9 +110,9 @@ impl Dock {
             height: None,
             log_width: None,
             window_height: 0.,
-            active: 0,
-            terminals: Vec::new(),
-            terminals_opened: 0,
+            group: Group::default(),
+            scope: None,
+            parked: HashMap::new(),
             directory: None,
             selected: None,
             commands_scroll: UniformListScrollHandle::new(),
@@ -116,12 +128,12 @@ impl Dock {
     }
 
     pub fn terminal_count(&self) -> usize {
-        self.terminals.len()
+        self.group.terminals.len()
     }
 
     /// Which tab is showing: 0 is the log.
     pub fn active_tab(&self) -> usize {
-        self.active
+        self.group.active
     }
 
     /// New terminals open in this folder.
@@ -129,6 +141,35 @@ impl Dock {
         if self.directory.as_deref() != directory {
             self.directory = directory.map(Path::to_path_buf);
         }
+    }
+
+    /// Makes `scope`, a repository tab, the one whose terminals show, parking the last
+    /// tab's. Says whether it changed.
+    pub fn set_scope(&mut self, scope: EntityId) -> bool {
+        if self.scope == Some(scope) {
+            return false;
+        }
+        let next = self.parked.remove(&scope).unwrap_or_default();
+        let last = std::mem::replace(&mut self.group, next);
+        if let Some(old) = self.scope.replace(scope) {
+            self.parked.insert(old, last);
+        }
+        true
+    }
+
+    /// Drops the terminals of tabs that are no longer open, which ends their shells.
+    pub fn retain_scopes(&mut self, open: &[EntityId]) {
+        self.parked.retain(|scope, _| open.contains(scope));
+    }
+
+    /// With the dock open, gives a tab that has no terminal a fresh one, in front. The
+    /// keyboard stays where it is.
+    pub fn ensure_terminal(&mut self, cx: &mut Context<Self>) {
+        if self.open && self.group.terminals.is_empty() {
+            self.add_terminal(cx);
+            self.group.active = 1;
+        }
+        cx.notify();
     }
 
     pub fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -142,14 +183,14 @@ impl Dock {
     /// Opens the dock on tab `index`.
     pub fn show(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
-        self.active = index.min(self.terminals.len());
+        self.group.active = index.min(self.group.terminals.len());
         self.focus_active(window, cx);
         cx.notify();
     }
 
     pub fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.add_terminal(cx);
-        self.show(self.terminals.len(), window, cx);
+        self.show(self.group.terminals.len(), window, cx);
     }
 
     /// Starts a shell in the repository's folder, in a tab at the end.
@@ -159,9 +200,9 @@ impl Dock {
             .clone()
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_default();
-        self.terminals_opened += 1;
-        self.terminals.push(TerminalTab {
-            number: self.terminals_opened,
+        self.group.opened += 1;
+        self.group.terminals.push(TerminalTab {
+            number: self.group.opened,
             pane: cx.new(|cx| TerminalPane::new(&directory, cx)),
         });
     }
@@ -170,8 +211,8 @@ impl Dock {
     pub fn layout(&self) -> DockLayout {
         DockLayout {
             open: self.open,
-            terminals: self.terminals.len(),
-            tab: self.active,
+            terminals: self.group.terminals.len(),
+            tab: self.group.active,
         }
     }
 
@@ -179,23 +220,23 @@ impl Dock {
     /// keyboard stays with the repository, so the app's shortcuts work from the start.
     pub fn restore(&mut self, layout: DockLayout, cx: &mut Context<Self>) {
         let layout = layout.bounded();
-        while self.terminals.len() < layout.terminals {
+        while self.group.terminals.len() < layout.terminals {
             self.add_terminal(cx);
         }
         self.open = layout.open;
-        self.active = layout.tab.min(self.terminals.len());
+        self.group.active = layout.tab.min(self.group.terminals.len());
         cx.notify();
     }
 
     fn close_terminal(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if index >= self.terminals.len() {
+        if index >= self.group.terminals.len() {
             return;
         }
-        self.terminals.remove(index);
+        self.group.terminals.remove(index);
         // The tab beside the closed one comes forward, and the log is always there.
         let closed = index + 1;
-        if self.active >= closed {
-            self.active = self.active.saturating_sub(1);
+        if self.group.active >= closed {
+            self.group.active = self.group.active.saturating_sub(1);
         }
         self.focus_active(window, cx);
         cx.notify();
@@ -213,8 +254,8 @@ impl Dock {
 
     /// The terminal showing, if a terminal tab is.
     pub fn active_terminal(&self) -> Option<&Entity<TerminalPane>> {
-        let index = self.active.checked_sub(1)?;
-        self.terminals.get(index).map(|tab| &tab.pane)
+        let index = self.group.active.checked_sub(1)?;
+        self.group.terminals.get(index).map(|tab| &tab.pane)
     }
 
     fn render_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -228,19 +269,19 @@ impl Dock {
                 .map(|entry| (entry.command.clone(), entry.summary()))
         });
 
-        let log_tab = parts::tab("dock-log", self.open && self.active == 0, cx)
+        let log_tab = parts::tab("dock-log", self.open && self.group.active == 0, cx)
             .pr_3()
             .on_click(cx.listener(|this, _, window, cx| this.show(0, window, cx)))
             .child("Log");
-        let terminals = (0..self.terminals.len()).map(|index| {
+        let terminals = (0..self.group.terminals.len()).map(|index| {
             let tab = index + 1;
             parts::tab(
                 ("dock-terminal", index),
-                self.open && self.active == tab,
+                self.open && self.group.active == tab,
                 cx,
             )
             .on_click(cx.listener(move |this, _, window, cx| this.show(tab, window, cx)))
-            .child(format!("Terminal {}", self.terminals[index].number))
+            .child(format!("Terminal {}", self.group.terminals[index].number))
             .child(
                 Button::new(("close-terminal", index))
                     .ghost()
@@ -283,7 +324,7 @@ impl Dock {
                         .child(format!("{command} · {summary}")),
                 )
             })
-            .when(self.open && self.active == 0, |bar| {
+            .when(self.open && self.group.active == 0, |bar| {
                 bar.child(
                     Button::new("clear-log")
                         .ghost()

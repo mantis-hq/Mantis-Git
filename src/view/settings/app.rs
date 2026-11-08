@@ -16,7 +16,7 @@ impl Settings {
     }
 
     /// Adds the launcher to the menu, or takes it away, and says which in the header. The
-    /// question at first launch is settled too, so it isn't asked after the user has chosen.
+    /// welcome counts as seen too, so its choice isn't offered after the user has chosen.
     pub(super) fn set_launcher(&mut self, on: bool, cx: &mut Context<Self>) {
         let Some(launcher) = &self.launcher else {
             return;
@@ -30,7 +30,7 @@ impl Settings {
         self.feedback = match result {
             Ok(message) => {
                 if let Some(file) = &self.state_file
-                    && let Ok(state) = AppState::change(file, |s| s.menu_entry_asked = true)
+                    && let Ok(state) = AppState::change(file, |s| s.welcome_seen = true)
                 {
                     self.app = state;
                 }

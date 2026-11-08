@@ -442,6 +442,34 @@ mod render {
         }
     }
 
+    /// The welcome panel, with the launcher on offer and without, in the given appearance.
+    fn assert_welcome_draws(mode: ThemeMode, suffix: &str) {
+        use gitclient_core::install::menu_entry::Launcher;
+        let repo = fixture();
+        let mut cx = app(mode);
+        let (handle, view) = open(&mut cx, repo.path());
+        let data = tempfile::tempdir().unwrap();
+        for (name, launcher) in [
+            ("welcome", Some(Launcher::in_data_home(data.path()))),
+            ("welcome-packaged", None),
+        ] {
+            cx.update_window(handle, |_, _, cx| {
+                view.update(cx, |view, cx| view.show_welcome(launcher, cx));
+            })
+            .unwrap();
+            let frame = capture(&mut cx, handle, &format!("{name}-{suffix}"));
+            if mode == ThemeMode::Dark {
+                // The 640 px panel is centred. Just inside its left edge, level with the
+                // middle of the window, is its padding, in Mantle.
+                let scale = frame.width() as f32 / 1200.;
+                let x = frame.width() / 2 - (320. * scale) as u32 + (8. * scale) as u32;
+                let y = frame.height() / 2;
+                let mantle = image::Rgba([0x18, 0x18, 0x25, 0xff]);
+                assert_eq!(*frame.get_pixel(x, y), mantle, "{name}: the panel is drawn");
+            }
+        }
+    }
+
     /// The sidebar, open, with the submodules pinned to its foot under a border, though
     /// the fixture has none.
     fn assert_sidebar_pins_submodules() {
@@ -674,6 +702,8 @@ mod render {
         assert_dock_shows_the_log_and_a_terminal();
         assert_forms_draw();
         assert_request_menus_draw();
+        assert_welcome_draws(ThemeMode::Dark, "dark");
+        assert_welcome_draws(ThemeMode::Light, "light");
         assert_sidebar_pins_submodules();
         println!("render: passed (real offscreen renderer)");
     }

@@ -689,7 +689,7 @@ fn the_launcher_switch_adds_and_removes_the_menu_entry_and_settles_the_question(
     ));
     let saved = AppState::load(&file);
     assert!(
-        saved.menu_entry_asked,
+        saved.welcome_seen,
         "the question is not asked after choosing"
     );
     assert_eq!(

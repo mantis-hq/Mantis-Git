@@ -1,15 +1,17 @@
 //! Popups centred over the window that wait for an answer: the question before something
-//! is removed, and the forms that ask for a name. They share one frame and one set of
-//! keys. Enter answers, Escape or a click outside cancels, and a key held down never
+//! is removed, and the forms that ask for a name, and the welcome panel the first time.
+//! They share one backdrop and one set of keys, and all but the welcome one frame. Enter answers, Escape or a click outside cancels, and a key held down never
 //! answers, so nothing happens that the user hasn't read.
 
 mod ask;
 mod confirm;
 mod form;
+mod welcome;
 
 pub(super) use ask::AskDialog;
 pub(super) use confirm::Confirm;
 pub(super) use form::FormDialog;
+pub(super) use welcome::offer as offer_welcome;
 
 use super::GraphView;
 use super::parts::TEXT_BODY;
@@ -25,6 +27,7 @@ pub(super) enum Dialog {
     Confirm(Confirm),
     Form(FormDialog),
     Ask(AskDialog),
+    Welcome(welcome::WelcomeDialog),
 }
 
 /// What a popup puts in the shared frame, above the line naming the keys and the buttons.
@@ -48,6 +51,7 @@ impl GraphView {
             Some(Dialog::Confirm(_)) => self.press_enter_to_confirm(cx),
             Some(Dialog::Form(_)) => self.submit_form(cx),
             Some(Dialog::Ask(_)) => self.submit_ask(cx),
+            Some(Dialog::Welcome(_)) => self.submit_welcome(cx),
         }
     }
 
@@ -78,6 +82,7 @@ impl GraphView {
             Some(Dialog::Confirm(_)) => self.run_confirmed(cx),
             Some(Dialog::Form(_)) => self.submit_form(cx),
             Some(Dialog::Ask(_)) => self.submit_ask(cx),
+            Some(Dialog::Welcome(_)) => self.submit_welcome(cx),
             None => {}
         }
     }
@@ -112,6 +117,13 @@ impl GraphView {
                 ask.keep_focus(&self.focus, window, cx);
                 ask.frame(cx)
             }
+            Dialog::Welcome(_) => {
+                // Enter, Space and Escape are bound on this view.
+                if !self.focus.is_focused(window) {
+                    window.focus(&self.focus, cx);
+                }
+                return self.render_welcome(cx);
+            }
         };
         Some(self.render_frame(frame, cx))
     }
@@ -120,10 +132,6 @@ impl GraphView {
     fn render_frame(&self, frame: Frame, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let (panel, border) = (theme.title_bar, theme.border);
-        let cancel = |this: &mut Self,
-                      _: &MouseDownEvent,
-                      _: &mut Window,
-                      cx: &mut Context<Self>| { this.press_escape(cx) };
         let card = div()
             .id("dialog")
             .v_flex()
@@ -169,22 +177,32 @@ impl GraphView {
                     ),
             );
 
-        deferred(
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-                .occlude()
-                .h_flex()
-                .justify_center()
-                .items_center()
-                .px_4()
-                .on_mouse_down(MouseButton::Left, cx.listener(cancel))
-                .on_mouse_down(MouseButton::Right, cx.listener(cancel))
-                .child(card),
-        )
-        .with_priority(20)
-        .into_any_element()
+        backdrop(card, cx)
     }
+}
+
+/// `card` in the middle of the window, over a backdrop that skips or cancels on a click.
+fn backdrop(card: impl IntoElement, cx: &mut Context<GraphView>) -> AnyElement {
+    let cancel = |this: &mut GraphView,
+                  _: &MouseDownEvent,
+                  _: &mut Window,
+                  cx: &mut Context<GraphView>| { this.press_escape(cx) };
+    deferred(
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .occlude()
+            .h_flex()
+            .justify_center()
+            .items_center()
+            .px_4()
+            .py_4()
+            .on_mouse_down(MouseButton::Left, cx.listener(cancel))
+            .on_mouse_down(MouseButton::Right, cx.listener(cancel))
+            .child(card),
+    )
+    .with_priority(20)
+    .into_any_element()
 }

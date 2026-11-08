@@ -208,6 +208,66 @@ pub fn check_out_ref(repo: &Path, kind: RefKind, name: &str) -> Result<Option<St
     }
 }
 
+/// Where a local branch is tracked: its remote and the branch's name there.
+fn tracked(repo: &Path, branch: &str) -> Result<(String, String), String> {
+    let config = |key: &str| {
+        ops::run(
+            repo,
+            &["config", "--get", &format!("branch.{branch}.{key}")],
+        )
+        .map(|out| out.trim().to_owned())
+        .ok()
+        .filter(|value| !value.is_empty())
+    };
+    let none = || format!("{branch} follows no remote branch.");
+    let remote = config("remote").ok_or_else(none)?;
+    let merge = config("merge").ok_or_else(none)?;
+    let name = merge
+        .strip_prefix("refs/heads/")
+        .unwrap_or(&merge)
+        .to_owned();
+    Ok((remote, name))
+}
+
+/// Brings a local branch up to the remote branch it follows, without checking it out. Only
+/// a fast-forward is done, so nothing is merged and the working tree stays as it is.
+pub fn pull_branch(repo: &Path, branch: &str) -> Result<Option<String>, String> {
+    let (remote, name) = tracked(repo, branch)?;
+    let old = rev_parse(repo, &format!("refs/heads/{branch}"))?;
+    if current_branch(repo).as_deref() == Some(branch) {
+        ops::run(repo, &["pull", "--ff-only"])?;
+    } else {
+        let refspec = format!("refs/heads/{name}:refs/heads/{branch}");
+        ops::run(repo, &["fetch", "-q", &remote, &refspec])?;
+    }
+    let new = rev_parse(repo, &format!("refs/heads/{branch}"))?;
+    if new == old {
+        return Ok(Some(format!(
+            "{branch} is already up to date with {remote}/{name}."
+        )));
+    }
+    Ok(Some(format!(
+        "Pulled {remote}/{name} into {branch}. To undo it, run `git branch -f {branch} {}`.",
+        short_oid(&old)
+    )))
+}
+
+/// Sends a local branch to the remote branch it follows, without checking it out.
+pub fn push_branch(repo: &Path, branch: &str) -> Result<Option<String>, String> {
+    let (remote, name) = tracked(repo, branch)?;
+    let before = rev_parse(repo, &format!("refs/remotes/{remote}/{name}")).ok();
+    let refspec = format!("refs/heads/{branch}:refs/heads/{name}");
+    ops::run(repo, &["push", &remote, &refspec])?;
+    Ok(Some(match before {
+        Some(before) => format!(
+            "Pushed {branch} to {remote}/{name}. To undo it, run \
+             `git push --force-with-lease {remote} {}:refs/heads/{name}`.",
+            short_oid(&before)
+        ),
+        None => format!("Pushed {branch} to {remote}/{name}."),
+    }))
+}
+
 /// What deleting a ref loses, so the confirmation can say it. `tip` is where the ref points.
 pub fn delete_warning(kind: RefKind, name: &str, tip: Option<&str>) -> String {
     let undo = tip.map_or(String::new(), |tip| {
@@ -395,6 +455,13 @@ pub fn set_upstream(
                 &format!("{branch}:{name}"),
             ],
         )?;
+        // A repository that fetches only some branches (a single-branch clone) keeps no
+        // local copy of what a push made, and a fetch would never bring it in, so the
+        // branch would be missing from the app. Fetching it is what a push does here.
+        if !ops::resolves(repo, &format!("refs/remotes/{upstream}")) {
+            ops::run(repo, &["remote", "set-branches", "--add", remote, name])?;
+            ops::run(repo, &["fetch", remote, name])?;
+        }
     }
     let back = match before {
         Some(before) => format!("git branch --set-upstream-to={before} {branch}"),
@@ -494,6 +561,69 @@ mod tests {
             repo.git(&["rev-parse", "side"])
         );
         assert!(said.contains("push origin --delete topic"), "{said}");
+    }
+
+    #[test]
+    fn a_pushed_branch_shows_up_even_when_the_repository_fetches_only_some_branches() {
+        let repo = ahead();
+        let remote = Repo::new();
+        repo.git(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
+        repo.git(&[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/main:refs/remotes/origin/main",
+        ]);
+        remote.git(&["config", "receive.denyCurrentBranch", "ignore"]);
+        set_upstream(repo.path(), "side", "origin", "feat/x/12345").unwrap();
+        let read = crate::history::refs::read_refs(repo.path()).unwrap();
+        let names: Vec<_> = read.remotes.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["origin/feat/x/12345"]);
+        assert_eq!(
+            repo.git(&["rev-parse", "--abbrev-ref", "side@{upstream}"])
+                .trim(),
+            "origin/feat/x/12345"
+        );
+        // So a later fetch keeps it up to date.
+        let wanted = repo.git(&["config", "--get-all", "remote.origin.fetch"]);
+        assert!(wanted.contains("refs/heads/feat/x/12345"), "{wanted}");
+    }
+
+    #[test]
+    fn a_branch_that_is_not_checked_out_can_be_pulled_and_pushed() {
+        let repo = ahead();
+        let remote = Repo::new();
+        repo.git(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
+        remote.git(&["config", "receive.denyCurrentBranch", "ignore"]);
+        set_upstream(repo.path(), "side", "origin", "side").unwrap();
+
+        // Another clone moves the remote's `side` forward.
+        let other = Repo::new();
+        other.git(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
+        other.git(&["fetch", "-q", "origin", "side"]);
+        other.git(&["checkout", "-q", "-b", "side", "FETCH_HEAD"]);
+        other.write("d", "4\n");
+        other.commit("add d");
+        other.git(&["push", "-q", "origin", "side"]);
+
+        let old = repo.git(&["rev-parse", "side"]);
+        let said = pull_branch(repo.path(), "side").unwrap().unwrap();
+        assert_eq!(
+            repo.git(&["rev-parse", "side"]),
+            other.git(&["rev-parse", "side"])
+        );
+        assert_eq!(repo.git(&["branch", "--show-current"]).trim(), "main");
+        assert!(said.contains(&format!("git branch -f side {}", short_oid(old.trim()))));
+
+        // Commits made on `side` go to the remote without leaving `main`.
+        repo.git(&["checkout", "-q", "side"]);
+        repo.write("e", "5\n");
+        repo.commit("add e");
+        repo.git(&["checkout", "-q", "main"]);
+        push_branch(repo.path(), "side").unwrap();
+        assert_eq!(
+            remote.git(&["rev-parse", "side"]),
+            repo.git(&["rev-parse", "side"])
+        );
     }
 
     #[test]

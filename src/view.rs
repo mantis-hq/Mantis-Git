@@ -7,7 +7,6 @@ mod diff;
 mod dock;
 mod header;
 mod inspector;
-mod launcher;
 mod menu;
 mod notice;
 mod parts;
@@ -55,6 +54,7 @@ actions!(
         ToggleSidebar,
         CloseMenu,
         ActivateMenu,
+        ToggleChoice,
         NextField,
         PreviousField,
         PreviousConflict,
@@ -89,6 +89,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(sidebar, ToggleSidebar, context),
         KeyBinding::new("escape", CloseMenu, context),
         KeyBinding::new("enter", ActivateMenu, context),
+        KeyBinding::new("space", ToggleChoice, letters),
         KeyBinding::new("tab", NextField, context),
         KeyBinding::new("shift-tab", PreviousField, context),
         KeyBinding::new("alt-up", PreviousConflict, context),
@@ -731,6 +732,13 @@ impl Render for GraphView {
             }))
             .on_action(cx.listener(|this, _: &CloseMenu, _, cx| this.press_escape(cx)))
             .on_action(cx.listener(|this, _: &ActivateMenu, _, cx| this.press_enter(cx)))
+            .on_action(cx.listener(|this, _: &ToggleChoice, _, cx| {
+                // Only the welcome panel has a box to tick. Elsewhere Space goes on to
+                // whatever has focus, such as a button.
+                if !this.toggle_welcome_launcher(cx) {
+                    cx.propagate();
+                }
+            }))
             .on_action(
                 cx.listener(|this, _: &NextField, window, cx| this.step_field(1, window, cx)),
             )

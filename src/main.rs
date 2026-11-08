@@ -84,7 +84,7 @@ fn main() {
                     if let Some(questions) = questions {
                         workspace.answer_questions(questions, cx);
                     }
-                    workspace.offer_launcher(launcher, cx);
+                    workspace.welcome(launcher, cx);
                     workspace
                 })
             })

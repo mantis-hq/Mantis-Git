@@ -312,6 +312,7 @@ fn branches(names: &[&str]) -> Arc<gitclient_core::history::refs::Refs> {
             is_head: false,
             ahead_behind: None,
             upstream: None,
+            upstream_name: None,
         })
         .collect();
     Arc::new(refs)
@@ -1541,6 +1542,88 @@ fn the_requests_of_a_forge_are_listed_under_its_own_word_for_them(cx: &mut TestA
             view.request_rows_for_test(),
             ["Merge requests", "Asking origin…"]
         );
+    });
+}
+
+#[gpui_kit::test]
+fn a_branch_made_as_an_upstream_shows_in_the_sidebar_at_once(cx: &mut TestAppContext) {
+    use gitclient_core::menu::form::Form;
+    let remote = gitclient_core::testing::Repo::new();
+    remote.git(&["config", "receive.denyCurrentBranch", "ignore"]);
+    let (repo, view, mut cx) = open_repo(cx);
+    repo.git(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    view.update(&mut cx, |view, cx| view.reload(cx));
+    cx.executor().allow_parking();
+    for _ in 0..500 {
+        cx.run_until_parked();
+        if view.read_with(&cx, |view, _| !view.refs.remote_configs.is_empty()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    view.update(&mut cx, |view, cx| {
+        let form = Form::Upstream {
+            branch: "main".into(),
+            existing: Vec::new(),
+        };
+        view.open_form(form, cx)
+    });
+    cx.run_until_parked();
+    // The cursor starts in the branch, not the remote dropdown, so Enter answers.
+    cx.simulate_keystrokes("enter");
+    for _ in 0..500 {
+        cx.run_until_parked();
+        if view.read_with(&cx, |view, _| !view.refs.remotes.is_empty()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    view.read_with(&cx, |view, _| {
+        let names: Vec<_> = view.refs.remotes.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["origin/main"], "notice: {:?}", view.notice_text());
+    });
+}
+
+#[gpui_kit::test]
+fn a_branch_pushed_by_someone_else_shows_in_the_sidebar_after_a_fetch(cx: &mut TestAppContext) {
+    let remote = gitclient_core::testing::Repo::new();
+    remote.git(&["config", "receive.denyCurrentBranch", "ignore"]);
+    let repo = gitclient_core::testing::Repo::new();
+    repo.write("a", "1\n");
+    repo.commit("base");
+    repo.git(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    repo.git(&["push", "-q", "-u", "origin", "main"]);
+
+    let (view, mut cx) = open_view(cx);
+    view.update(&mut cx, |view, cx| view.open(repo.path().to_owned(), cx));
+    cx.executor().allow_parking();
+    let wait = |cx: &mut VisualTestContext, done: &dyn Fn(&GraphView) -> bool| {
+        for _ in 0..500 {
+            cx.run_until_parked();
+            if view.read_with(cx, |view, _| done(view)) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    wait(&mut cx, &|view| *view.status() == Status::Loaded);
+
+    // Someone else pushes a new branch with a new commit.
+    let other = gitclient_core::testing::Repo::new();
+    other.git(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    other.git(&["fetch", "-q", "origin", "main"]);
+    other.git(&["checkout", "-q", "-b", "feat/z", "FETCH_HEAD"]);
+    other.write("z", "z\n");
+    other.commit("add z");
+    other.git(&["push", "-q", "origin", "feat/z"]);
+
+    view.update(&mut cx, |view, cx| {
+        view.run_operation("Fetching", gitclient_core::repo::status::fetch, cx)
+    });
+    wait(&mut cx, &|view| view.refs.remotes.len() == 2);
+    view.read_with(&cx, |view, _| {
+        let names: Vec<_> = view.refs.remotes.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["origin/feat/z", "origin/main"]);
     });
 }
 

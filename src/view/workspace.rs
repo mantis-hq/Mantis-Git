@@ -7,7 +7,7 @@
 use super::dock::{Dock, NewTerminal, ToggleDock};
 use super::parts::TEXT_BODY;
 use super::updates::{Updates, render_band, shared_updates};
-use super::{GraphView, OpenWorktreeInTab, SwitchWorktree, launcher, parts, repository_name};
+use super::{GraphView, OpenWorktreeInTab, SwitchWorktree, dialog, parts, repository_name};
 use gitclient_core::install::menu_entry::Launcher;
 use gitclient_core::settings::state::{AppState, DockLayout};
 use gpui_kit::component::button::*;
@@ -138,14 +138,15 @@ impl Workspace {
         .detach();
     }
 
-    /// At launch, for a portable copy: mends the application menu launcher if it points at a
-    /// copy that has moved, and asks once whether to add it. Needs the state file, which is
-    /// where the question is remembered.
-    pub fn offer_launcher(&mut self, launcher: Option<Launcher>, cx: &mut Context<Self>) {
-        let (Some(launcher), Some(file)) = (launcher, self.state_file.clone()) else {
+    /// At launch: mends the application menu launcher of a portable copy if it points at a
+    /// copy that has moved, and shows the welcome panel once, with the choice of adding the
+    /// launcher when there is one to add. Needs the state file, which is where "shown" is
+    /// remembered.
+    pub fn welcome(&mut self, launcher: Option<Launcher>, cx: &mut Context<Self>) {
+        let Some(file) = self.state_file.clone() else {
             return;
         };
-        launcher::offer(self.active_view(), &launcher, &file, cx);
+        dialog::offer_welcome(self.active_view(), launcher.as_ref(), &file, cx);
     }
 
     /// Brings the dock back as it was left, with its terminals in the front repository.
@@ -210,10 +211,17 @@ impl Workspace {
     }
 
     /// New terminals start in the folder of the repository on show.
+    /// The dock shows the terminals of the front tab, so every tab's shells stay in its own
+    /// repository.
     fn sync_dock_directory(&self, cx: &mut Context<Self>) {
         let directory = self.tabs[self.active].read(cx).workdir();
-        self.dock
-            .update(cx, |dock, _| dock.set_directory(directory.as_deref()));
+        let open: Vec<_> = self.tabs.iter().map(Entity::entity_id).collect();
+        let scope = open[self.active];
+        self.dock.update(cx, |dock, _| {
+            dock.set_directory(directory.as_deref());
+            dock.set_scope(scope);
+            dock.retain_scopes(&open);
+        });
     }
 
     /// A tab with no repository, which listens for asks to switch worktree. The tab
@@ -324,6 +332,11 @@ impl Workspace {
         if changed {
             // A tab left alone may have missed commits made outside the app.
             self.tabs[index].update(cx, |view, cx| view.catch_up(cx));
+        }
+        if changed {
+            // A tab seen for the first time with the dock open gets a clean terminal.
+            self.sync_dock_directory(cx);
+            self.dock.update(cx, |dock, cx| dock.ensure_terminal(cx));
         }
         let focus = self.tabs[index].read(cx).focus_handle().clone();
         window.focus(&focus, cx);
@@ -636,9 +649,39 @@ mod tests {
         });
         assert_eq!(
             dock_state(&view, &cx),
-            (true, 1, 0),
-            "the log is always first"
+            (true, 0, 0),
+            "the closed tab's terminal went with it, and the log is always first"
         );
+    }
+
+    #[cfg(unix)]
+    #[gpui_kit::test]
+    fn each_tab_has_its_own_terminals_and_a_new_one_starts_clean(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_workspace(cx);
+        let front = |view: &Entity<Workspace>, cx: &VisualTestContext| {
+            view.read_with(cx, |view, cx| {
+                view.dock()
+                    .read(cx)
+                    .active_terminal()
+                    .map(Entity::entity_id)
+            })
+        };
+        cx.simulate_keystrokes("ctrl-shift-`");
+        let first = front(&view, &cx).expect("a terminal in the first tab");
+
+        // A tab opened with the dock showing starts with a terminal of its own. Ctrl T
+        // belongs to the shell while it has focus, so the tab is opened directly.
+        view.update_in(&mut cx, |view, window, cx| view.new_tab(window, cx));
+        assert_eq!(dock_state(&view, &cx), (true, 1, 1));
+        let second = front(&view, &cx).expect("a terminal in the second tab");
+        assert_ne!(first, second);
+
+        // Going back brings the first tab's terminal, and not the other's.
+        view.update_in(&mut cx, |view, window, cx| view.activate(0, window, cx));
+        assert_eq!(front(&view, &cx), Some(first));
+        view.update_in(&mut cx, |view, window, cx| view.activate(1, window, cx));
+        assert_eq!(front(&view, &cx), Some(second));
+        assert_eq!(dock_state(&view, &cx), (true, 1, 1));
     }
 
     #[gpui_kit::test]
