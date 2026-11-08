@@ -23,7 +23,6 @@ pub use workspace::Workspace;
 use gitclient_core::caches::{self, Caches};
 use gitclient_core::git::{self, Entry, LoadEvent, Refs};
 use gitclient_core::selection::Selection;
-use gitclient_core::state::{self, AppState};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
