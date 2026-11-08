@@ -99,7 +99,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   is a control that does nothing. A tab is a 28 px quiet button with the folder name; the
   active one takes the selected-row fill (Surface 0) and Text colour, the rest are Overlay 2.
   Tabs have a `×` to close and the strip ends in a `+`. `Ctrl T` opens a tab, `Ctrl W`
-  closes one, `Ctrl Tab` and `Ctrl Shift Tab` move between them, and `Ctrl O` opens a
+  closes one, `Ctrl Tab` and `Ctrl Shift Tab` move between them, and `Ctrl Shift PageUp`
+  and `Ctrl Shift PageDown` move the front tab along the strip. A tab also drags onto another
+  to take its place, and the tab under it tints with 14% Blue; the order is saved with the
+  open tabs (see "App"). `Ctrl O` opens a
   repository in a new tab, or in the current one while it is empty. Opening a repository
   that is already open switches to its tab. Closing the last tab leaves an empty one.
 - Graph window: 300 px branch sidebar, graph, 380 px inspector. A file's diff opens over

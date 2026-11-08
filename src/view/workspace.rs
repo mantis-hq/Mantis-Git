@@ -19,7 +19,15 @@ const WORKSPACE_CONTEXT: &str = "Workspace";
 
 actions!(
     workspace,
-    [NewTab, CloseTab, NextTab, PreviousTab, OpenRepositoryInTab]
+    [
+        NewTab,
+        CloseTab,
+        NextTab,
+        PreviousTab,
+        MoveTabLeft,
+        MoveTabRight,
+        OpenRepositoryInTab
+    ]
 );
 
 pub(super) fn bind_workspace_keys(cx: &mut App) {
@@ -37,7 +45,27 @@ pub(super) fn bind_workspace_keys(cx: &mut App) {
         KeyBinding::new("ctrl-shift-tab", PreviousTab, context),
         KeyBinding::new("ctrl-pagedown", NextTab, context),
         KeyBinding::new("ctrl-pageup", PreviousTab, context),
+        KeyBinding::new("ctrl-shift-pageup", MoveTabLeft, context),
+        KeyBinding::new("ctrl-shift-pagedown", MoveTabRight, context),
     ]);
+}
+
+/// What the cursor carries while a tab is dragged along the strip.
+#[derive(Clone)]
+struct DraggedTab {
+    index: usize,
+    name: SharedString,
+}
+
+impl Render for DraggedTab {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Drawn as the active tab, on the strip's fill so it stays readable over the graph.
+        div().rounded(px(6.)).bg(cx.theme().title_bar).child(
+            parts::tab("dragged-tab", true, cx)
+                .pr_3()
+                .child(self.name.clone()),
+        )
+    }
 }
 
 pub struct Workspace {
@@ -251,6 +279,28 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Moves the tab at `from` to `to`, so it sits where that tab was. The same tab stays
+    /// in front, and the new order is saved.
+    pub fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if from == to || from >= self.tabs.len() || to >= self.tabs.len() {
+            return;
+        }
+        let front = self.tabs[self.active].clone();
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        self.active = self.tabs.iter().position(|tab| *tab == front).unwrap_or(0);
+        self.persist(cx);
+        cx.notify();
+    }
+
+    /// Moves the front tab one place along the strip, stopping at either end.
+    fn shift_active(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let to = self.active as isize + delta;
+        if (0..self.tabs.len() as isize).contains(&to) {
+            self.move_tab(self.active, to as usize, cx);
+        }
+    }
+
     fn step(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.tabs.len() as isize;
         let next = (self.active as isize + delta).rem_euclid(count) as usize;
@@ -317,9 +367,23 @@ impl Workspace {
             .repository()
             .map(|path| path.display().to_string());
         let name = self.tab_name(index, cx);
+        let dragged = DraggedTab {
+            index,
+            name: name.clone().into(),
+        };
 
         parts::tab(("tab", index), index == self.active, cx)
             .on_click(cx.listener(move |this, _, window, cx| this.activate(index, window, cx)))
+            .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
+            .can_drop(move |dragged, _, _| {
+                dragged
+                    .downcast_ref::<DraggedTab>()
+                    .is_some_and(|source| source.index != index)
+            })
+            .drag_over::<DraggedTab>(|style, _, _, cx| style.bg(cx.theme().primary.opacity(0.14)))
+            .on_drop(cx.listener(move |this, source: &DraggedTab, _, cx| {
+                this.move_tab(source.index, index, cx)
+            }))
             .when_some(path, |tab, path| {
                 tab.tooltip(move |window, cx| Tooltip::new(path.clone()).build(window, cx))
             })
@@ -377,6 +441,12 @@ impl Render for Workspace {
                     )
                     .on_action(
                         cx.listener(|this, _: &PreviousTab, window, cx| this.step(-1, window, cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &MoveTabLeft, _, cx| this.shift_active(-1, cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &MoveTabRight, _, cx| this.shift_active(1, cx)),
                     )
                     .on_action(cx.listener(|this, _: &OpenRepositoryInTab, window, cx| {
                         this.prompt(window, cx)
@@ -592,6 +662,54 @@ mod tests {
 
         view.update_in(&mut cx, |view, window, cx| view.close_tab(0, window, cx));
         assert_eq!(AppState::load(&file).tabs, vec![two.path().to_owned()]);
+    }
+
+    #[gpui_kit::test]
+    fn moving_a_tab_keeps_the_same_one_in_front_and_saves_the_new_order(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_workspace(cx);
+        let state_dir = tempfile::tempdir().unwrap();
+        let file = state_dir.path().join("state");
+        let repos: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+        let paths: Vec<_> = repos.iter().map(|repo| repo.path().to_owned()).collect();
+        for path in &paths {
+            let path = path.clone();
+            view.update_in(&mut cx, |view, window, cx| view.open(path, window, cx));
+        }
+        view.update(&mut cx, |view, cx| view.remember_in(Some(file.clone()), cx));
+        let front = view.read_with(&cx, |view, _| view.active_view().clone());
+        assert_eq!(state(&view, &cx), (3, 2));
+
+        // Dropping the last tab on the first puts it first, and it stays in front.
+        view.update(&mut cx, |view, cx| view.move_tab(2, 0, cx));
+        assert_eq!(state(&view, &cx), (3, 0));
+        view.read_with(&cx, |view, _| assert_eq!(view.active_view(), &front));
+        let saved = AppState::load(&file);
+        assert_eq!(
+            saved.tabs,
+            vec![paths[2].clone(), paths[0].clone(), paths[1].clone()]
+        );
+        assert_eq!(saved.active, 0);
+
+        // The keys move the front tab one place, and stop at the ends.
+        cx.simulate_keystrokes("ctrl-shift-pageup");
+        assert_eq!(state(&view, &cx), (3, 0), "already first");
+        cx.simulate_keystrokes("ctrl-shift-pagedown ctrl-shift-pagedown ctrl-shift-pagedown");
+        assert_eq!(state(&view, &cx), (3, 2));
+        view.read_with(&cx, |view, _| assert_eq!(view.active_view(), &front));
+        let saved = AppState::load(&file);
+        assert_eq!(
+            saved.tabs,
+            vec![paths[0].clone(), paths[1].clone(), paths[2].clone()]
+        );
+        assert_eq!(saved.active, 2);
+
+        // Moving a tab behind the front one leaves the front tab where it is.
+        view.update(&mut cx, |view, cx| view.move_tab(0, 1, cx));
+        assert_eq!(state(&view, &cx), (3, 2));
+        assert_eq!(
+            AppState::load(&file).tabs,
+            vec![paths[1].clone(), paths[0].clone(), paths[2].clone()]
+        );
     }
 
     #[gpui_kit::test]
