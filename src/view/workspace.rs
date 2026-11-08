@@ -232,11 +232,13 @@ impl Workspace {
         })
     }
 
+    /// Adds an empty tab at the end of the strip and brings it forward.
     pub fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let view = self.make_tab(window, cx);
-        self.tabs.insert(self.active + 1, view);
-        self.track(self.active + 1, cx);
-        self.activate(self.active + 1, window, cx);
+        self.tabs.push(view);
+        let last = self.tabs.len() - 1;
+        self.track(last, cx);
+        self.activate(last, window, cx);
     }
 
     pub fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -500,13 +502,20 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn a_new_tab_opens_next_to_the_active_one_and_takes_focus(cx: &mut TestAppContext) {
+    fn a_new_tab_opens_at_the_end_and_takes_focus(cx: &mut TestAppContext) {
         let (view, mut cx) = open_workspace(cx);
         assert_eq!(state(&view, &cx), (1, 0));
         cx.simulate_keystrokes("ctrl-t");
         assert_eq!(state(&view, &cx), (2, 1));
         cx.simulate_keystrokes("ctrl-t");
         assert_eq!(state(&view, &cx), (3, 2));
+
+        // From the first tab, the new one still goes at the end, not beside it.
+        let first = view.read_with(&cx, |view, _| view.tab(0).unwrap().clone());
+        view.update_in(&mut cx, |view, window, cx| view.activate(0, window, cx));
+        cx.simulate_keystrokes("ctrl-t");
+        assert_eq!(state(&view, &cx), (4, 3));
+        view.read_with(&cx, |view, _| assert_eq!(view.tab(0), Some(&first)));
     }
 
     fn dock_state(view: &Entity<Workspace>, cx: &VisualTestContext) -> (bool, usize, usize) {

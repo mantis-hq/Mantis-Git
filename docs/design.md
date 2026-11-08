@@ -98,8 +98,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   Surface 0 bottom border. The strip only shows from the second tab on, since a lone tab
   is a control that does nothing. A tab is a 28 px quiet button with the folder name; the
   active one takes the selected-row fill (Surface 0) and Text colour, the rest are Overlay 2.
-  Tabs have a `×` to close and the strip ends in a `+`. `Ctrl T` opens a tab, `Ctrl W`
-  closes one, `Ctrl Tab` and `Ctrl Shift Tab` move between them, and `Ctrl Shift PageUp`
+  Tabs have a `×` to close and the strip ends in a `+`. A new tab opens at the end of the
+  strip. `Ctrl T` opens a tab, `Ctrl W` closes one, `Ctrl Tab` and `Ctrl Shift Tab` move between them, and `Ctrl Shift PageUp`
   and `Ctrl Shift PageDown` move the front tab along the strip. A tab also drags onto another
   to take its place, and the tab under it tints with 14% Blue; the order is saved with the
   open tabs (see "App"). `Ctrl O` opens a
