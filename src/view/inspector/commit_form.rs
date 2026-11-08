@@ -1,8 +1,8 @@
 //! The form at the foot of the inspector that turns what is staged into a commit.
 
-use super::parts::{TEXT_CHIP, TEXT_SMALL, checkbox, section_label};
-use super::{GraphView, Notice};
 use crate::theme::tokens;
+use crate::view::parts::{TEXT_CHIP, TEXT_SMALL, checkbox, section_label};
+use crate::view::{GraphView, Notice};
 use gitclient_core::settings::state::{self, AppState};
 use gitclient_core::tree::FileView;
 use gitclient_core::working;
@@ -18,11 +18,11 @@ use std::path::PathBuf;
 const SUBJECT_LIMIT: usize = 72;
 
 #[derive(Default)]
-pub(super) struct State {
+pub(in crate::view) struct State {
     kind: usize,
     breaking: bool,
     /// How the files are listed, which every list in the inspector shares.
-    pub(super) files_view: FileView,
+    pub(in crate::view) files_view: FileView,
     /// Where the way of listing is remembered for every repository. `None` in tests.
     state_file: Option<PathBuf>,
     subject: Option<Entity<InputState>>,
@@ -35,12 +35,12 @@ pub(super) struct State {
 
 impl GraphView {
     /// Sets the file where the way of listing files is remembered.
-    pub(super) fn set_state_file(&mut self, file: Option<PathBuf>) {
+    pub(in crate::view) fn set_state_file(&mut self, file: Option<PathBuf>) {
         self.commit.state_file = file;
     }
 
     /// How many commits the graph loads, as the app settings say.
-    pub(super) fn commit_limit(&self) -> u32 {
+    pub(in crate::view) fn commit_limit(&self) -> u32 {
         self.commit
             .state_file
             .as_deref()
@@ -51,7 +51,7 @@ impl GraphView {
 
     /// Lists the files in `view` and remembers it for every repository. The file's other
     /// settings are left as they are.
-    pub(super) fn set_files_view(&mut self, view: FileView, cx: &mut Context<Self>) {
+    pub(in crate::view) fn set_files_view(&mut self, view: FileView, cx: &mut Context<Self>) {
         self.commit.files_view = view;
         self.reset_file_scrolls();
         if let Some(file) = &self.commit.state_file {
@@ -65,14 +65,18 @@ impl GraphView {
     }
 
     /// Reads the way of listing files again, since another tab may have changed it.
-    pub(super) fn refresh_files_view(&mut self) {
+    pub(in crate::view) fn refresh_files_view(&mut self) {
         if let Some(file) = &self.commit.state_file {
             self.commit.files_view = AppState::load(file).files_view;
         }
     }
 
     /// Makes the form's inputs the first time they are needed.
-    pub(super) fn ensure_commit_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(in crate::view) fn ensure_commit_inputs(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.commit.subject.is_some() {
             return;
         }
@@ -120,7 +124,11 @@ impl GraphView {
 
     /// Empties the form once a commit has landed. Until then the message stays, so that a
     /// failing hook doesn't cost anyone what they wrote.
-    pub(super) fn clear_form_after_commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(in crate::view) fn clear_form_after_commit(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.busy.is_some() || !self.commit.needs_clearing {
             return;
         }
@@ -136,7 +144,7 @@ impl GraphView {
         }
     }
 
-    pub(super) fn render_commit_form(&self, cx: &mut Context<Self>) -> Div {
+    pub(in crate::view) fn render_commit_form(&self, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
         let (background, primary, on_primary) =

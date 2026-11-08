@@ -1,7 +1,6 @@
 //! The main window. This file owns the state shared across the app and the overall
 //! layout; each region and screen lives in its own module.
 
-mod commit_form;
 mod conflicts;
 mod diff;
 mod dock;
@@ -141,7 +140,7 @@ pub struct GraphView {
     sidebar: sidebar::State,
     inspector: inspector::State,
     diff: diff::State,
-    commit: commit_form::State,
+    commit: inspector::commit_form::State,
     conflict: conflicts::State,
     /// Set while another tab is showing, so that only the visible tab reacts to the
     /// window coming back to the front.
