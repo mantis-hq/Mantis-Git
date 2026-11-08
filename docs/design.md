@@ -377,7 +377,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   stash. The band says how to bring it back. The inspector doesn't list stashes; the sidebar does.
 - **Stashes:** the graph draws each as a commit on the one it was made on, joined to it by a
   line in its lane's colour, with a dashed hollow dot like the working changes (the index and
-  untracked commits git keeps beside it are not drawn). A plain click on a stash in the
+  untracked commits git keeps beside it are not drawn). Right-clicking its row opens the same
+  menu as the sidebar does. A plain click on a stash in the
   sidebar selects its row in the graph, which shows its changes in the inspector. The sidebar
   lists them under "Stashes", each row its number, what it says and
   the branch it was made on in Overlay 2. They pick like branches: a click picks one,
