@@ -3,6 +3,7 @@ name = "gitclient-core"
 # release-please keeps this in step with the app, and can't update an inherited version.
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 publish = false
 
 [features]
