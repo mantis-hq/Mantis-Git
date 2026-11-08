@@ -93,6 +93,35 @@ fn check_out_ref_line(current: Option<&str>, kind: RefKind, name: &str) -> Line 
     )
 }
 
+/// Pull and push for a local branch that isn't checked out, against the remote branch it
+/// follows. A branch that follows nothing gets neither: "Set upstream" is how it starts.
+fn sync_lines(refs: &Refs, name: &str) -> Vec<Line> {
+    let Some(branch) = refs.branches.iter().find(|b| b.name == name) else {
+        return Vec::new();
+    };
+    let Some(remote) = branch.upstream_name.as_deref() else {
+        return Vec::new();
+    };
+    // The counts come from the last fetch, so a pull is always offered: it asks the remote.
+    let pull = Line::item(
+        format!("Pull {remote} into {name}"),
+        Command::PullBranch {
+            branch: name.to_owned(),
+        },
+    );
+    let push = match branch.upstream {
+        None => Line::unavailable(format!("{remote} is gone, so there is nothing to push to")),
+        Some((0, _)) => Line::unavailable(format!("{name} has no commits {remote} lacks")),
+        Some((ahead, _)) => Line::item(
+            format!("Push {} to {remote}", crate::text::count(ahead, "commit")),
+            Command::PushBranch {
+                branch: name.to_owned(),
+            },
+        ),
+    };
+    vec![pull, push]
+}
+
 /// The menu for a branch, remote branch or tag.
 pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
     let current = refs.head_branch.as_deref();
@@ -118,6 +147,10 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
                 },
             ));
         }
+    }
+
+    if kind == RefKind::Branch && !is_current {
+        lines.extend(sync_lines(refs, &name));
     }
 
     lines.push(Line::item(
@@ -916,6 +949,7 @@ mod tests {
             is_head,
             ahead_behind: None,
             upstream: None,
+            upstream_name: None,
         };
         let mut refs = Refs::default();
         refs.head = Some("aaaaaaaa".into());
@@ -930,6 +964,51 @@ mod tests {
             color: LaneColor::default(),
         }];
         refs
+    }
+
+    #[test]
+    fn a_tracking_branch_that_is_not_checked_out_offers_pull_and_push() {
+        let mut refs = refs();
+        let target = Dragged {
+            kind: RefKind::Branch,
+            name: "feat/x".into(),
+        };
+        assert!(
+            !labels(&ref_menu(&refs, &target))
+                .iter()
+                .any(|l| l.starts_with("Pull"))
+        );
+
+        refs.branches[1].upstream_name = Some("origin/feat/x".into());
+        refs.branches[1].upstream = Some((2, 1));
+        let menu = ref_menu(&refs, &target);
+        let found = labels(&menu);
+        assert!(
+            found.contains(&"Pull origin/feat/x into feat/x"),
+            "{found:?}"
+        );
+        assert!(
+            found.contains(&"Push 2 commits to origin/feat/x"),
+            "{found:?}"
+        );
+
+        // Level: nothing to push, and the checked-out branch gets neither line.
+        refs.branches[1].upstream = Some((0, 0));
+        assert!(
+            ref_menu(&refs, &target)
+                .iter()
+                .all(|line| !matches!(line.command(), Some(Command::PushBranch { .. })))
+        );
+        refs.branches[0].upstream_name = Some("origin/main".into());
+        let main = Dragged {
+            kind: RefKind::Branch,
+            name: "main".into(),
+        };
+        assert!(
+            !labels(&ref_menu(&refs, &main))
+                .iter()
+                .any(|l| l.starts_with("Pull"))
+        );
     }
 
     #[test]
