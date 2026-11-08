@@ -102,7 +102,7 @@ impl GraphView {
                     return None;
                 };
                 form.keep_focus(&self.focus, window, cx);
-                form.frame(cx)
+                form.frame(window, cx)
             }
             Dialog::Ask(_) => {
                 self.ensure_ask_input(window, cx);
@@ -159,7 +159,8 @@ impl GraphView {
                         Button::new("dialog-answer")
                             .primary()
                             .small()
-                            .label(frame.action)
+                            .max_w(px(300.))
+                            .child(div().truncate().child(frame.action))
                             // A question is asked while git is busy, waiting for the answer.
                             .disabled(
                                 self.busy.is_some() && !matches!(self.dialog, Some(Dialog::Ask(_))),
