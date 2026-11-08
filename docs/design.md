@@ -352,9 +352,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   it. A folder in the tree has "Stage 3 files in <name>/" (or "Unstage"), and "Copy path".
 - **Discarding:** a file in "Unstaged" has a red "Discard changes in <name>" line in its
   menu, and a folder in the tree has "Discard changes in 3 files in <name>/". The
-  "Unstaged" header ends in a quiet "Discard all" button. Each asks in a popup first (see
-  "Delete confirmation"), and the sentence says plainly that nothing can bring the changes
-  back. It puts each tracked file back as the index has it, so staged changes stay, and
+  "Unstaged" header ends in a quiet "Discard all" button. Each asks in a popup first, which takes Enter twice (see
+  "Delete confirmation"), and the sentence says briefly that the changes can't be
+  brought back. It puts each tracked file back as the index has it, so staged changes stay, and
   deletes a file git doesn't track yet. Files in "Staged" can't be discarded from there:
   unstage them first.
 - **Merges in the inspector:** a merge lists and diffs what it brought in over its first

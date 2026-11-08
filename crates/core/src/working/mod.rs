@@ -364,11 +364,7 @@ pub fn discard_label(what: &str) -> String {
 /// What discarding `what` does, said before it runs. Discarding can't be undone, so the
 /// sentence says so.
 pub fn discard_warning(what: &str) -> String {
-    format!(
-        "This throws away the unstaged changes in {what} and puts each file back as the index \
-         has it. A file git doesn't track yet is deleted. Staged changes stay, and nothing can \
-         bring back what is discarded."
-    )
+    format!("This discards the unstaged changes in {what}, and they can't be brought back.")
 }
 
 /// Moves one hunk of a file into the index, or out of it. The hunk is by position in the
