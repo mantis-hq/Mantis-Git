@@ -6,11 +6,13 @@ use super::dialog::Confirm;
 use super::notice::Notice;
 use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
 use super::{GraphView, OpenWorktreeInTab, SwitchWorktree};
-use crate::theme::selected_row;
+use crate::icons::Icon;
+use crate::theme::{selected_row, tokens};
 use gitclient_core::history::refs::RefKind;
-use gitclient_core::menu::command::Command;
-use gitclient_core::menu::{self, FileSource, Line};
+use gitclient_core::menu::command::{Command, Weight};
+use gitclient_core::menu::{self, FileSource, Glyph, Line};
 use gitclient_core::repo::branch::{self, Dragged, Relation};
+use gitclient_core::repo::forge;
 use gitclient_core::working::Side;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
@@ -18,6 +20,7 @@ use gpui_kit::*;
 use std::path::Path;
 
 const MENU_WIDTH: Pixels = px(300.);
+const MENU_MAX_WIDTH: Pixels = px(460.);
 const ITEM_HEIGHT: Pixels = px(28.);
 /// Keeps the menu off the window's edge.
 const EDGE_MARGIN: Pixels = px(8.);
@@ -89,6 +92,22 @@ impl Render for DragGhost {
                 .child(self.name.clone()),
         )
     }
+}
+
+/// The picture a line starts with. A forge's mark takes the line's own colour, and the
+/// question takes Peach, the colour of what needs a decision.
+fn glyph_icon(glyph: Glyph, color: Hsla, peach: Hsla) -> impl IntoElement {
+    let (icon, color) = match glyph {
+        Glyph::GitHub => (Icon::GitHub, color),
+        Glyph::GitLab => (Icon::GitLab, color),
+        Glyph::Gitea => (Icon::Gitea, color),
+        Glyph::Unknown => (Icon::Question, peach),
+    };
+    svg()
+        .path(icon.path())
+        .size(px(14.))
+        .flex_none()
+        .text_color(color)
 }
 
 /// Makes a chip or sidebar row of a ref something to right-click and drag, and, for a local
@@ -194,6 +213,15 @@ impl GraphView {
             self.show_file(*index, cx);
         } else if let Command::StageFiles { paths, unstage } = &command {
             self.stage_paths(paths.clone(), *unstage, cx);
+        } else if let Some(question) = command.forge_question() {
+            // The forge isn't known, which only the repository's settings can put right.
+            let confirm = Confirm::new(
+                question.to_owned(),
+                "Open settings",
+                Weight::Popup,
+                |this, cx| super::settings::open_repository_page(this.repo.clone(), cx),
+            );
+            self.ask(confirm, cx);
         } else if let Some(url) = command.url() {
             cx.open_url(url);
             self.notice = command
@@ -335,7 +363,7 @@ impl GraphView {
 
     /// Works out what dropping `source` on `target` can mean, then asks. A local branch
     /// can take it in; a remote branch can only be the base of a request.
-    pub(super) fn drop_ref(
+    pub fn drop_ref(
         &mut self,
         source: Dragged,
         target: Dragged,
@@ -346,8 +374,17 @@ impl GraphView {
             return;
         };
         let (from, onto) = (source.name.clone(), target.name.clone());
+        let (remotes, chosen) = (self.refs.remote_configs.clone(), self.refs.forge);
+        let proposing = target.kind == RefKind::Remote;
         Self::spawn_blocking(
-            move || branch::relation(&workdir, &from, &onto),
+            move || {
+                // A remote branch is proposed on its forge, which a self-hosted server may
+                // have to be asked about before the menu can say. It is asked once.
+                if proposing {
+                    forge::warm(&remotes, &onto, chosen);
+                }
+                branch::relation(&workdir, &from, &onto)
+            },
             move |this, relation: Result<Relation, String>, cx| {
                 let lines = match target.kind {
                     RefKind::Remote => {
@@ -394,6 +431,7 @@ impl GraphView {
             theme.muted_foreground,
         );
         let (hover, active, danger) = (theme.list_hover, selected_row(theme), theme.danger);
+        let peach = tokens(theme.is_dark()).peach;
 
         let mut items = Vec::with_capacity(menu.lines.len());
         for (index, line) in menu.lines.iter().enumerate() {
@@ -412,6 +450,7 @@ impl GraphView {
                     label,
                     command,
                     danger: is_danger,
+                    glyph,
                 } => {
                     let highlighted = menu.highlighted == Some(index);
                     let color = match (command, is_danger) {
@@ -419,16 +458,28 @@ impl GraphView {
                         (_, true) => danger,
                         _ => text,
                     };
+                    // A line that does something is one row, cut short if it must be. One
+                    // that only explains is read in full, so it takes as many rows as it needs.
+                    let explains = command.is_none();
                     let row = div()
                         .id(("menu-item", index))
                         .h_flex()
-                        .h(ITEM_HEIGHT)
+                        .gap_2()
+                        .when(explains, |row| row.min_h(ITEM_HEIGHT).py_1())
+                        .when(!explains, |row| row.h(ITEM_HEIGHT))
                         .px_2()
                         .rounded(px(4.))
                         .text_size(TEXT_BODY)
                         .text_color(color)
                         .when(highlighted, |row| row.bg(active))
-                        .child(div().min_w_0().truncate().child(label.clone()));
+                        .children(glyph.map(|glyph| glyph_icon(glyph, color, peach)))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex_1()
+                                .when(!explains, |label| label.truncate())
+                                .child(label.clone()),
+                        );
                     match command.clone() {
                         Some(command) => row
                             .cursor_pointer()
@@ -449,7 +500,9 @@ impl GraphView {
                      cx: &mut Context<Self>| { this.close_menu(cx) };
         let panel = div()
             .v_flex()
-            .w(MENU_WIDTH)
+            // As wide as its longest line, so a line names its whole result, up to a limit.
+            .min_w(MENU_WIDTH)
+            .max_w(MENU_MAX_WIDTH)
             .p_1()
             .rounded(px(8.))
             .bg(panel)

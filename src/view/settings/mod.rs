@@ -61,12 +61,25 @@ impl Global for SettingsWindow {}
 /// Shows the settings window for `repo`, bringing the one that is already open to the
 /// front.
 pub fn open(repo: Option<PathBuf>, cx: &mut App) {
+    open_on(repo, None, cx)
+}
+
+/// Shows the settings window on the Repository page, where a repository's own settings
+/// are, such as the forge it is on.
+pub fn open_repository_page(repo: Option<PathBuf>, cx: &mut App) {
+    open_on(repo, Some(Page::Repository), cx)
+}
+
+fn open_on(repo: Option<PathBuf>, page: Option<Page>, cx: &mut App) {
     if let Some(SettingsWindow { handle, view }) = cx.try_global::<SettingsWindow>() {
         let (handle, view) = (*handle, view.clone());
         let shown = handle.update(cx, |_, window, cx| {
             window.activate_window();
             view.update(cx, |settings, cx| {
-                settings.set_repository(repo.clone(), window, cx)
+                settings.set_repository(repo.clone(), window, cx);
+                if let Some(page) = page {
+                    settings.open_page(page, cx);
+                }
             });
         });
         if shown.is_ok() {
@@ -85,7 +98,13 @@ pub fn open(repo: Option<PathBuf>, cx: &mut App) {
     };
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
         crate::theme::follow_system(window, cx);
-        cx.new(|cx| Settings::new(repo, Scope::Global, window, cx))
+        cx.new(|cx| {
+            let mut settings = Settings::new(repo, Scope::Global, window, cx);
+            if let Some(page) = page {
+                settings.open_page(page, cx);
+            }
+            settings
+        })
     });
     if let Ok((handle, view)) = opened {
         cx.set_global(SettingsWindow { handle, view });
@@ -300,6 +319,8 @@ pub struct Settings {
     /// How the open repository's commit graph stands, and whether it is being written.
     commit_graph: repository::GraphState,
     writing_graph: bool,
+    /// Which forge the open repository is on, once read.
+    forge_choice: Option<gitclient_core::repo::forge::choice::Choice>,
     feedback: Feedback,
     /// Inputs the user has typed in since they were last saved or filled in.
     dirty: std::collections::HashSet<String>,
@@ -437,6 +458,7 @@ impl Settings {
             channel,
             commit_graph: Default::default(),
             writing_graph: false,
+            forge_choice: None,
             feedback: Feedback::None,
             dirty: Default::default(),
             _new_inputs: new_inputs,
@@ -466,7 +488,10 @@ impl Settings {
         self.feedback = Feedback::None;
         match page {
             Page::App => self.load_cache_size(cx),
-            Page::Repository => self.load_commit_graph(cx),
+            Page::Repository => {
+                self.load_commit_graph(cx);
+                self.load_forge_choice(cx);
+            }
             Page::GitConfig | Page::Identities => {}
         }
         cx.notify();
@@ -505,8 +530,10 @@ impl Settings {
         self.feedback = Feedback::None;
         self.commit_graph = Default::default();
         self.writing_graph = false;
+        self.forge_choice = None;
         if self.page == Page::Repository {
             self.load_commit_graph(cx);
+            self.load_forge_choice(cx);
         }
         self.load(window, cx);
         self.load_suggestions(window, cx);

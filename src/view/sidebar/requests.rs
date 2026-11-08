@@ -41,8 +41,33 @@ impl GraphView {
     /// The remote whose requests are shown, with where it is on the web. `None` when no
     /// remote is on a forge gitclient knows, and then the section isn't drawn.
     pub(super) fn request_source(&self) -> Option<(Remote, Site)> {
-        let (remote, site) = forge::pick(&self.refs.remote_configs)?;
+        let (remote, site) = forge::pick(&self.refs.remote_configs, self.refs.forge)?;
         Some((remote.clone(), site))
+    }
+
+    /// Asks a server that nothing else identifies what it is, once for each remote the
+    /// view shows, so that a self-hosted GitLab or Gitea gets its section. It runs after
+    /// a load and costs three small requests to a host the repository already talks to.
+    pub(in crate::view) fn probe_forge(&mut self, cx: &mut Context<Self>) {
+        let Some((_, address)) = forge::pick_unknown(&self.refs.remote_configs, self.refs.forge)
+        else {
+            return;
+        };
+        let origin = address.origin();
+        if self.sidebar.probed.as_deref() == Some(origin.as_str()) {
+            return;
+        }
+        self.sidebar.probed = Some(origin);
+        Self::spawn_blocking(
+            move || forge::probe::detect(&address, &forge::probe::Web),
+            |_, found, cx| {
+                // The section is drawn from what the probe left in memory.
+                if found.is_some() {
+                    cx.notify();
+                }
+            },
+            cx,
+        );
     }
 
     fn request_key(&self, remote: &Remote, site: &Site) -> String {

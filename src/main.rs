@@ -40,52 +40,54 @@ fn main() {
         None => Caches::memory_only(),
     };
 
-    gpui_kit::application().run(move |cx| {
-        gpui_kit::init(cx);
-        theme::init(cx);
-        view::bind_keys(cx);
-        view::install_caches(caches, cx);
-        let updates = view::install_updates(channel, cx);
-        if check_updates {
-            updates.update(cx, |updates, cx| updates.check(cx));
-        }
-
-        // Settings is an add-on to the main window, so closing it alone keeps the app open.
-        cx.on_window_closed(|cx, _| {
-            if view::should_quit(cx) {
-                cx.quit()
+    gpui_kit::application()
+        .with_assets(gitclient::icons::Icons)
+        .run(move |cx| {
+            gpui_kit::init(cx);
+            theme::init(cx);
+            view::bind_keys(cx);
+            view::install_caches(caches, cx);
+            let updates = view::install_updates(channel, cx);
+            if check_updates {
+                updates.update(cx, |updates, cx| updates.check(cx));
             }
-        })
-        .detach();
 
-        let options = WindowOptions {
-            titlebar: Some(TitlebarOptions {
-                title: Some("gitclient".into()),
-                ..Default::default()
-            }),
-            window_bounds: Some(WindowBounds::centered(size(px(1200.), px(800.)), cx)),
-            // Wayland matches the window to gitclient.desktop by this, for its icon.
-            app_id: Some("gitclient".into()),
-            ..Default::default()
-        };
-        gpui_kit::open_window(options, cx, |window, cx| {
-            theme::follow_system(window, cx);
-            cx.new(|cx| {
-                let mut workspace = Workspace::new(window, cx);
-                for repo in startup.tabs {
-                    workspace.open(repo, window, cx);
+            // Settings is an add-on to the main window, so closing it alone keeps the app open.
+            cx.on_window_closed(|cx, _| {
+                if view::should_quit(cx) {
+                    cx.quit()
                 }
-                workspace.activate(startup.active, window, cx);
-                workspace.restore_dock(dock, cx);
-                // Only now, so that opening the tabs one by one doesn't overwrite the rest.
-                workspace.remember_in(state_file, cx);
-                if let Some(questions) = questions {
-                    workspace.answer_questions(questions, cx);
-                }
-                workspace.welcome(launcher, cx);
-                workspace
             })
-        })
-        .expect("Failed to open window");
-    });
+            .detach();
+
+            let options = WindowOptions {
+                titlebar: Some(TitlebarOptions {
+                    title: Some("gitclient".into()),
+                    ..Default::default()
+                }),
+                window_bounds: Some(WindowBounds::centered(size(px(1200.), px(800.)), cx)),
+                // Wayland matches the window to gitclient.desktop by this, for its icon.
+                app_id: Some("gitclient".into()),
+                ..Default::default()
+            };
+            gpui_kit::open_window(options, cx, |window, cx| {
+                theme::follow_system(window, cx);
+                cx.new(|cx| {
+                    let mut workspace = Workspace::new(window, cx);
+                    for repo in startup.tabs {
+                        workspace.open(repo, window, cx);
+                    }
+                    workspace.activate(startup.active, window, cx);
+                    workspace.restore_dock(dock, cx);
+                    // Only now, so that opening the tabs one by one doesn't overwrite the rest.
+                    workspace.remember_in(state_file, cx);
+                    if let Some(questions) = questions {
+                        workspace.answer_questions(questions, cx);
+                    }
+                    workspace.welcome(launcher, cx);
+                    workspace
+                })
+            })
+            .expect("Failed to open window");
+        });
 }

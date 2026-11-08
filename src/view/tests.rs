@@ -1459,16 +1459,18 @@ fn dropping_a_remote_branch_on_another_offers_a_request_on_the_forge(cx: &mut Te
     view.update(&mut cx, |view, _| {
         assert_eq!(
             menu_labels(view),
-            ["feat/x already has everything in main, so there is nothing to propose."]
+            ["Nothing to propose: feat/x has all of main."]
         );
     });
 }
 
 #[gpui_kit::test]
-fn a_remote_that_is_not_on_a_forge_says_so_when_one_branch_is_dropped_on_another(
+fn a_forge_that_is_not_known_is_still_offered_with_a_question_and_explained_in_a_popup(
     cx: &mut TestAppContext,
 ) {
-    let (_repo, view, mut cx) = open_repo_with_remote(cx, "git@git.acme.com:octo/cat.git");
+    use gitclient_core::menu::Glyph;
+    // Nothing answers at this address, so no probe can say what is there.
+    let (_repo, view, mut cx) = open_repo_with_remote(cx, "http://127.0.0.1:1/octo/cat.git");
     view.update(&mut cx, |view, cx| {
         view.drop_ref(
             remote_branch("origin/feat/x"),
@@ -1478,12 +1480,21 @@ fn a_remote_that_is_not_on_a_forge_says_so_when_one_branch_is_dropped_on_another
         );
     });
     cx.run_until_parked();
-    view.update(&mut cx, |view, _| {
-        assert_eq!(
-            menu_labels(view),
-            ["gitclient can't tell whether origin is on GitHub, GitLab or Gitea."]
-        );
+    let ask = view.update(&mut cx, |view, _| {
+        assert_eq!(menu_labels(view), ["Open a request for feat/x into main"]);
+        let lines = view.menu.as_ref().unwrap().lines();
+        assert_eq!(lines[1].glyph(), Some(Glyph::Unknown));
+        lines[1].command().cloned().unwrap()
     });
+
+    // Choosing it asks, in a popup, instead of doing something it can't.
+    view.update(&mut cx, |view, cx| view.choose(ask, cx));
+    view.update(&mut cx, |view, _| {
+        assert!(view.menu.is_none());
+        assert!(view.is_confirming());
+    });
+    cx.simulate_keystrokes("escape");
+    view.update(&mut cx, |view, _| assert!(!view.is_confirming()));
 }
 
 #[gpui_kit::test]
@@ -1618,7 +1629,7 @@ fn a_branch_pushed_by_someone_else_shows_in_the_sidebar_after_a_fetch(cx: &mut T
 
 #[gpui_kit::test]
 fn no_section_is_drawn_for_a_remote_on_no_known_forge(cx: &mut TestAppContext) {
-    let (_repo, view, cx) = open_repo_with_remote(cx, "git@git.acme.com:octo/cat.git");
+    let (_repo, view, cx) = open_repo_with_remote(cx, "http://127.0.0.1:1/octo/cat.git");
     view.read_with(&cx, |view, _| {
         assert!(view.request_rows_for_test().is_empty());
     });

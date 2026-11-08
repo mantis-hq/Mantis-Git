@@ -16,7 +16,9 @@ mod sidebar;
 mod updates;
 mod workspace;
 
-pub use settings::{OpenSettings, Settings, open as open_settings, should_quit};
+pub use settings::{
+    OpenSettings, Settings, open as open_settings, open_repository_page, should_quit,
+};
 pub use updates::{Updates, install_updates};
 pub use workspace::Workspace;
 
@@ -443,6 +445,7 @@ impl GraphView {
         self.load_task = None;
         self.select_head_if_unselected(cx);
         self.refresh_spotlight();
+        self.probe_forge(cx);
         self.check_paused_operation(cx);
         cx.notify();
     }

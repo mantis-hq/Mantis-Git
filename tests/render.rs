@@ -12,10 +12,10 @@ fn main() {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod render {
+    use gitclient::icons::Icons;
     use gitclient::theme;
     use gitclient::view::{self, GraphView, Status};
     use gitclient_core::testing::{Repo, git};
-    use gpui_kit::assets::Assets;
     use gpui_kit::component::{Theme, ThemeMode};
     use gpui_kit::{
         AnyWindowHandle, AppContext as _, Bounds, Entity, HeadlessAppContext, WindowBounds,
@@ -103,7 +103,7 @@ mod render {
     fn app(mode: ThemeMode) -> HeadlessAppContext {
         let mut cx = HeadlessAppContext::with_platform(
             gpui_kit::platform::current_platform(true).text_system(),
-            Arc::new(Assets),
+            Arc::new(Icons),
             gpui_kit::platform::current_headless_renderer,
         );
         cx.update(|cx| {
@@ -362,6 +362,83 @@ mod render {
             let x = frame.width() / 2 - (205. * scale) as u32;
             let y = frame.height() / 2;
             assert_eq!(*frame.get_pixel(x, y), mantle, "{name}: the card is drawn");
+        }
+    }
+
+    /// Dropping one remote branch on another opens a menu whose line starts with a picture
+    /// of the forge, or with a question in Peach when the forge isn't known.
+    fn assert_request_menus_draw() {
+        use gitclient_core::history::refs::RefKind;
+        use gitclient_core::repo::branch::Dragged;
+        let mantle = image::Rgba([0x18, 0x18, 0x25, 0xff]);
+        let peach = image::Rgba([0xfa, 0xb3, 0x87, 0xff]);
+        let remote_branch = |name: &str| Dragged {
+            kind: RefKind::Remote,
+            name: name.into(),
+        };
+        // Nothing answers at the second address, so no probe can tell what is there.
+        for (name, url, question) in [
+            ("menu-request-github", "git@github.com:octo/cat.git", false),
+            (
+                "menu-request-unknown",
+                "http://127.0.0.1:1/octo/cat.git",
+                true,
+            ),
+        ] {
+            let repo = fixture();
+            git(repo.path(), &["remote", "add", "origin", url]);
+            git(
+                repo.path(),
+                &["update-ref", "refs/remotes/origin/main", "main"],
+            );
+            git(
+                repo.path(),
+                &["update-ref", "refs/remotes/origin/wip", "wip"],
+            );
+            let mut cx = app(ThemeMode::Dark);
+            let (handle, view) = open(&mut cx, repo.path());
+            cx.update_window(handle, |_, _, cx| {
+                view.update(cx, |view, cx| {
+                    view.drop_ref(
+                        remote_branch("origin/wip"),
+                        remote_branch("origin/main"),
+                        gpui_kit::point(px(300.), px(300.)),
+                        cx,
+                    )
+                });
+            })
+            .unwrap();
+            // The relation is read by git on another thread.
+            for _ in 0..50 {
+                cx.run_until_parked();
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let frame = capture(&mut cx, handle, name);
+
+            // The menu starts at (300, 300) with 4 px of padding and a 24 px heading, so
+            // its first line is under y = 328, and its picture starts 8 px in from the edge.
+            let scale = frame.width() as f32 / 1200.;
+            let at = |v: f32| (v * scale) as u32;
+            let (mut ink, mut peachy) = (0, 0);
+            for y in at(334.)..at(350.) {
+                for x in at(312.)..at(326.) {
+                    let pixel = *frame.get_pixel(x, y);
+                    ink += (pixel != mantle) as u32;
+                    let near = |a: u8, b: u8| a.abs_diff(b) < 24;
+                    peachy += (near(pixel.0[0], peach.0[0])
+                        && near(pixel.0[1], peach.0[1])
+                        && near(pixel.0[2], peach.0[2])) as u32;
+                }
+            }
+            assert!(
+                ink > 20,
+                "{name}: a picture is drawn before the line ({ink})"
+            );
+            if question {
+                assert!(peachy > 5, "{name}: the question is Peach ({peachy})");
+            } else {
+                assert_eq!(peachy, 0, "{name}: a forge's mark is not Peach");
+            }
         }
     }
 
@@ -624,6 +701,7 @@ mod render {
         assert_draws_lanes(ThemeMode::Light, "graph-light");
         assert_dock_shows_the_log_and_a_terminal();
         assert_forms_draw();
+        assert_request_menus_draw();
         assert_welcome_draws(ThemeMode::Dark, "dark");
         assert_welcome_draws(ThemeMode::Light, "light");
         assert_sidebar_pins_submodules();
