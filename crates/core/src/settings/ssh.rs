@@ -4,8 +4,8 @@
 //!
 //! Everything here blocks, so call it off the UI thread.
 
-use crate::config::home_directory;
 use crate::ops;
+use crate::settings::config::home_directory;
 use std::path::{Path, PathBuf};
 
 /// A remote of a repository, and the SSH host it goes through.

@@ -12,10 +12,10 @@ use super::parts::{TEXT_BODY, TEXT_SMALL, TEXT_STATUS};
 use super::repository_name;
 use crate::theme::{selected_row, tokens};
 use gitclient_core::cache::keys::Caches;
-use gitclient_core::config::{self, Kind, Scope, Setting, Sources, Values, Version};
-use gitclient_core::identity::{self, Book, Choice, Identity, Match, Profile, RepoState};
-use gitclient_core::ssh;
-use gitclient_core::state::{
+use gitclient_core::settings::config::{self, Kind, Scope, Setting, Sources, Values, Version};
+use gitclient_core::settings::identity::{self, Book, Choice, Identity, Match, Profile, RepoState};
+use gitclient_core::settings::ssh;
+use gitclient_core::settings::state::{
     self, AppState, CACHE_SIZES_MB, COMMIT_LIMITS, bytes_label, cache_size_label,
 };
 use gitclient_core::text::count;
@@ -2321,7 +2321,7 @@ fn sync(
 #[cfg(test)]
 mod tests {
     use super::{Feedback, Match, Scope, Settings, Target, config, identity};
-    use gitclient_core::state::AppState;
+    use gitclient_core::settings::state::AppState;
     use gitclient_core::testing::Repo;
     use gpui_kit::component::input::InputEvent;
     use gpui_kit::{Entity, Focusable as _, TestAppContext, VisualTestContext};
@@ -2706,7 +2706,7 @@ mod tests {
 
         view.update_in(&mut cx, |view, window, cx| {
             view.pick_identity(
-                gitclient_core::identity::Choice::Identity("work".into()),
+                gitclient_core::settings::identity::Choice::Identity("work".into()),
                 window,
                 cx,
             );
@@ -2719,7 +2719,7 @@ mod tests {
 
         view.update_in(&mut cx, |view, window, cx| {
             view.pick_identity(
-                gitclient_core::identity::Choice::Identity("home".into()),
+                gitclient_core::settings::identity::Choice::Identity("home".into()),
                 window,
                 cx,
             );
@@ -2732,7 +2732,11 @@ mod tests {
         );
 
         view.update_in(&mut cx, |view, window, cx| {
-            view.pick_identity(gitclient_core::identity::Choice::Automatic, window, cx);
+            view.pick_identity(
+                gitclient_core::settings::identity::Choice::Automatic,
+                window,
+                cx,
+            );
         });
         settle(&mut cx);
         assert_eq!(pinned(&cx), None);

@@ -3,16 +3,13 @@
 
 pub mod cache;
 pub mod commit;
-pub mod config;
 pub mod history;
-pub mod identity;
 pub mod log;
 pub mod menu;
 pub mod ops;
 pub mod patch;
 pub mod repo;
-pub mod ssh;
-pub mod state;
+pub mod settings;
 pub mod terminal;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

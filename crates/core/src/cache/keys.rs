@@ -167,7 +167,7 @@ pub fn fingerprint(repo: &Path) -> String {
         );
     }
     add("attributes", read(repo.join(".gitattributes")));
-    if let Some(home) = crate::state::config_dir() {
+    if let Some(home) = crate::settings::state::config_dir() {
         add(
             "global-attributes",
             read(home.join("git").join("attributes")),

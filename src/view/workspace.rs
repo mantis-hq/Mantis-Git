@@ -7,7 +7,7 @@
 use super::dock::{Dock, NewTerminal, ToggleDock};
 use super::parts::TEXT_BODY;
 use super::{GraphView, OpenWorktreeInTab, SwitchWorktree, parts, repository_name};
-use gitclient_core::state::AppState;
+use gitclient_core::settings::state::AppState;
 use gpui_kit::component::button::*;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
@@ -401,7 +401,7 @@ fn canonical(path: &Path) -> PathBuf {
 mod tests {
     use super::Workspace;
     use crate::view::bind_keys;
-    use gitclient_core::state::AppState;
+    use gitclient_core::settings::state::AppState;
     use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 
     fn open_workspace(cx: &mut TestAppContext) -> (Entity<Workspace>, VisualTestContext) {

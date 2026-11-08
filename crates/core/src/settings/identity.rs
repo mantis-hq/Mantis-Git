@@ -15,7 +15,7 @@
 //! Every read and write goes through `git config`, so git decides where the files live
 //! and how the conditions are read. Everything here blocks, so call it off the UI thread.
 
-use crate::config::{self, Scope, Sources, Values};
+use crate::settings::config::{self, Scope, Sources, Values};
 use std::path::{Path, PathBuf};
 
 const REMOTE: &str = "hasconfig:remote.*.url:";

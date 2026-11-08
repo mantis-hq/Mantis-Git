@@ -731,7 +731,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn the_way_files_are_listed_is_saved_for_every_repository(cx: &mut TestAppContext) {
-        use gitclient_core::state::AppState;
+        use gitclient_core::settings::state::AppState;
         use gitclient_core::tree::FileView;
         let (view, mut cx) = open_view(cx);
         let dir = tempfile::tempdir().unwrap();

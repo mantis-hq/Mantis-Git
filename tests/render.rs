@@ -434,8 +434,8 @@ mod render {
     /// Every page of the settings window, against a config file with something in it.
     fn assert_settings_pages_draw(mode: ThemeMode, suffix: &str) {
         use gitclient::view::Settings;
-        use gitclient_core::config::{self, Scope};
-        use gitclient_core::identity::{self, Identity, Match, Profile};
+        use gitclient_core::settings::config::{self, Scope};
+        use gitclient_core::settings::identity::{self, Identity, Match, Profile};
 
         let repo = fixture();
         let dir = tempfile::tempdir().unwrap();

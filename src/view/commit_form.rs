@@ -3,7 +3,7 @@
 use super::parts::{TEXT_CHIP, TEXT_SMALL, checkbox, section_label};
 use super::{GraphView, Notice};
 use crate::theme::tokens;
-use gitclient_core::state::{self, AppState};
+use gitclient_core::settings::state::{self, AppState};
 use gitclient_core::tree::FileView;
 use gitclient_core::working;
 use gitclient_core::working::message::{self, COMMIT_TYPES};
