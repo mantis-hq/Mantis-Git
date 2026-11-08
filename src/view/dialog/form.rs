@@ -7,10 +7,48 @@ use crate::theme::tokens;
 use crate::view::GraphView;
 use crate::view::parts::section_label;
 use gitclient_core::menu::form::Form;
+use gpui_kit::component::IndexPath;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+
+type PickState = SelectState<SearchableVec<String>>;
+
+/// What one field of a form is drawn as: a typed input, or a dropdown with a search box
+/// for a field that only takes what the repository already has.
+enum Control {
+    Text(Entity<InputState>),
+    Pick(Entity<PickState>),
+}
+
+impl Control {
+    fn value(&self, cx: &App) -> String {
+        match self {
+            Self::Text(input) => input.read(cx).value().to_string(),
+            Self::Pick(select) => select
+                .read(cx)
+                .selected_value()
+                .cloned()
+                .unwrap_or_default(),
+        }
+    }
+
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        match self {
+            Self::Text(input) => input.focus_handle(cx),
+            Self::Pick(select) => select.focus_handle(cx),
+        }
+    }
+
+    fn element(&self) -> AnyElement {
+        match self {
+            Self::Text(input) => Input::new(input).into_any_element(),
+            Self::Pick(select) => Select::new(select).into_any_element(),
+        }
+    }
+}
 
 /// An open form. Its inputs are made on the next draw, which is the first time there is a
 /// window to make them in.
@@ -18,7 +56,7 @@ pub(in crate::view) struct FormDialog {
     pub form: Form,
     /// What the inputs start with.
     initial: Vec<String>,
-    inputs: Vec<Entity<InputState>>,
+    inputs: Vec<Control>,
     /// Why the last attempt was turned down, by the form's own checks or by git. Typing
     /// clears it.
     problem: Option<SharedString>,
@@ -31,10 +69,7 @@ impl FormDialog {
         if self.inputs.is_empty() {
             return self.initial.clone();
         }
-        self.inputs
-            .iter()
-            .map(|input| input.read(cx).value().to_string())
-            .collect()
+        self.inputs.iter().map(|input| input.value(cx)).collect()
     }
 
     /// The index of the input with the cursor in it.
@@ -65,20 +100,40 @@ impl FormDialog {
                 .child(self.form.title())
                 .into_any_element(),
         ];
-        content.extend(
-            self.form
-                .fields()
-                .iter()
-                .zip(&self.inputs)
-                .map(|(field, input)| {
-                    div()
-                        .v_flex()
-                        .gap_1()
-                        .child(section_label(muted).child(field.label))
-                        .child(Input::new(input))
-                        .into_any_element()
-                }),
-        );
+        let fields = self
+            .form
+            .fields()
+            .iter()
+            .zip(&self.inputs)
+            .map(|(field, control)| {
+                div()
+                    .v_flex()
+                    .gap_1()
+                    .flex_1()
+                    .min_w_0()
+                    .child(section_label(muted).child(field.label))
+                    .child(control.element())
+            });
+        match self.form.separator() {
+            // The fields share a row, as the two halves of `origin/main` do.
+            Some(separator) => {
+                let mut row = div().h_flex().items_end().gap_2();
+                for (i, field) in fields.enumerate() {
+                    if i > 0 {
+                        row = row.child(
+                            div()
+                                .h(px(32.))
+                                .items_center()
+                                .text_color(muted)
+                                .child(separator),
+                        );
+                    }
+                    row = row.child(field);
+                }
+                content.push(row.into_any_element());
+            }
+            None => content.extend(fields.map(IntoElement::into_any_element)),
+        }
         content.extend(self.problem.clone().map(|problem| {
             div()
                 .text_color(tokens(theme.is_dark()).peach)
@@ -135,28 +190,47 @@ impl GraphView {
         if !dialog.inputs.is_empty() {
             return;
         }
-        let fields = dialog.form.fields().iter().zip(dialog.initial.clone());
-        let inputs: Vec<_> = fields
-            .map(|(field, value)| {
-                cx.new(|cx| {
+        let (form, initial) = (dialog.form.clone(), dialog.initial.clone());
+        let mut inputs = Vec::new();
+        let mut events = Vec::new();
+        for (index, (field, value)) in form.fields().iter().zip(&initial).enumerate() {
+            // Enter isn't taken here: it goes on to this view's own binding, as it does
+            // from anywhere else in the window, so a form answers to the same keys as a
+            // question.
+            if form.is_pick(index) {
+                let options = form.options(index, &initial, &self.refs);
+                let at = options.iter().position(|option| option == value);
+                let select = cx.new(|cx| {
+                    SelectState::new(
+                        SearchableVec::new(options),
+                        at.map(IndexPath::new),
+                        window,
+                        cx,
+                    )
+                    .searchable(true)
+                });
+                events.push(cx.subscribe_in(
+                    &select,
+                    window,
+                    |this, _, _: &SelectEvent<SearchableVec<String>>, window, cx| {
+                        this.pick_changed(window, cx)
+                    },
+                ));
+                inputs.push(Control::Pick(select));
+            } else {
+                let input = cx.new(|cx| {
                     InputState::new(window, cx)
                         .placeholder(field.placeholder)
-                        .default_value(value)
-                })
-            })
-            .collect();
-        // Enter isn't taken here: it goes on to this view's own binding, as it does from
-        // anywhere else in the window, so a form answers to the same keys as a question.
-        let events = inputs
-            .iter()
-            .map(|input| {
-                cx.subscribe(input, |this, _, event: &InputEvent, cx| {
+                        .default_value(value.clone())
+                });
+                events.push(cx.subscribe(&input, |this, _, event: &InputEvent, cx| {
                     if matches!(event, InputEvent::Change) {
                         this.form_changed(cx);
                     }
-                })
-            })
-            .collect();
+                }));
+                inputs.push(Control::Text(input));
+            }
+        }
         if let Some(first) = inputs.first() {
             window.focus(&first.focus_handle(cx), cx);
         }
@@ -187,6 +261,23 @@ impl GraphView {
             dialog.problem = None;
         }
         cx.notify();
+    }
+
+    /// A dropdown took a choice. What the later dropdowns offer depends on it (a remote's
+    /// branches), so each is given its options again and keeps its choice if it still has it.
+    fn pick_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(Dialog::Form(dialog)) = &self.dialog else {
+            return;
+        };
+        for (index, control) in dialog.inputs.iter().enumerate() {
+            if let Control::Pick(select) = control {
+                let options = dialog.form.options(index, &dialog.values(cx), &self.refs);
+                select.update(cx, |select, cx| {
+                    select.set_items(SearchableVec::new(options), window, cx)
+                });
+            }
+        }
+        self.form_changed(cx);
     }
 
     /// Runs what the form asks for. It stays open, with the button off, until git

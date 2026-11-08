@@ -48,10 +48,16 @@ const REMOTE_FIELDS: &[Field] = &[
     },
 ];
 
-const UPSTREAM_FIELDS: &[Field] = &[Field {
-    label: "Remote branch",
-    placeholder: "origin/main",
-}];
+const UPSTREAM_FIELDS: &[Field] = &[
+    Field {
+        label: "Remote",
+        placeholder: "origin",
+    },
+    Field {
+        label: "Branch",
+        placeholder: "main",
+    },
+];
 
 const SUBMODULE_ADD_FIELDS: &[Field] = &[
     Field {
@@ -136,17 +142,53 @@ impl Form {
                 }
             }
             Self::Upstream { branch } => {
-                // The remote branch with the same name is the usual answer.
-                let guess = refs.remotes.iter().find(|r| {
-                    r.name
-                        .split_once('/')
-                        .is_some_and(|(_, name)| name == branch)
+                // The remote that has a branch of the same name is the usual answer,
+                // else the first one.
+                let remotes = self.options(0, &[], refs);
+                let same = remotes.iter().find(|remote| {
+                    refs.remotes
+                        .iter()
+                        .any(|r| r.name == format!("{remote}/{branch}"))
                 });
-                return vec![guess.map(|r| r.name.clone()).unwrap_or_default()];
+                let remote = same.or(remotes.first()).cloned().unwrap_or_default();
+                let found = same.is_some().then(|| branch.clone());
+                return vec![remote, found.unwrap_or_default()];
             }
             _ => {}
         }
         vec![String::new(); self.fields().len()]
+    }
+
+    /// Whether field `index` is picked from `options` instead of typed.
+    pub fn is_pick(&self, _index: usize) -> bool {
+        matches!(self, Self::Upstream { .. })
+    }
+
+    /// What goes between two fields drawn on one row, such as the `/` of `origin/main`.
+    /// `None` draws each field on its own row.
+    pub fn separator(&self) -> Option<&'static str> {
+        matches!(self, Self::Upstream { .. }).then_some("/")
+    }
+
+    /// What a picked field offers, given what the earlier fields hold.
+    pub fn options(&self, index: usize, values: &[String], refs: &Refs) -> Vec<String> {
+        match (self, index) {
+            (Self::Upstream { .. }, 0) => refs
+                .remote_configs
+                .iter()
+                .map(|remote| remote.name.clone())
+                .collect(),
+            (Self::Upstream { .. }, _) => {
+                let prefix = format!("{}/", value(values, 0));
+                refs.remotes
+                    .iter()
+                    .filter_map(|r| r.name.strip_prefix(&prefix))
+                    .filter(|name| *name != "HEAD")
+                    .map(str::to_owned)
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// The button, named for its result: "Create feat/x", "Add remote", "Save origin".
@@ -164,9 +206,11 @@ impl Form {
             Self::Submodule {
                 original: Some(path),
             } => format!("Save {path}"),
-            Self::Upstream { .. } => match value(values, 0) {
-                "" => "Set upstream".to_owned(),
-                name => format!("Follow {name}"),
+            Self::Upstream { .. } => match (value(values, 0), value(values, 1)) {
+                (remote, branch) if !remote.is_empty() && !branch.is_empty() => {
+                    format!("Follow {remote}/{branch}")
+                }
+                _ => "Set upstream".to_owned(),
             },
         }
     }
@@ -195,9 +239,15 @@ impl Form {
                     submodule::why_bad_path(path)
                 }
             }
-            Self::Upstream { .. } => value(values, 0)
-                .is_empty()
-                .then_some("Name the remote branch to follow, such as origin/main."),
+            Self::Upstream { .. } => {
+                if value(values, 0).is_empty() {
+                    Some("This repository has no remote to follow a branch of.")
+                } else if value(values, 1).is_empty() {
+                    Some("Pick the remote branch to follow. Fetch first if it is new.")
+                } else {
+                    None
+                }
+            }
         };
         problem.map(str::to_owned)
     }
@@ -236,7 +286,10 @@ impl Form {
                 value(values, 1),
                 value(values, 0),
             ),
-            Self::Upstream { branch } => branch::set_upstream(repo, branch, value(values, 0)),
+            Self::Upstream { branch } => {
+                let upstream = format!("{}/{}", value(values, 0), value(values, 1));
+                branch::set_upstream(repo, branch, &upstream)
+            }
         }
     }
 }
@@ -275,6 +328,64 @@ mod tests {
             Some("Name the new branch first.")
         );
         assert_eq!(form.problem(&values(&["topic"])), None);
+    }
+
+    fn upstream_refs() -> Refs {
+        let named = |name: &str| crate::history::refs::NamedRef {
+            name: name.into(),
+            tip: "aaaaaaaa".into(),
+            color: Default::default(),
+        };
+        let remote = |name: &str| Remote {
+            name: name.into(),
+            ..Remote::default()
+        };
+        let mut refs = Refs::default();
+        refs.remote_configs = vec![remote("origin"), remote("fork")];
+        refs.remotes = vec![
+            named("origin/main"),
+            named("origin/HEAD"),
+            named("fork/feat/x"),
+        ];
+        refs
+    }
+
+    #[test]
+    fn an_upstream_form_picks_a_remote_then_one_of_its_branches() {
+        let form = Form::Upstream {
+            branch: "feat/x".into(),
+        };
+        let refs = upstream_refs();
+        assert_eq!(form.separator(), Some("/"));
+        assert!(form.is_pick(0) && form.is_pick(1));
+        assert_eq!(form.options(0, &[], &refs), ["origin", "fork"]);
+        assert_eq!(form.options(1, &values(&["origin"]), &refs), ["main"]);
+        assert_eq!(form.options(1, &values(&["fork"]), &refs), ["feat/x"]);
+        // The remote with a branch of the same name starts picked, with that branch.
+        assert_eq!(form.initial_values(&refs), values(&["fork", "feat/x"]));
+        assert_eq!(
+            form.action(&values(&["fork", "feat/x"])),
+            "Follow fork/feat/x"
+        );
+        assert_eq!(form.problem(&values(&["fork", "feat/x"])), None);
+    }
+
+    #[test]
+    fn an_upstream_form_without_a_match_starts_on_the_first_remote_and_asks_for_a_branch() {
+        let form = Form::Upstream {
+            branch: "topic".into(),
+        };
+        let refs = upstream_refs();
+        assert_eq!(form.initial_values(&refs), values(&["origin", ""]));
+        assert_eq!(form.action(&values(&["origin", ""])), "Set upstream");
+        assert!(
+            form.problem(&values(&["origin", ""]))
+                .unwrap()
+                .contains("Pick")
+        );
+        let none = form.initial_values(&Refs::default());
+        assert_eq!(none, values(&["", ""]));
+        assert!(form.problem(&none).unwrap().contains("no remote"));
     }
 
     #[test]
