@@ -6,49 +6,16 @@ use super::{Dialog, Frame};
 use crate::theme::tokens;
 use crate::view::GraphView;
 use crate::view::parts::section_label;
-use gitclient_core::history::refs::Refs;
 use gitclient_core::menu::form::Form;
 use gpui_kit::component::IndexPath;
+use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
+use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-/// One choice of a dropdown: what it holds, and what it says.
-#[derive(Clone)]
-struct Choice {
-    value: String,
-    label: SharedString,
-}
-
-impl SelectItem for Choice {
-    type Value = String;
-
-    fn title(&self) -> SharedString {
-        self.label.clone()
-    }
-
-    fn value(&self) -> &String {
-        &self.value
-    }
-}
-
-type Choices = SearchableVec<Choice>;
-type PickState = SelectState<Choices>;
-
-/// The choices `form` offers for field `index`, each named as the form words it.
-fn choices(form: &Form, index: usize, values: &[String], refs: &Refs) -> Choices {
-    SearchableVec::new(
-        form.options(index, values, refs)
-            .into_iter()
-            .map(|value| Choice {
-                label: form.option_label(&value, values).into(),
-                value,
-            })
-            .collect::<Vec<_>>(),
-    )
-}
+type PickState = SelectState<SearchableVec<String>>;
 
 /// What one field of a form is drawn as: a typed input, or a dropdown with a search box
 /// for a field that only takes what the repository already has.
@@ -124,9 +91,37 @@ impl FormDialog {
         }
     }
 
-    pub(super) fn frame(&self, cx: &App) -> Frame {
+    /// Existing things a typed field could be filled with, as quiet buttons under the
+    /// fields. Clicking one types it in.
+    fn suggestions(&self, values: &[String], cx: &mut Context<GraphView>) -> Option<AnyElement> {
+        let muted = cx.theme().muted_foreground;
+        let (index, names) = (0..values.len())
+            .map(|index| (index, self.form.suggestions(index, values)))
+            .find(|(_, names)| !names.is_empty())?;
+        let buttons = names.into_iter().enumerate().map(|(n, name)| {
+            let fill = name.clone();
+            Button::new(("suggestion", n))
+                .ghost()
+                .small()
+                .label(name)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.fill_form_field(index, &fill, window, cx)
+                }))
+        });
+        Some(
+            div()
+                .v_flex()
+                .gap_1()
+                .child(section_label(muted).child("Already there"))
+                .child(div().h_flex().flex_wrap().gap_1().children(buttons))
+                .into_any_element(),
+        )
+    }
+
+    pub(super) fn frame(&self, cx: &mut Context<GraphView>) -> Frame {
         let theme = cx.theme();
         let (text, muted) = (theme.foreground, theme.muted_foreground);
+        let peach = tokens(theme.is_dark()).peach;
         let values = self.values(cx);
         let mut content = vec![
             div()
@@ -168,12 +163,12 @@ impl FormDialog {
             }
             None => content.extend(fields.map(IntoElement::into_any_element)),
         }
-        content.extend(self.problem.clone().map(|problem| {
-            div()
-                .text_color(tokens(theme.is_dark()).peach)
-                .child(problem)
-                .into_any_element()
-        }));
+        content.extend(self.suggestions(&values, cx));
+        content.extend(
+            self.problem
+                .clone()
+                .map(|problem| div().text_color(peach).child(problem).into_any_element()),
+        );
         Frame {
             content,
             hint: self.form.hint(&values).into(),
@@ -232,18 +227,19 @@ impl GraphView {
             // from anywhere else in the window, so a form answers to the same keys as a
             // question.
             if form.is_pick(index) {
-                let options = choices(&form, index, &initial, &self.refs);
-                let at = form
-                    .options(index, &initial, &self.refs)
-                    .iter()
-                    .position(|option| option == value);
+                let options = form.options(index, &self.refs);
+                let at = options.iter().position(|option| option == value);
                 let select = cx.new(|cx| {
-                    SelectState::new(options, at.map(IndexPath::new), window, cx).searchable(true)
+                    SelectState::new(
+                        SearchableVec::new(options),
+                        at.map(IndexPath::new),
+                        window,
+                        cx,
+                    )
                 });
-                events.push(cx.subscribe_in(
+                events.push(cx.subscribe(
                     &select,
-                    window,
-                    |this, _, _: &SelectEvent<Choices>, window, cx| this.pick_changed(window, cx),
+                    |this, _, _: &SelectEvent<SearchableVec<String>>, cx| this.form_changed(cx),
                 ));
                 inputs.push(Control::Pick(select));
             } else {
@@ -292,19 +288,21 @@ impl GraphView {
         cx.notify();
     }
 
-    /// A dropdown took a choice. What the later dropdowns offer depends on it (a remote's
-    /// branches), so each is given its options again and keeps its choice if it still has it.
-    fn pick_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// A suggestion was clicked: types it into the field in place of what was there.
+    fn fill_form_field(
+        &mut self,
+        index: usize,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(Dialog::Form(dialog)) = &self.dialog else {
             return;
         };
-        for (index, control) in dialog.inputs.iter().enumerate() {
-            if let Control::Pick(select) = control {
-                let options = choices(&dialog.form, index, &dialog.values(cx), &self.refs);
-                select.update(cx, |select, cx| select.set_items(options, window, cx));
-            }
+        if let Some(Control::Text(input)) = dialog.inputs.get(index) {
+            input.update(cx, |input, cx| input.set_value(text, window, cx));
+            window.focus(&input.focus_handle(cx), cx);
         }
-        self.form_changed(cx);
     }
 
     /// Runs what the form asks for. It stays open, with the button off, until git

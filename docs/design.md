@@ -250,13 +250,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Upstream: a local branch's menu has "Set upstream of <name>", which opens a form popup
   with the remote and the branch on one row, as `origin / main` reads: a "Remote" dropdown
   that starts on the remote holding a branch of the same name (or the first), a `/`, and a
-  searchable "Branch" dropdown of that remote's branches. When the remote has no branch
-  of the branch's own name, that name leads the list as "feat/x · new on origin", and it is
-  what the dropdown starts on, so following a branch the remote doesn't have yet is one
-  Enter. The result names what will happen: "Follow origin/main" for one that exists, and
-  "Push feat/x to origin and follow it" for a new one, which pushes it. The band says how to
-  undo either. A form can mix typed inputs and dropdowns, and fields that share a row are
-  joined by a separator (`Form::separator` in core).
+  "Branch" input typed in place, which starts with the branch's own name. Under the row,
+  the remote's existing branches that contain what is typed show as quiet buttons under
+  "Already there", and a click types one in. Typing a name the remote doesn't have is how a
+  new upstream is made. The result names what will happen: "Follow origin/main" for one
+  that exists, and "Push feat/x to origin and follow it" for a new one, which pushes it.
+  The band says how to undo either. A form can mix typed inputs and dropdowns, and fields
+  that share a row are joined by a separator (`Form::separator` in core).
 - New branch: a quiet "New branch" link ends the Branches heading, and branch, tag and
   commit menus have "New branch from <name or hash>". Either opens a form popup (see
   "Popups") that says where the branch starts ("New branch, starting at main"), with a
@@ -293,8 +293,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   without a branch"), then "Check out 1a2b3c4 without a branch" for the commit itself.
 - **Popups:** a 420 px card centred over the window, on Mantle with a Surface 0 border
   and 8 px radius. It holds a sentence, then any inputs, then a line naming the keys
-  ("Press Enter to create feat/x, or Esc to cancel.", in Overlay 2), and "Cancel" and the
-  result as quiet buttons, never blue. `Enter` answers and `Esc` cancels; clicking outside
+  ("Press Enter to create feat/x, or Esc to cancel.", in Overlay 2), and "Cancel" as a
+  quiet button and the result as an outlined one (a 1 px Surface 1 border, so it reads as a
+  button whatever its words), never blue. `Enter` answers and `Esc` cancels; clicking outside
   cancels too. A held-down key never answers. The answering button is off while git runs.
   Every popup is drawn by one frame (`src/view/dialog/mod.rs`), and there is at most one.
   - **Delete confirmation:** deleting a branch, tag, worktree or remote asks in a popup,

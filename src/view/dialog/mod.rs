@@ -154,7 +154,7 @@ impl GraphView {
                     )
                     .child(
                         Button::new("dialog-answer")
-                            .ghost()
+                            .outline()
                             .small()
                             .label(frame.action)
                             // A question is asked while git is busy, waiting for the answer.
