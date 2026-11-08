@@ -2,6 +2,7 @@
 //! layout; each region and screen lives in its own module.
 
 mod conflicts;
+mod dialog;
 mod diff;
 mod dock;
 mod header;
@@ -17,6 +18,7 @@ mod workspace;
 pub use settings::{OpenSettings, Settings, open as open_settings, should_quit};
 pub use workspace::Workspace;
 
+use dialog::{Confirm, Dialog};
 use gitclient_core::cache::keys::{self, Caches};
 use gitclient_core::history::refs::Refs;
 use gitclient_core::history::selection::Selection;
@@ -26,7 +28,7 @@ use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use notice::{Confirm, Notice};
+use notice::Notice;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -47,7 +49,9 @@ actions!(
         Refresh,
         ToggleSidebar,
         CloseMenu,
-        ActivateMenu
+        ActivateMenu,
+        NextField,
+        PreviousField
     ]
 );
 
@@ -78,6 +82,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(sidebar, ToggleSidebar, context),
         KeyBinding::new("escape", CloseMenu, context),
         KeyBinding::new("enter", ActivateMenu, context),
+        KeyBinding::new("tab", NextField, context),
+        KeyBinding::new("shift-tab", PreviousField, context),
     ]);
 }
 
@@ -135,11 +141,12 @@ pub struct GraphView {
     /// The running git operation, in words. Only one runs at a time.
     busy: Option<SharedString>,
     notice: Option<Notice>,
+    /// A rewrite waiting in the band under the header for a second click.
     confirm: Option<Confirm>,
+    /// The popup over the window: a question before a deletion, or a form.
+    dialog: Option<Dialog>,
     /// Whether the key now down is a repeat of one still held.
     key_held: bool,
-    /// The form that adds or edits a remote, while it is open.
-    remote_form: Option<sidebar::remotes::RemoteForm>,
     sidebar: sidebar::State,
     inspector: inspector::State,
     diff: diff::State,
@@ -197,8 +204,8 @@ impl GraphView {
             busy: None,
             notice: None,
             confirm: None,
+            dialog: None,
             key_held: false,
-            remote_form: None,
             sidebar: sidebar::State::new(),
             inspector: Default::default(),
             diff: Default::default(),
@@ -247,7 +254,7 @@ impl GraphView {
         // Nothing of the old repository, or worktree, applies to the new one.
         self.selection = Selection::default();
         self.menu = None;
-        self.remote_form = None;
+        self.dialog = None;
         self.conflict.open = false;
         self.sidebar.picks.clear();
         self.sidebar.spotlight = None;
@@ -435,11 +442,6 @@ impl GraphView {
 
     pub fn selected(&self) -> Option<usize> {
         self.selected
-    }
-
-    /// Whether a risky step is waiting for confirmation.
-    pub fn is_confirming(&self) -> bool {
-        self.confirm.is_some()
     }
 
     /// What the band under the header says, if anything.
@@ -661,7 +663,6 @@ impl GraphView {
 impl Render for GraphView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sidebar.window_is_wide = window.viewport_size().width >= sidebar::WIDE_WINDOW;
-        self.ensure_new_branch_input(window, cx);
         self.ensure_commit_inputs(window, cx);
         self.clear_form_after_commit(window, cx);
         let theme = cx.theme();
@@ -670,16 +671,9 @@ impl Render for GraphView {
         self.sync_conflict_editor(window, cx);
         let bar = Some(self.render_toolbar(cx).into_any_element());
         let content = self.render_graph(cx);
-        self.ensure_remote_inputs(window, cx);
         let notice = self.render_notice(cx);
-        let remote_form = self.render_remote_form(cx);
         let menu = self.render_menu(cx);
-        let popup = self.render_confirm_popup(cx);
-        // Enter and Escape are bound on this view, and a click elsewhere (a menu line, a
-        // terminal) leaves the focus somewhere they don't reach.
-        if popup.is_some() && !self.focus.is_focused(window) {
-            window.focus(&self.focus, cx);
-        }
+        let dialog = self.render_dialog(window, cx);
 
         div()
             .v_flex()
@@ -714,12 +708,17 @@ impl Render for GraphView {
             }))
             .on_action(cx.listener(|this, _: &CloseMenu, _, cx| this.press_escape(cx)))
             .on_action(cx.listener(|this, _: &ActivateMenu, _, cx| this.press_enter(cx)))
+            .on_action(
+                cx.listener(|this, _: &NextField, window, cx| this.step_field(1, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &PreviousField, window, cx| this.step_field(-1, window, cx)),
+            )
             .children(bar)
             .children(notice)
-            .children(remote_form)
             .child(content)
             .children(menu)
-            .children(popup)
+            .children(dialog)
     }
 }
 

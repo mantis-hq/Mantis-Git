@@ -30,12 +30,13 @@ Where things go in `crates/core/src`:
 - `working/`: staging and committing, with the commit's wording and version bumps.
 - `repo/`: branches, remotes, worktrees, submodules, a paused operation, and status.
 - `settings/`: git config, identities, SSH suggestions, and what the app remembers.
-- `menu/`: what each menu offers, and in `command.rs` what its lines run.
+- `menu/`: what each menu offers, in `command.rs` what its lines run, and in `form.rs`
+  what the popups that ask for a name say and do.
 - `cache/`, `patch.rs`, `tree.rs`, `log.rs`, `terminal.rs`, `ops.rs` and `text.rs` stand
   alone.
 
 In `src/view`, a region with more than one file gets a folder (`sidebar/`, `inspector/`,
-`conflicts/`, `dock/`, `settings/`), and `view.rs` holds `GraphView` and the layout.
+`conflicts/`, `dialog/`, `dock/`, `settings/`), and `view.rs` holds `GraphView` and the layout.
 
 ## UI style
 

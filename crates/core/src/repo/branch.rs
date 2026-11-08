@@ -358,19 +358,6 @@ pub fn create_branch(
     )))
 }
 
-/// What the new-branch form says about where the branch will start.
-pub fn new_branch_prompt(start: &str) -> String {
-    format!("New branch, starting at {start}")
-}
-
-/// The button of the new-branch form, which names the branch it makes.
-pub fn new_branch_label(name: &str) -> String {
-    match name.trim() {
-        "" => "Create branch".to_owned(),
-        name => format!("Create {name}"),
-    }
-}
-
 pub fn delete_tag(repo: &Path, name: &str) -> Result<Option<String>, String> {
     ops::run(repo, &["tag", "-d", name]).map(|_| Some(format!("Deleted the tag {name}.")))
 }

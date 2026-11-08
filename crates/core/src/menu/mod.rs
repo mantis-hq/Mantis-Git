@@ -3,6 +3,7 @@
 //! runs, so the interface only draws lines and hands the chosen command back to be run.
 
 pub mod command;
+pub mod form;
 
 use crate::history::Commit;
 use crate::history::refs::{RefKind, Refs};
@@ -14,6 +15,7 @@ use crate::repo::worktree;
 use crate::text::{count, short_oid};
 use crate::working::Side;
 use command::Command;
+use form::Form;
 use std::path::Path;
 
 /// One line of a menu.
@@ -114,10 +116,10 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
 
     lines.push(Line::item(
         format!("New branch from {name}"),
-        Command::NewBranch {
+        Command::Form(Form::NewBranch {
             start: Some(name.clone()),
             label: name.clone(),
-        },
+        }),
     ));
     lines.push(Line::Separator);
     lines.push(Line::item("Copy name", copy(&name, "the name")));
@@ -362,9 +364,9 @@ pub fn remote_menu(refs: &Refs, name: &str) -> Vec<Line> {
         Line::Heading(name.to_owned()),
         Line::item(
             format!("Edit {name}"),
-            Command::EditRemote {
-                name: name.to_owned(),
-            },
+            Command::Form(Form::Remote {
+                original: Some(name.to_owned()),
+            }),
         ),
         Line::item("Copy address", copy(&remote.url, "the address")),
         Line::Separator,
@@ -483,10 +485,10 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
     ));
     lines.push(Line::item(
         format!("New branch from {}", short_oid(&oid)),
-        Command::NewBranch {
+        Command::Form(Form::NewBranch {
             start: Some(oid.clone()),
             label: short_oid(&oid).to_owned(),
-        },
+        }),
     ));
 
     if actions.can_check_out {
@@ -691,9 +693,9 @@ mod tests {
         let commands: Vec<_> = lines.iter().filter_map(Line::command).collect();
         assert_eq!(
             commands[0],
-            &Command::EditRemote {
-                name: "origin".into()
-            }
+            &Command::Form(Form::Remote {
+                original: Some("origin".into())
+            })
         );
         assert_eq!(commands[1], &copy("git@host:a.git", "the address"));
         let remove = commands[2];

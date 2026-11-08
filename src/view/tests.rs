@@ -211,29 +211,26 @@ fn a_force_push_waits_for_confirmation_and_others_do_not(cx: &mut TestAppContext
 fn a_deletion_popup_takes_enter_and_escape_and_the_risky_one_needs_two_presses(
     cx: &mut TestAppContext,
 ) {
-    use super::notice::Confirm;
+    use super::dialog::Confirm;
     use gitclient_core::menu::command::Weight;
     use std::cell::Cell;
     use std::rc::Rc;
     let (view, mut cx) = open_view(cx);
     let ran = Rc::new(Cell::new(0));
-    let ask = |view: &mut GraphView, weight| {
+    let ask = |view: &mut GraphView, weight, cx: &mut gpui_kit::Context<GraphView>| {
         let ran = ran.clone();
-        view.confirm = Some(Confirm {
-            message: "This deletes it.".into(),
-            action: "Delete".into(),
-            run: Rc::new(move |_, _| ran.set(ran.get() + 1)),
-            weight,
-            armed: None,
+        let confirm = Confirm::new("This deletes it.", "Delete", weight, move |_, _| {
+            ran.set(ran.get() + 1)
         });
+        view.ask(confirm, cx);
     };
     view.update(&mut cx, |view, cx| {
-        ask(view, Weight::Popup);
+        ask(view, Weight::Popup, cx);
         view.press_escape(cx);
         assert!(!view.is_confirming());
         assert_eq!(ran.get(), 0, "Escape cancels");
 
-        ask(view, Weight::Popup);
+        ask(view, Weight::Popup, cx);
         view.key_held = true;
         view.press_enter(cx);
         assert!(view.is_confirming(), "a held key doesn't answer");
@@ -242,7 +239,7 @@ fn a_deletion_popup_takes_enter_and_escape_and_the_risky_one_needs_two_presses(
         assert!(!view.is_confirming());
         assert_eq!(ran.get(), 1, "Enter confirms");
 
-        ask(view, Weight::DoublePress);
+        ask(view, Weight::DoublePress, cx);
         view.press_enter(cx);
         assert!(view.is_confirming());
         assert_eq!(ran.get(), 1, "one press only arms it");
@@ -250,7 +247,7 @@ fn a_deletion_popup_takes_enter_and_escape_and_the_risky_one_needs_two_presses(
         assert!(!view.is_confirming());
         assert_eq!(ran.get(), 2, "the second press confirms");
 
-        ask(view, Weight::DoublePress);
+        ask(view, Weight::DoublePress, cx);
         view.press_enter(cx);
         view.press_escape(cx);
         assert!(!view.is_confirming());
@@ -260,7 +257,7 @@ fn a_deletion_popup_takes_enter_and_escape_and_the_risky_one_needs_two_presses(
 
 #[gpui_kit::test]
 fn the_keys_reach_a_popup_even_when_focus_was_elsewhere(cx: &mut TestAppContext) {
-    use super::notice::Confirm;
+    use super::dialog::Confirm;
     use gitclient_core::menu::command::Weight;
     use std::cell::Cell;
     use std::rc::Rc;
@@ -269,14 +266,10 @@ fn the_keys_reach_a_popup_even_when_focus_was_elsewhere(cx: &mut TestAppContext)
     let ask = |cx: &mut VisualTestContext| {
         let ran = ran.clone();
         view.update(cx, |view, cx| {
-            view.confirm = Some(Confirm {
-                message: "This deletes it.".into(),
-                action: "Delete".into(),
-                run: Rc::new(move |_, _| ran.set(ran.get() + 1)),
-                weight: Weight::Popup,
-                armed: None,
+            let confirm = Confirm::new("This deletes it.", "Delete", Weight::Popup, move |_, _| {
+                ran.set(ran.get() + 1)
             });
-            cx.notify();
+            view.ask(confirm, cx);
         });
         cx.run_until_parked();
     };
@@ -783,9 +776,9 @@ fn right_clicking_opens_a_menu_for_the_whole_selection_and_escape_closes_it(
 }
 
 #[gpui_kit::test]
-fn editing_a_remote_starts_from_its_address_and_escape_closes_the_menu_before_the_form(
-    cx: &mut TestAppContext,
-) {
+fn editing_a_remote_opens_a_form_that_starts_from_it_and_escape_closes_it(cx: &mut TestAppContext) {
+    use gitclient_core::menu::command::Command;
+    use gitclient_core::menu::form::Form;
     let (view, mut cx) = open_view(cx);
     view.update(&mut cx, |view, cx| {
         let mut refs = gitclient_core::history::refs::Refs::default();
@@ -797,16 +790,145 @@ fn editing_a_remote_starts_from_its_address_and_escape_closes_the_menu_before_th
         view.refs = Arc::new(refs);
         assert!(view.is_remote("origin") && !view.is_remote("feat"));
 
-        view.open_remote_form(Some("origin".into()), cx);
-        let form = view.remote_form.as_ref().unwrap();
-        assert_eq!(form.prefill(), ("origin", "git@host:a.git"));
-
         view.open_remote_menu("origin", point(px(10.), px(10.)), cx);
-        view.dismiss(cx);
-        assert!(view.menu.is_none() && view.remote_form.is_some());
-        view.dismiss(cx);
-        assert!(view.remote_form.is_none());
+        let edit = view
+            .menu
+            .as_ref()
+            .unwrap()
+            .lines()
+            .iter()
+            .find_map(|line| match line {
+                gitclient_core::menu::Line::Item {
+                    command: Some(Command::Form(form)),
+                    ..
+                } => Some(form.clone()),
+                _ => None,
+            });
+        view.open_form(edit.expect("the menu edits the remote"), cx);
+        assert!(view.menu.is_none(), "the form takes the menu's place");
+        assert_eq!(
+            view.form_values(cx),
+            Some(vec!["origin".to_owned(), "git@host:a.git".to_owned()])
+        );
+        assert!(!view.is_confirming(), "a form is not a question");
+
+        view.press_escape(cx);
+        assert_eq!(view.form_values(cx), None);
+        view.open_form(Form::Remote { original: None }, cx);
+        assert_eq!(view.form_values(cx), Some(vec![String::new(); 2]));
     });
+}
+
+/// A view on a repository with one commit on `main`, loaded.
+fn open_repo(
+    cx: &mut TestAppContext,
+) -> (
+    gitclient_core::testing::Repo,
+    Entity<GraphView>,
+    VisualTestContext,
+) {
+    let repo = gitclient_core::testing::Repo::new();
+    repo.write("a", "1\n");
+    repo.commit("base");
+    let (view, mut cx) = open_view(cx);
+    view.update(&mut cx, |view, cx| view.open(repo.path().to_owned(), cx));
+    cx.run_until_parked();
+    (repo, view, cx)
+}
+
+#[gpui_kit::test]
+fn a_new_branch_is_named_in_a_popup_and_made_on_enter(cx: &mut TestAppContext) {
+    use gitclient_core::menu::form::Form;
+    let (repo, view, mut cx) = open_repo(cx);
+    view.update(&mut cx, |view, cx| {
+        view.open_form(Form::new_branch_here(&view.refs), cx)
+    });
+    cx.run_until_parked();
+
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    view.read_with(&cx, |view, _| {
+        assert_eq!(
+            view.form_problem().as_deref(),
+            Some("Name the new branch first."),
+            "an empty name is turned down before git runs"
+        );
+    });
+
+    cx.simulate_input("topic");
+    view.read_with(&cx, |view, _| {
+        assert_eq!(view.form_problem(), None, "typing clears the problem");
+    });
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(repo.git(&["branch", "--show-current"]).trim(), "topic");
+    view.update(&mut cx, |view, cx| {
+        assert_eq!(
+            view.form_values(cx),
+            None,
+            "the form closes once git is done"
+        );
+        let said = view.notice_text().unwrap();
+        assert!(
+            said.contains("git branch -D topic"),
+            "says how to undo it: {said}"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn a_name_git_refuses_keeps_the_form_open_and_says_why(cx: &mut TestAppContext) {
+    use gitclient_core::menu::form::Form;
+    let (repo, view, mut cx) = open_repo(cx);
+    repo.git(&["branch", "taken"]);
+    view.update(&mut cx, |view, cx| {
+        view.open_form(Form::new_branch_here(&view.refs), cx)
+    });
+    cx.run_until_parked();
+    cx.simulate_input("taken");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    view.update(&mut cx, |view, cx| {
+        assert_eq!(
+            view.form_problem().as_deref(),
+            Some("A branch called taken already exists.")
+        );
+        assert_eq!(view.form_values(cx), Some(vec!["taken".to_owned()]));
+        assert_eq!(view.notice_text(), None, "the band stays quiet");
+        assert!(view.busy.is_none());
+    });
+}
+
+#[gpui_kit::test]
+fn tab_moves_between_a_forms_fields_and_a_held_enter_does_nothing(cx: &mut TestAppContext) {
+    use gitclient_core::menu::form::Form;
+    let (repo, view, mut cx) = open_repo(cx);
+    view.update(&mut cx, |view, cx| {
+        view.open_form(Form::Remote { original: None }, cx)
+    });
+    cx.run_until_parked();
+    cx.simulate_input("up");
+    cx.simulate_keystrokes("tab");
+    cx.simulate_input("https://example.com/a.git");
+    cx.simulate_keystrokes("shift-tab");
+    cx.simulate_input("stream");
+    view.update(&mut cx, |view, cx| {
+        assert_eq!(
+            view.form_values(cx),
+            Some(vec![
+                "upstream".to_owned(),
+                "https://example.com/a.git".to_owned()
+            ])
+        );
+        view.key_held = true;
+        view.press_enter(cx);
+        assert!(view.busy.is_none(), "a held key doesn't send the form");
+        view.key_held = false;
+    });
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(repo.git(&["remote"]), "upstream");
+    view.update(&mut cx, |view, cx| assert_eq!(view.form_values(cx), None));
 }
 
 #[gpui_kit::test]

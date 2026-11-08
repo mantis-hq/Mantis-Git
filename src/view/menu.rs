@@ -2,7 +2,8 @@
 //! that is chosen. What a menu offers, and what each line does, is decided in
 //! `gitclient_core::menu`.
 
-use super::notice::{Confirm, Notice};
+use super::dialog::Confirm;
+use super::notice::Notice;
 use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
 use super::{GraphView, OpenWorktreeInTab, SwitchWorktree};
 use crate::theme::selected_row;
@@ -15,7 +16,6 @@ use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use std::path::Path;
-use std::rc::Rc;
 
 const MENU_WIDTH: Pixels = px(300.);
 const ITEM_HEIGHT: Pixels = px(28.);
@@ -182,10 +182,8 @@ impl GraphView {
             cx.emit(OpenWorktreeInTab(path.clone()));
         } else if let Command::OpenSubmoduleInTab { path } = &command {
             cx.emit(OpenWorktreeInTab(path.clone()));
-        } else if let Command::NewBranch { start, label } = &command {
-            self.begin_new_branch(start.clone(), label.clone(), cx);
-        } else if let Command::EditRemote { name } = &command {
-            self.open_remote_form(Some(name.clone()), cx);
+        } else if let Command::Form(form) = &command {
+            self.open_form(form.clone(), cx);
         } else if let Command::ShowConflict { path } = &command {
             self.show_conflict(path, cx);
         } else if let Command::UseSide { path, side } = &command {
@@ -201,14 +199,13 @@ impl GraphView {
                 .map(|text| Notice::Info(text.into()));
             cx.notify();
         } else if let Some(confirmation) = command.confirmation() {
-            self.confirm = Some(Confirm {
-                message: confirmation.message.into(),
-                action: confirmation.action.into(),
-                weight: confirmation.weight,
-                armed: None,
-                run: Rc::new(move |this, cx| this.run_command(command.clone(), cx)),
-            });
-            cx.notify();
+            let confirm = Confirm::new(
+                confirmation.message,
+                confirmation.action,
+                confirmation.weight,
+                move |this, cx| this.run_command(command.clone(), cx),
+            );
+            self.ask(confirm, cx);
         } else {
             self.run_command(command, cx);
         }
