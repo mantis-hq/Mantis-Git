@@ -20,7 +20,7 @@ mod workspace;
 pub use settings::{OpenSettings, Settings, open as open_settings, should_quit};
 pub use workspace::Workspace;
 
-use gitclient_core::caches::{self, Caches};
+use gitclient_core::cache::keys::{self, Caches};
 use gitclient_core::history::refs::Refs;
 use gitclient_core::history::selection::Selection;
 use gitclient_core::history::{self, Entry, LoadEvent};
@@ -284,7 +284,7 @@ impl GraphView {
         };
         let asked = repo.clone();
         Self::spawn_blocking(
-            move || caches::fingerprint(&repo),
+            move || keys::fingerprint(&repo),
             move |this, fingerprint, _| {
                 if this.repo.as_deref() == Some(asked.as_path()) {
                     this.fingerprint = Some(fingerprint.into());

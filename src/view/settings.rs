@@ -11,7 +11,7 @@ use super::parts::{
 use super::parts::{TEXT_BODY, TEXT_SMALL, TEXT_STATUS};
 use super::repository_name;
 use crate::theme::{selected_row, tokens};
-use gitclient_core::caches::Caches;
+use gitclient_core::cache::keys::Caches;
 use gitclient_core::config::{self, Kind, Scope, Setting, Sources, Values, Version};
 use gitclient_core::identity::{self, Book, Choice, Identity, Match, Profile, RepoState};
 use gitclient_core::ssh;

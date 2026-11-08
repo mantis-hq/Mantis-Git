@@ -8,7 +8,7 @@
 //!
 //! The caches themselves are in [`crate::cache`]; this file only says what goes in them.
 
-use crate::cache::{Cache, Config, DiskSettings, hash64};
+use super::{Cache, Config, DiskSettings, hash64};
 use crate::details::{self, CommitDetails, FileChange};
 use crate::ops::{self, Cancel};
 use crate::patch::{DiffView, FilePatch};

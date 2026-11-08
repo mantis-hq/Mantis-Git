@@ -1,7 +1,7 @@
 use gitclient::theme;
 use gitclient::view::{self, Workspace};
 use gitclient_core::cache;
-use gitclient_core::caches::Caches;
+use gitclient_core::cache::keys::Caches;
 use gitclient_core::state::{self, AppState};
 use gpui_kit::*;
 use std::path::PathBuf;

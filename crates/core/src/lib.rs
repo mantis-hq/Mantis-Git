@@ -3,7 +3,6 @@
 
 pub mod branch;
 pub mod cache;
-pub mod caches;
 pub mod config;
 pub mod conflict;
 pub mod details;

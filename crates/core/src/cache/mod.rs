@@ -18,6 +18,7 @@
 
 pub mod codec;
 mod disk;
+pub mod keys;
 mod lru;
 
 pub use codec::{Reader, Writer};
