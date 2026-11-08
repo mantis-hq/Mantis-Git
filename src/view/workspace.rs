@@ -402,7 +402,7 @@ mod tests {
     use super::Workspace;
     use crate::view::bind_keys;
     use gitclient_core::settings::state::AppState;
-    use gpui_kit::{Entity, TestAppContext, VisualTestContext};
+    use gpui_kit::{AppContext as _, Entity, TestAppContext, VisualTestContext};
 
     fn open_workspace(cx: &mut TestAppContext) -> (Entity<Workspace>, VisualTestContext) {
         // The dock listens to the process-wide command log, which any test's git thread
@@ -413,10 +413,16 @@ mod tests {
             gpui_kit::init(cx);
             bind_keys(cx);
         });
-        let window = cx.add_window(Workspace::new);
-        let view = window.root(cx).unwrap();
+        // Inside gpui-kit's root, as `gpui_kit::open_window` puts it, whose keys (Tab,
+        // Ctrl C) sit above everything the workspace draws.
+        let mut view = None;
+        let window = cx.add_window(|window, cx| {
+            let workspace = cx.new(|cx| Workspace::new(window, cx));
+            view = Some(workspace.clone());
+            gpui_kit::base::Root::new(workspace, window, cx)
+        });
         let cx = VisualTestContext::from_window(window.into(), cx);
-        (view, cx)
+        (view.unwrap(), cx)
     }
 
     fn state(view: &Entity<Workspace>, cx: &VisualTestContext) -> (usize, usize) {
@@ -464,6 +470,26 @@ mod tests {
 
         // Ctrl W deletes a word in a shell. It must not close the repository tab.
         cx.simulate_keystrokes("ctrl-w");
+        assert_eq!(state(&view, &cx), (2, 1));
+
+        // Tab completes and Ctrl C interrupts. No key the shell uses may become an app
+        // action, such as moving focus or copying, and the terminal keeps focus.
+        let actions = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let _observer = cx.update(|_, cx| {
+            let actions = actions.clone();
+            cx.observe_keystrokes(move |event, _, _| {
+                if let Some(action) = &event.action {
+                    actions.borrow_mut().push(action.name());
+                }
+            })
+        });
+        let focused = |cx: &mut VisualTestContext| cx.update(|window, cx| window.focused(cx));
+        let before = focused(&mut cx);
+        cx.simulate_keystrokes(
+            "tab shift-tab ctrl-c ctrl-r ctrl-b up down home end enter escape j",
+        );
+        assert_eq!(*actions.borrow(), Vec::<&str>::new());
+        assert_eq!(focused(&mut cx), before);
         assert_eq!(state(&view, &cx), (2, 1));
 
         // Hiding the dock gives the repository its shortcuts back.

@@ -27,6 +27,21 @@ pub struct TerminalPane {
     focus: FocusHandle,
     cell_width: Pixels,
     _redraw: Option<Task<()>>,
+    _keys: Subscription,
+}
+
+/// Whether `keystroke` belongs to the window even while a terminal has focus: the dock's
+/// own keys, which show it and open another terminal. Asking the keymap keeps this in step
+/// with the bindings themselves.
+fn kept_by_app(keystroke: &Keystroke, context: &[KeyContext], cx: &App) -> bool {
+    let (bindings, _) = cx
+        .key_bindings()
+        .borrow()
+        .bindings_for_input(&[keystroke.clone()], context);
+    bindings.iter().any(|binding| {
+        let action = binding.action().as_any();
+        action.is::<super::ToggleDock>() || action.is::<super::NewTerminal>()
+    })
 }
 
 impl TerminalPane {
@@ -43,11 +58,30 @@ impl TerminalPane {
                 }
             })
         });
+        let focus = cx.focus_handle();
+        // gpui runs key bindings before key listeners, so a listener on the pane would
+        // lose Tab and Shift Tab to focus moves and Ctrl C to copying, which the window's
+        // root binds. Catching keystrokes before any binding gives the shell all of them.
+        let (this, focused) = (cx.weak_entity(), focus.clone());
+        let keys = cx.intercept_keystrokes(move |event, window, cx| {
+            if !focused.is_focused(window)
+                || kept_by_app(&event.keystroke, &event.context_stack, cx)
+            {
+                return;
+            }
+            let taken = this
+                .update(cx, |this, cx| this.on_key(&event.keystroke, cx))
+                .unwrap_or(false);
+            if taken {
+                cx.stop_propagation();
+            }
+        });
         Self {
             terminal,
-            focus: cx.focus_handle(),
+            focus,
             cell_width: px(8.),
             _redraw: redraw,
+            _keys: keys,
         }
     }
 
@@ -75,11 +109,12 @@ impl TerminalPane {
         }
     }
 
-    fn on_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+    /// Sends `key` to the shell, and says whether the shell took it.
+    fn on_key(&mut self, key: &Keystroke, cx: &mut Context<Self>) -> bool {
         let Ok(terminal) = &self.terminal else {
-            return;
+            return false;
         };
-        let (key, modifiers) = (&event.keystroke, &event.keystroke.modifiers);
+        let modifiers = &key.modifiers;
         let paste = if cfg!(target_os = "macos") {
             modifiers.platform && key.key == "v"
         } else {
@@ -94,18 +129,21 @@ impl TerminalPane {
             }
         } else if modifiers.platform {
             // Command belongs to the app on macOS, never to the shell.
-            return;
+            return false;
         } else {
-            terminal.send_key(&Key {
+            let sent = terminal.send_key(&Key {
                 name: &key.key,
                 text: key.key_char.as_deref(),
                 control: modifiers.control,
                 alt: modifiers.alt,
                 shift: modifiers.shift,
             });
+            if !sent {
+                return false;
+            }
         }
-        cx.stop_propagation();
         cx.notify();
+        true
     }
 
     fn on_scroll(&mut self, event: &ScrollEvent, cx: &mut Context<Self>) {
@@ -168,7 +206,6 @@ impl Render for TerminalPane {
             .text_size(px(FONT_SIZE))
             .text_color(text)
             .font_features(FontFeatures::disable_ligatures())
-            .on_key_down(cx.listener(|this, event, _, cx| this.on_key(event, cx)))
             .on_scroll(cx.listener(|this, event, _, cx| this.on_scroll(event, cx)))
             .child(
                 // Measures the room, so the shell can be told how many rows and columns fit.
