@@ -166,6 +166,11 @@ pub enum Command {
         url: String,
         what: String,
     },
+    /// Handled by the interface, which shows the file in the system's file manager. `path`
+    /// is relative to the repository.
+    RevealPath {
+        path: String,
+    },
     /// Handled by the interface, which asks in a popup whether to open the settings where
     /// the forge is chosen. `message` is the question.
     AskForge {
@@ -251,6 +256,7 @@ impl Command {
             Self::UpdateSubmodule { .. } | Self::UpdateSubmodules => "Updating",
             Self::RemoveRemote { .. } => "Removing the remote",
             Self::Copy { .. } => "Copying",
+            Self::RevealPath { .. } => "Opening",
             Self::OpenUrl { .. } | Self::AskForge { .. } => "Opening",
             Self::StashStaged { .. } => "Stashing",
             Self::ApplyStashes { .. } => "Applying",
@@ -344,6 +350,14 @@ impl Command {
         }
     }
 
+    /// The repository-relative path to show in the file manager, for a command that does that.
+    pub fn reveal_path(&self) -> Option<&str> {
+        match self {
+            Self::RevealPath { path } => Some(path),
+            _ => None,
+        }
+    }
+
     /// The address to open in the browser, for a command that does that.
     pub fn url(&self) -> Option<&str> {
         match self {
@@ -425,6 +439,7 @@ impl Command {
             | Self::UseSide { .. }
             | Self::StageFiles { .. }
             | Self::OpenUrl { .. }
+            | Self::RevealPath { .. }
             | Self::AskForge { .. }
             | Self::Copy { .. } => Ok(None),
         }
