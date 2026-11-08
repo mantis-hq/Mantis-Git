@@ -243,6 +243,23 @@ mod render {
             std::thread::sleep(Duration::from_millis(10));
         }
         capture(&mut cx, handle, "diff");
+
+        // The whole file, with the changes marked beside the scrollbar.
+        cx.update_window(handle, |_, _, cx| {
+            view.update(cx, |view, cx| {
+                let whole = gitclient_core::patch::DiffView {
+                    whole_file: true,
+                    ..Default::default()
+                };
+                view.set_diff_view(whole, cx);
+            });
+        })
+        .unwrap();
+        for _ in 0..50 {
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        capture(&mut cx, handle, "diff-whole-file");
     }
 
     fn wait_for(cx: &mut HeadlessAppContext, done: impl Fn(&mut HeadlessAppContext) -> bool) {

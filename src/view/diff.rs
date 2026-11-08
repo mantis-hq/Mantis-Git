@@ -5,7 +5,7 @@ use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
 use super::{GraphView, Notice};
 use crate::theme::tokens;
 use gitclient_core::details::{self, FileChange};
-use gitclient_core::patch::{DiffView, FilePatch, Line};
+use gitclient_core::patch::{DiffView, FilePatch, Line, LineKind};
 use gitclient_core::working::{self, Side};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
@@ -45,6 +45,16 @@ pub(super) struct Shown {
     rows: Vec<Row>,
     /// The row with the longest text, which sets how far the list scrolls sideways.
     widest: Option<usize>,
+    /// Where the changes are, for the marks beside the scrollbar.
+    marks: Vec<Mark>,
+}
+
+/// A run of added or removed lines, by row.
+#[derive(Debug, PartialEq, Eq)]
+struct Mark {
+    start: usize,
+    len: usize,
+    kind: LineKind,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -76,6 +86,23 @@ impl Shown {
             Row::Line(line) => line.text.len(),
             Row::Gap => 0,
         };
+        let mut marks: Vec<Mark> = Vec::new();
+        for (at, row) in rows.iter().enumerate() {
+            let Row::Line(line) = row else { continue };
+            if line.kind == LineKind::Context {
+                continue;
+            }
+            match marks.last_mut() {
+                Some(mark) if mark.kind == line.kind && mark.start + mark.len == at => {
+                    mark.len += 1
+                }
+                _ => marks.push(Mark {
+                    start: at,
+                    len: 1,
+                    kind: line.kind,
+                }),
+            }
+        }
         let widest = (0..rows.len()).max_by_key(|&index| width(&rows[index]));
         Self {
             oid,
@@ -85,6 +112,7 @@ impl Shown {
             ticks: false,
             rows,
             widest,
+            marks,
         }
     }
 
@@ -135,7 +163,7 @@ impl GraphView {
         self.shown_file().is_some() && self.diff.patch.is_some()
     }
 
-    pub(super) fn set_diff_view(&mut self, view: DiffView, cx: &mut Context<Self>) {
+    pub fn set_diff_view(&mut self, view: DiffView, cx: &mut Context<Self>) {
         if view == self.diff.view {
             return;
         }
@@ -392,6 +420,36 @@ impl GraphView {
 
     fn render_lines(&self, shown: &Arc<Shown>, cx: &mut Context<Self>) -> impl IntoElement {
         let list_shown = shown.clone();
+        let theme = cx.theme();
+        let (added, removed) = (theme.success, theme.danger);
+        // In the whole file the changes can be screens apart, so where they are shows beside
+        // the scrollbar, in the same colours as the lines. Marks are drawn before the bar,
+        // which stays on top of them.
+        let total = shown.rows.len().max(1) as f32;
+        let marks: Vec<Div> = if self.diff.view.whole_file {
+            shown
+                .marks
+                .iter()
+                .map(|mark| {
+                    let color = if mark.kind == LineKind::Added {
+                        added
+                    } else {
+                        removed
+                    };
+                    div()
+                        .absolute()
+                        .right(px(2.))
+                        .w(px(4.))
+                        .top(relative(mark.start as f32 / total))
+                        .h(relative(mark.len as f32 / total))
+                        .min_h(px(2.))
+                        .rounded(px(1.))
+                        .bg(color)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         div()
             .relative()
             .flex_1()
@@ -409,6 +467,7 @@ impl GraphView {
                 .track_scroll(&self.diff.scroll)
                 .size_full(),
             )
+            .children(marks)
             .scrollbar(&self.diff.scroll, ScrollbarAxis::Both)
     }
 }
@@ -531,7 +590,7 @@ fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut Context<GraphView>) 
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that would bring in GPUI's `test` macro, which shadows Rust's.
-    use super::{FileChange, FilePatch, Row, Shown};
+    use super::{FileChange, FilePatch, LineKind, Row, Shown};
     use gitclient_core::patch;
 
     #[test]
@@ -558,6 +617,21 @@ diff --git a/x b/x
         assert!(matches!(&shown.rows[1], Row::Hunk { title, index: 0 } if title == "fn top() {"));
         assert!(matches!(&shown.rows[6], Row::Hunk { index: 1, .. }));
         assert_eq!(shown.widest, Some(3));
+        // One removed and one added run in each hunk, found by row.
+        let runs: Vec<_> = shown
+            .marks
+            .iter()
+            .map(|m| (m.start, m.len, m.kind))
+            .collect();
+        assert_eq!(
+            runs,
+            [
+                (3, 1, LineKind::Removed),
+                (4, 1, LineKind::Added),
+                (7, 1, LineKind::Removed),
+                (8, 1, LineKind::Added)
+            ]
+        );
     }
 
     #[test]
