@@ -10,7 +10,7 @@ use crate::repo::submodule::{self, Submodule};
 use crate::repo::worktree::{self, Worktree};
 use crate::text::count;
 use crate::working::version::{self, Version};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -130,6 +130,10 @@ pub struct Refs {
     pub tags: Vec<NamedRef>,
     /// Stash subjects, newest first.
     pub stashes: Vec<String>,
+    /// The commit of each stash, in the order of `stashes`.
+    pub stash_commits: Vec<Arc<str>>,
+    /// What keeps a stash's helper commits out of the graph.
+    pub(super) stash_graph: StashGraph,
     /// The repository's working trees, main one first. Empty when git can't say.
     pub worktrees: Vec<Worktree>,
     /// The repositories this one pins, by path. Empty when it has none.
@@ -204,6 +208,43 @@ impl Refs {
             count(self.status.changed, "file"),
             self.head_name()
         )
+    }
+}
+
+/// How stashes sit in the graph: as a commit on the one they were made on, without the
+/// index and untracked commits stored beside them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct StashGraph {
+    hidden: HashSet<Arc<str>>,
+    /// Each stash's commit, and the commit it was made on.
+    bases: HashMap<Arc<str>, Arc<str>>,
+}
+
+impl StashGraph {
+    /// Drops the helper commits and gives each stash only its base as a parent.
+    pub(super) fn tidy(&self, commits: Vec<Commit>) -> Vec<Commit> {
+        if self.bases.is_empty() {
+            return commits;
+        }
+        commits
+            .into_iter()
+            .filter(|commit| !self.hidden.contains(&commit.oid))
+            .map(|mut commit| {
+                if self.bases.contains_key(&commit.oid) {
+                    commit.parents = commit.parents.iter().take(1).cloned().collect();
+                }
+                commit
+            })
+            .collect()
+    }
+}
+
+impl Refs {
+    /// The number of the stash whose commit this is.
+    pub fn stash_at(&self, oid: &str) -> Option<usize> {
+        self.stash_commits
+            .iter()
+            .position(|commit| &**commit == oid)
     }
 }
 
@@ -349,8 +390,24 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
         (!branch.is_head, !is_default, branch.name.clone())
     });
     refs.tags.reverse();
-    let stashes = ops::run(repo, &["stash", "list", "--format=%s"]).unwrap_or_default();
-    refs.stashes = stashes.lines().map(str::to_owned).collect();
+    let stashes = ops::run(repo, &["stash", "list", "--format=%H%x00%P%x00%s"]).unwrap_or_default();
+    for line in stashes.lines() {
+        let mut fields = line.splitn(3, '\0');
+        let (Some(oid), Some(parents), Some(subject)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let oid = intern(&mut refs.tips, oid);
+        let mut parents = parents.split_ascii_whitespace();
+        if let Some(base) = parents.next() {
+            refs.stash_graph.bases.insert(oid.clone(), base.into());
+        }
+        // The index and untracked commits kept under a stash aren't history.
+        refs.stash_graph.hidden.extend(parents.map(Arc::from));
+        refs.stash_commits.push(oid);
+        refs.stashes.push(subject.to_owned());
+    }
 
     refs.plan.fork = default_branch
         .as_deref()

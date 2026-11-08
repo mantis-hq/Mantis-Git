@@ -214,6 +214,7 @@ impl GraphView {
             let is_head = self.refs.is_head(&commit.oid);
             let is_merge = commit.is_merge();
             let is_working = entry.working;
+            let is_stash = self.refs.stash_at(&commit.oid).is_some();
             let chips = self.refs.chips_at(&commit.oid);
             let (prefix, description) = split_subject(&commit.subject);
             let subject_color = if is_merge { subtext0 } else { foreground };
@@ -260,6 +261,7 @@ impl GraphView {
                                                 is_head,
                                                 is_merge,
                                                 is_working,
+                                                is_stash,
                                                 head,
                                                 hollow: row_background,
                                             },
@@ -443,6 +445,8 @@ struct NodeStyle {
     is_head: bool,
     is_merge: bool,
     is_working: bool,
+    /// A stash: a dashed ring in its lane's colour, as it isn't history yet.
+    is_stash: bool,
     head: Hsla,
     /// Fills the middle of merge nodes and the HEAD ring, so it has to match the row
     /// behind them.
@@ -505,6 +509,11 @@ fn paint_row(
 
     if node.is_working {
         paint_dashed_ring(node_x, middle, NODE_RADIUS + 1., node.head, window);
+        return;
+    }
+    if node.is_stash {
+        let color = lane_color(row.color, is_dark);
+        paint_dashed_ring(node_x, middle, NODE_RADIUS + 1., color, window);
         return;
     }
     if node.is_head {

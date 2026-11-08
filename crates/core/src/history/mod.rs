@@ -15,7 +15,7 @@ pub mod spotlight;
 use crate::ops::{Process, git, stderr_message};
 use crate::text::count;
 use lanes::{GraphBuilder, Row};
-use refs::{Refs, read_refs};
+use refs::{Refs, StashGraph, read_refs};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -102,6 +102,7 @@ pub struct More {
     builder: GraphBuilder,
     /// Branch, tag and HEAD commits that have not been listed yet.
     unseen_tips: HashSet<Arc<str>>,
+    stashes: StashGraph,
 }
 
 impl More {
@@ -120,6 +121,7 @@ impl More {
 
     /// Lays out `commits` under everything laid out so far, after `working` if given.
     fn place(&mut self, working: Option<Entry>, commits: Vec<Commit>) -> Vec<Entry> {
+        let commits = self.stashes.tidy(commits);
         for commit in &commits {
             self.unseen_tips.remove(&commit.oid);
         }
@@ -151,6 +153,7 @@ fn begin(refs: &Refs) -> (More, Option<Entry>) {
     let more = More {
         builder,
         unseen_tips: refs.tips.iter().cloned().collect(),
+        stashes: refs.stash_graph.clone(),
     };
     (more, working)
 }
@@ -603,16 +606,28 @@ mod tests {
     }
 
     #[test]
-    fn stashes_are_not_drawn() {
+    fn a_stash_is_drawn_as_one_commit_on_the_commit_it_was_made_on() {
         let repo = Repo::new();
         std::fs::write(repo.path().join("file"), "one").unwrap();
         repo.git(&["add", "file"]);
         repo.commit("base");
+        repo.commit("tip");
         std::fs::write(repo.path().join("file"), "two").unwrap();
-        repo.git(&["stash"]);
+        std::fs::write(repo.path().join("new"), "x").unwrap();
+        repo.git(&["stash", "push", "-q", "-u", "-m", "half done"]);
 
-        let (_, entries, _) = load_all(repo.path());
-        assert_eq!(subjects(&entries), ["base"]);
+        let (refs, entries, _) = load_all(repo.path());
+        let refs = refs.expect("refs are read");
+        // The index and untracked commits are not shown, and the stash sits on its base.
+        assert_eq!(entries.len(), 3);
+        let stash = entries
+            .iter()
+            .find(|e| refs.stash_at(&e.commit.oid) == Some(0))
+            .expect("the stash is a row");
+        assert!(stash.commit.subject.contains("half done"));
+        assert_eq!(stash.commit.parents.len(), 1);
+        assert_eq!(&*stash.commit.parents[0], &*entries[1].commit.oid);
+        assert_eq!(stash.row.outgoing.len(), 1);
     }
 
     #[test]

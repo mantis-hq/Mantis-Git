@@ -473,6 +473,16 @@ impl GraphView {
             stash::Click::Plain
         };
         self.sidebar.stash_picks.click(index, click);
+        // A plain click also shows the stash in the graph, with its changes in the inspector.
+        if matches!(click, stash::Click::Plain)
+            && let Some(row) = self
+                .refs
+                .stash_commits
+                .get(index)
+                .and_then(|oid| self.row_of(oid))
+        {
+            self.select(row, cx);
+        }
         cx.notify();
     }
 
