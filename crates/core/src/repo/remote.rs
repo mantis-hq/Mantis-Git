@@ -51,6 +51,18 @@ pub fn list(repo: &Path) -> Vec<Remote> {
     ops::run(repo, &["remote", "-v"]).map_or_else(|_| Vec::new(), |listing| parse(&listing))
 }
 
+/// The remote that a remote branch such as `origin/feat/x` belongs to, and the branch's name
+/// on it. A remote's name can hold a slash, so the longest match wins.
+pub fn split_branch<'a>(remotes: &'a [Remote], name: &'a str) -> Option<(&'a Remote, &'a str)> {
+    remotes
+        .iter()
+        .filter_map(|remote| {
+            let branch = name.strip_prefix(remote.name.as_str())?.strip_prefix('/')?;
+            Some((remote, branch))
+        })
+        .max_by_key(|(remote, _)| remote.name.len())
+}
+
 /// Why `name` can't be a remote's name, in words for the person typing it.
 pub fn why_bad_name(name: &str) -> Option<&'static str> {
     if name.is_empty() {

@@ -1,6 +1,9 @@
 //! The branch sidebar. Clicking a branch spotlights its history in the graph.
 
 pub(super) mod remotes;
+mod requests;
+#[cfg(test)]
+pub(super) use requests::Load;
 
 use super::menu::wire_ref;
 use super::parts::{TEXT_CHIP, TEXT_SMALL};
@@ -33,6 +36,8 @@ enum Section {
     Worktrees,
     Submodules,
     Remotes,
+    /// The pull or merge requests of a remote on a known forge.
+    Requests,
     Tags,
     Stashes,
 }
@@ -84,6 +89,12 @@ enum Item {
     /// A remote that has no remote branches yet, such as one just added. Index into
     /// `remote_configs`.
     Remote(usize),
+    /// The "Pull requests" or "Merge requests" heading.
+    RequestsHeader,
+    /// A request, by its place in the list read from the remote.
+    Request(usize),
+    /// A sentence about the list: that it is being read, why it failed, what it leaves out.
+    RequestsNote,
     Stash(usize),
 }
 
@@ -124,6 +135,9 @@ pub(super) struct State {
     closed_folders: Vec<String>,
     scroll: UniformListScrollHandle,
     submodule_scroll: UniformListScrollHandle,
+    /// What was last asked of the forge. It stays closed until opened, since asking reaches
+    /// over the network.
+    requests: requests::Asked,
 }
 
 impl State {
@@ -321,6 +335,18 @@ impl GraphView {
             &mut items,
         );
 
+        if self.request_source().is_some() {
+            items.push(Item::RequestsHeader);
+            if self.sidebar.expanded.contains(&Section::Requests) {
+                if let Some(requests::Load::Done(found)) = self.loaded_requests() {
+                    items.extend((0..found.newest.len()).map(Item::Request));
+                }
+                if self.requests_note().is_some() {
+                    items.push(Item::RequestsNote);
+                }
+            }
+        }
+
         let trees = self.refs.worktrees.len();
         if trees >= 2 {
             let section = Section::Worktrees;
@@ -453,6 +479,18 @@ impl GraphView {
             },
             Item::Remote(index) => match self.render_remote_row(*index, cx) {
                 Some(row) => slot.child(row),
+                None => slot,
+            },
+            Item::RequestsHeader => match self.render_requests_header(cx) {
+                Some(row) => slot.child(row),
+                None => slot,
+            },
+            Item::Request(index) => match self.render_request_row(*index, cx) {
+                Some(row) => slot.child(row),
+                None => slot,
+            },
+            Item::RequestsNote => match self.render_requests_note(cx) {
+                Some(note) => slot.child(note),
                 None => slot,
             },
             Item::Stash(index) => match self.render_stash_row(*index, cx) {
