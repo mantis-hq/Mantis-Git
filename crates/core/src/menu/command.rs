@@ -286,7 +286,7 @@ impl Command {
             Self::DiscardChanges { warning, .. } => Some(Confirmation {
                 message: warning.clone(),
                 action: "Discard",
-                weight: Weight::Popup,
+                weight: Weight::DoublePress,
             }),
             Self::DeleteMany { refs } => Some(Confirmation {
                 message: branch::delete_many_warning(refs),

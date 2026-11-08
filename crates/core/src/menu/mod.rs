@@ -773,7 +773,7 @@ mod tests {
         };
         let confirmation = command.confirmation().unwrap();
         assert_eq!(confirmation.action, "Discard");
-        assert_eq!(confirmation.weight, Weight::Popup);
+        assert_eq!(confirmation.weight, Weight::DoublePress);
         let staged = file_menu("src/a.rs", 0, Some(FileSource::Working(Side::Staged)));
         assert!(
             !shown_lines(&staged)
