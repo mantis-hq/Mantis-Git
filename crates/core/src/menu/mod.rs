@@ -231,9 +231,21 @@ pub fn worktree_menu(refs: &Refs, path: &Path) -> Vec<Line> {
     lines
 }
 
-/// The menu for a file in the inspector. `side` is the list it is in when these are the
-/// working changes, and `None` for a commit's files, which have nothing to stage.
-pub fn file_menu(path: &str, index: usize, side: Option<Side>) -> Vec<Line> {
+/// Where a file in the inspector comes from: one of the two lists of working changes, or a
+/// commit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileSource<'a> {
+    Working(Side),
+    Commit {
+        oid: &'a str,
+        /// Where a renamed file came from.
+        old_path: Option<&'a str>,
+    },
+}
+
+/// The menu for a file in the inspector. A working file can be staged or unstaged, and a
+/// commit's file can be applied to the working changes. `None` offers neither.
+pub fn file_menu(path: &str, index: usize, source: Option<FileSource>) -> Vec<Line> {
     let name = path.rsplit('/').next().unwrap_or(path);
     let mut lines = vec![
         Line::Heading(path.to_owned()),
@@ -242,15 +254,27 @@ pub fn file_menu(path: &str, index: usize, side: Option<Side>) -> Vec<Line> {
             Command::ShowFile { index },
         ),
     ];
-    if let Some(side) = side {
-        lines.push(Line::Separator);
-        lines.push(Line::item(
+    let action = match source {
+        Some(FileSource::Working(side)) => Some(Line::item(
             side.action(name),
             Command::StageFiles {
                 paths: vec![path.to_owned()],
                 unstage: side.unstages(),
             },
-        ));
+        )),
+        Some(FileSource::Commit { oid, old_path }) => Some(Line::item(
+            format!("Apply changes in {name} to working changes"),
+            Command::ApplyFile {
+                oid: oid.to_owned(),
+                path: path.to_owned(),
+                old_path: old_path.map(str::to_owned),
+            },
+        )),
+        None => None,
+    };
+    if let Some(action) = action {
+        lines.push(Line::Separator);
+        lines.push(action);
     }
     lines.push(Line::Separator);
     lines.push(Line::item("Copy path", copy(path, "the path")));
@@ -599,7 +623,7 @@ mod tests {
 
     #[test]
     fn a_working_file_can_be_shown_staged_or_unstaged_and_copied() {
-        let lines = file_menu("src/a.rs", 3, Some(Side::Unstaged));
+        let lines = file_menu("src/a.rs", 3, Some(FileSource::Working(Side::Unstaged)));
         assert_eq!(
             shown_lines(&lines),
             [
@@ -616,7 +640,7 @@ mod tests {
                 unstage: false
             })
         );
-        let lines = file_menu("src/a.rs", 3, Some(Side::Staged));
+        let lines = file_menu("src/a.rs", 3, Some(FileSource::Working(Side::Staged)));
         assert!(matches!(
             lines[3].command(),
             Some(Command::StageFiles { unstage: true, .. })
@@ -625,7 +649,33 @@ mod tests {
     }
 
     #[test]
-    fn a_commits_file_has_nothing_to_stage() {
+    fn a_commits_file_can_be_applied_to_the_working_changes() {
+        let source = FileSource::Commit {
+            oid: "1a2b3c4d",
+            old_path: Some("src/old.rs"),
+        };
+        let lines = file_menu("src/a.rs", 0, Some(source));
+        assert_eq!(
+            shown_lines(&lines),
+            [
+                "src/a.rs",
+                "Show changes in a.rs",
+                "Apply changes in a.rs to working changes",
+                "Copy path"
+            ]
+        );
+        assert_eq!(
+            lines[3].command(),
+            Some(&Command::ApplyFile {
+                oid: "1a2b3c4d".to_owned(),
+                path: "src/a.rs".to_owned(),
+                old_path: Some("src/old.rs".to_owned()),
+            })
+        );
+    }
+
+    #[test]
+    fn a_file_with_no_source_can_only_be_shown_and_copied() {
         let lines = file_menu("a.rs", 0, None);
         assert_eq!(
             shown_lines(&lines),

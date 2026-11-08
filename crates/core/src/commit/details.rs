@@ -129,7 +129,7 @@ pub fn read(repo: &Path, oid: &str, cancel: &Cancel) -> Result<CommitDetails, St
 
 /// A merge has no diff of its own, so it is read against its first parent: what it brought
 /// onto the branch it was made on, the side `revert -m 1` undoes. Other commits need none.
-fn first_parent(repo: &Path, oid: &str) -> Option<String> {
+pub(crate) fn first_parent(repo: &Path, oid: &str) -> Option<String> {
     let parents = ops::run(
         repo,
         &["log", "-1", "--no-show-signature", "--format=%P", oid],
