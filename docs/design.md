@@ -375,9 +375,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   under it as it arrives, stdout in Subtext 0, stderr in Overlay 2, and in Red when the
   command failed. A running command keeps to its newest line unless you scroll up.
 - **Terminal:** code type on Mantle. The cursor is a Blue block with Crust text and shows
-  only while the terminal has focus. Colours the shell asks for by number use Catppuccin's
-  terminal mapping: black Surface 1, red, green, yellow, blue, Pink for magenta, Teal for
-  cyan, white Subtext 1, and the bright set is the same but for Surface 2 as bright black
+  only while the terminal has focus. While it has focus it takes every key, Tab, Ctrl C
+  and Ctrl W included, before any shortcut of the app, except `Ctrl \`` and
+  `Ctrl Shift \``. Colours the shell asks for by number use Catppuccin's terminal
+  mapping: black Surface 1, red, green, yellow, blue, Pink for magenta, Teal for cyan,
+  white Subtext 1, and the bright set is the same but for Surface 2 as bright black
   and Subtext 0 as bright white. Latte takes the same-named Latte values. The 256-colour
   cube and the grey ramp are the standard ones, since programs rely on them.
 - **Focus:** every control shows a 2 px blue focus ring, and each action has a key.
