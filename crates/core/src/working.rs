@@ -1,20 +1,26 @@
 //! Uncommitted changes: what is staged, what is not, and turning the staged part into a
 //! commit.
 
-use crate::details::FileChange;
-use crate::ops;
-use crate::patch::{self, DiffView, FilePatch, LineKind};
+use crate::details::{self, FileChange};
+use crate::ops::{self, Cancel};
+use crate::patch::{self, DiffView, FilePatch};
 use crate::text::count;
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, SystemTime};
 
 /// New files larger than this are staged whole without showing their text.
 const MAX_SHOWN_FILE: u64 = 1 << 20;
 
-/// One file with uncommitted changes on one side of the index.
+/// One file with uncommitted changes on one side of the index. Only what the list needs
+/// is read up front; the text of its changes is read with [`file_diff`] when it is opened.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkingFile {
     pub path: String,
-    pub patch: FilePatch,
+    /// How the file is listed: its status and the number of lines added and removed.
+    pub change: FileChange,
     /// Git doesn't know the file yet, so its patch is all additions whatever the view.
     pub untracked: bool,
 }
@@ -22,24 +28,13 @@ pub struct WorkingFile {
 impl WorkingFile {
     /// The file as the inspector lists it, the same as for a commit's files.
     pub fn change(&self) -> FileChange {
-        let count = |kind| {
-            let lines = self.patch.hunks.iter().flat_map(|hunk| &hunk.lines);
-            lines.filter(|line| line.kind == kind).count() as u32
-        };
-        FileChange {
-            status: self.patch.status(),
-            path: self.path.as_str().into(),
-            old_path: None,
-            additions: count(LineKind::Added),
-            deletions: count(LineKind::Removed),
-            binary: self.patch.binary,
-        }
+        self.change.clone()
     }
 
     /// Whether single hunks of this file can be moved in and out of the index. A file that
     /// is added or removed whole, or has no text, only moves as a whole.
     pub fn has_movable_hunks(&self) -> bool {
-        !self.untracked && !self.patch.binary && self.patch.status() == 'M'
+        !self.untracked && !self.change.binary && self.change.status == 'M'
     }
 }
 
@@ -123,46 +118,178 @@ impl Changes {
     }
 }
 
-/// Reads what is staged and what is not, each against what it differs from.
-pub fn read(repo: &Path) -> Result<Changes, String> {
-    let read_side = |command: &[&str]| -> Result<Vec<WorkingFile>, String> {
-        let diff = ops::run(repo, &patch::diff_args(command))?;
-        Ok(patch::parse(&diff)
+/// Reads which files are staged and which are not, with their line counts but not their
+/// text. The three git commands run side by side, and an untracked file is counted here
+/// rather than by running git on each of what may be thousands.
+///
+/// A set `cancel` stops it with [`ops::CANCELLED`].
+pub fn read(repo: &Path, cancel: &Cancel) -> Result<Changes, String> {
+    let list = |cached: bool| -> Result<Vec<WorkingFile>, String> {
+        let mut command = vec!["diff", "--no-renames", "--raw", "--numstat", "-z"];
+        if cached {
+            // Before the first commit `--cached` compares with an empty tree.
+            command.push("--cached");
+        }
+        let output = ops::run_cancellable(repo, &command, cancel)?;
+        Ok(details::parse_changes(&output)
             .into_iter()
-            .map(|patch| WorkingFile {
-                path: patch.path.clone(),
-                patch,
+            .map(|change| WorkingFile {
+                path: change.path.to_string(),
+                change,
                 untracked: false,
             })
             .collect())
     };
-    // Before the first commit `--cached` compares with an empty tree.
-    let mut staged = read_side(&["diff", "--cached", "--no-renames"])?;
-    let mut unstaged = read_side(&["diff", "--no-renames"])?;
+    let (staged, unstaged, untracked) = std::thread::scope(|scope| {
+        let staged = scope.spawn(|| list(true));
+        let unstaged = scope.spawn(|| list(false));
+        let untracked = ops::run_cancellable(
+            repo,
+            &["ls-files", "--others", "--exclude-standard", "-z"],
+            cancel,
+        );
+        let gone = || Err("git stopped".to_owned());
+        (
+            staged.join().unwrap_or_else(|_| gone()),
+            unstaged.join().unwrap_or_else(|_| gone()),
+            untracked,
+        )
+    });
+    let (mut staged, mut unstaged) = (staged?, unstaged?);
+    let untracked = untracked?;
 
-    let untracked = ops::run(repo, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-    for path in untracked.split('\0').filter(|path| !path.is_empty()) {
-        unstaged.push(WorkingFile {
-            path: path.to_owned(),
-            patch: read_new_file(repo, path),
-            untracked: true,
-        });
-    }
+    let paths: Vec<&str> = untracked
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .collect();
+    unstaged.extend(untracked_files(repo, &paths, cancel)?);
     staged.sort_by(|a, b| a.path.cmp(&b.path));
     unstaged.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(Changes { unstaged, staged })
 }
 
-/// One file as it is drawn, in the chosen [`DiffView`]. What [`read`] found is the plain
-/// view, so that is used as it is, and so is a file git doesn't know yet.
+/// How long after a file was last written what was read of it can be kept: one written
+/// again in the same clock tick, at the same size, would look unchanged.
+const SETTLED: Duration = Duration::from_secs(2);
+
+/// An untracked file's listing with the time and size of the file it was read from.
+type Remembered = (SystemTime, u64, FileChange);
+
+/// Untracked files as listed at the last read, per repository, so that a refresh only
+/// reads the ones that changed.
+static REMEMBERED: Mutex<Option<HashMap<PathBuf, HashMap<String, Remembered>>>> = Mutex::new(None);
+
+/// Lists untracked files as added, with their lines counted on several threads.
+fn untracked_files(
+    repo: &Path,
+    paths: &[&str],
+    cancel: &Cancel,
+) -> Result<Vec<WorkingFile>, String> {
+    let mut before = REMEMBERED
+        .lock()
+        .ok()
+        .and_then(|mut all| all.as_mut()?.remove(repo))
+        .unwrap_or_default();
+    let known: Vec<Option<Remembered>> = paths.iter().map(|path| before.remove(*path)).collect();
+    drop(before);
+
+    let now = SystemTime::now();
+    let next = AtomicUsize::new(0);
+    let found: Mutex<Vec<(usize, FileChange, Option<(SystemTime, u64)>)>> = Mutex::new(Vec::new());
+    let threads = std::thread::available_parallelism()
+        .map_or(4, usize::from)
+        .min(8);
+    std::thread::scope(|scope| {
+        for _ in 0..threads.min(paths.len()) {
+            scope.spawn(|| {
+                let mut mine = Vec::new();
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(path) = paths.get(index) else { break };
+                    if cancel.is_cancelled() {
+                        break;
+                    }
+                    let meta = std::fs::symlink_metadata(repo.join(path)).ok();
+                    let stamp = meta
+                        .as_ref()
+                        .and_then(|meta| Some((meta.modified().ok()?, meta.len())));
+                    let change = match (&known[index], stamp) {
+                        (Some((time, size, change)), Some(stamp)) if (*time, *size) == stamp => {
+                            change.clone()
+                        }
+                        _ => count_new_file(repo, path, meta.as_ref()),
+                    };
+                    let settled = stamp.filter(|(time, _)| {
+                        now.duration_since(*time).is_ok_and(|age| age > SETTLED)
+                    });
+                    mine.push((index, change, settled));
+                }
+                found.lock().unwrap_or_else(|e| e.into_inner()).extend(mine);
+            });
+        }
+    });
+    if cancel.is_cancelled() {
+        return Err(ops::CANCELLED.to_owned());
+    }
+
+    let mut found = found.into_inner().unwrap_or_else(|e| e.into_inner());
+    found.sort_by_key(|(index, ..)| *index);
+    let mut kept = HashMap::new();
+    let mut files = Vec::with_capacity(found.len());
+    for (index, change, settled) in found {
+        let path = paths[index];
+        if let Some((time, size)) = settled {
+            kept.insert(path.to_owned(), (time, size, change.clone()));
+        }
+        files.push(WorkingFile {
+            path: path.to_owned(),
+            change,
+            untracked: true,
+        });
+    }
+    if let Ok(mut all) = REMEMBERED.lock() {
+        all.get_or_insert_with(HashMap::new)
+            .insert(repo.to_path_buf(), kept);
+    }
+    Ok(files)
+}
+
+/// How an untracked file is listed: added, with every line counted as an addition. One
+/// that is too large to show, or isn't text, is listed as binary.
+fn count_new_file(repo: &Path, path: &str, meta: Option<&std::fs::Metadata>) -> FileChange {
+    let mut change = FileChange {
+        status: 'A',
+        path: path.into(),
+        binary: true,
+        ..FileChange::default()
+    };
+    if !meta.is_some_and(|meta| meta.is_file() && meta.len() <= MAX_SHOWN_FILE) {
+        return change;
+    }
+    let Ok(content) = std::fs::read(repo.join(path)) else {
+        return change;
+    };
+    // Git's own test for a binary file: a NUL in the first 8000 bytes.
+    if content[..content.len().min(8000)].contains(&0) {
+        return change;
+    }
+    change.binary = false;
+    let newlines = content.iter().filter(|byte| **byte == b'\n').count();
+    let unfinished = content.last().is_some_and(|byte| *byte != b'\n');
+    change.additions = (newlines + usize::from(unfinished)) as u32;
+    change
+}
+
+/// One file's changes as they are drawn, in the chosen [`DiffView`], read when it is opened.
+/// A file git doesn't know yet is all additions whatever the view.
 pub fn file_diff(
     repo: &Path,
     file: &WorkingFile,
     side: Side,
     view: DiffView,
 ) -> Result<FilePatch, String> {
-    if view.is_default() || file.untracked {
-        return Ok(file.patch.clone());
+    if file.untracked {
+        return Ok(read_new_file(repo, &file.path));
     }
     let mut command = vec!["diff", "--no-renames"];
     if side == Side::Staged {
@@ -198,12 +325,13 @@ pub fn unstage_files(repo: &Path, paths: &[String]) -> Result<(), String> {
 }
 
 /// Moves one hunk of a file into the index, or out of it. The hunk is by position in the
-/// plain patch [`read`] gave, so read again after each move.
+/// plain patch as it stands now, so read again after each move.
 pub fn move_hunk(repo: &Path, file: &WorkingFile, hunk: usize, side: Side) -> Result<(), String> {
-    if hunk >= file.patch.hunks.len() {
+    let plain = file_diff(repo, file, side, DiffView::default())?;
+    if hunk >= plain.hunks.len() {
         return Err("That change is gone; the list has been refreshed.".to_owned());
     }
-    let patch = file.patch.with_hunks([hunk]);
+    let patch = plain.with_hunks([hunk]);
     let mut args = vec!["apply", "--cached", "--whitespace=nowarn"];
     if side.unstages() {
         args.push("--reverse");
@@ -334,6 +462,16 @@ mod tests {
     use crate::testing::Repo;
     use std::fs;
 
+    fn read(repo: &Path) -> Result<Changes, String> {
+        super::read(repo, &Cancel::new())
+    }
+
+    /// How many hunks a listed file's plain patch has.
+    fn hunks(repo: &Repo, file: &WorkingFile, side: Side) -> usize {
+        let patch = file_diff(repo.path(), file, side, DiffView::default()).unwrap();
+        patch.hunks.len()
+    }
+
     fn file<'a>(files: &'a [WorkingFile], path: &str) -> &'a WorkingFile {
         files.iter().find(|file| file.path == path).unwrap()
     }
@@ -439,9 +577,9 @@ mod tests {
         repo.commit("base");
         fs::remove_file(repo.path().join("gone")).unwrap();
         stage_files(repo.path(), &["gone".to_owned()]).unwrap();
-        assert_eq!(read(repo.path()).unwrap().staged[0].patch.status(), 'D');
+        assert_eq!(read(repo.path()).unwrap().staged[0].change.status, 'D');
         unstage_files(repo.path(), &["gone".to_owned()]).unwrap();
-        assert_eq!(read(repo.path()).unwrap().unstaged[0].patch.status(), 'D');
+        assert_eq!(read(repo.path()).unwrap().unstaged[0].change.status, 'D');
     }
 
     #[test]
@@ -475,13 +613,13 @@ mod tests {
 
         let changes = read(repo.path()).unwrap();
         let both = &changes.unstaged[0];
-        assert_eq!(both.patch.hunks.len(), 2);
+        assert_eq!(hunks(&repo, both, Side::Unstaged), 2);
         assert!(both.has_movable_hunks());
         move_hunk(repo.path(), both, 1, Side::Unstaged).unwrap();
 
         let changes = read(repo.path()).unwrap();
-        assert_eq!(changes.staged[0].patch.hunks.len(), 1);
-        assert_eq!(changes.unstaged[0].patch.hunks.len(), 1);
+        assert_eq!(hunks(&repo, &changes.staged[0], Side::Staged), 1);
+        assert_eq!(hunks(&repo, &changes.unstaged[0], Side::Unstaged), 1);
         assert_eq!(
             repo.git(&["show", ":file"]),
             long("top", "new bottom").trim()
@@ -491,7 +629,66 @@ mod tests {
         move_hunk(repo.path(), &changes.staged[0], 0, Side::Staged).unwrap();
         let changes = read(repo.path()).unwrap();
         assert!(changes.staged.is_empty());
-        assert_eq!(changes.unstaged[0].patch.hunks.len(), 2);
+        assert_eq!(hunks(&repo, &changes.unstaged[0], Side::Unstaged), 2);
+    }
+
+    #[test]
+    fn untracked_files_are_counted_without_their_text_being_read_by_git() {
+        let repo = Repo::new();
+        repo.write("keep", "x\n");
+        repo.commit("base");
+        repo.write("two", "a\nb\n");
+        repo.write("unfinished", "a\nb");
+        repo.write("empty", "");
+        fs::write(repo.path().join("binary"), b"a\0b\n").unwrap();
+        let changes = read(repo.path()).unwrap();
+        let counts = |path: &str| {
+            let change = &file(&changes.unstaged, path).change;
+            (
+                change.status,
+                change.additions,
+                change.deletions,
+                change.binary,
+            )
+        };
+        assert_eq!(counts("two"), ('A', 2, 0, false));
+        assert_eq!(counts("unfinished"), ('A', 2, 0, false));
+        assert_eq!(counts("empty"), ('A', 0, 0, false));
+        assert_eq!(counts("binary"), ('A', 0, 0, true));
+        // The text itself is read when the file is opened, as all additions.
+        let two = file(&changes.unstaged, "two");
+        let patch = file_diff(repo.path(), two, Side::Unstaged, DiffView::default()).unwrap();
+        assert_eq!(patch.hunks[0].lines.len(), 2);
+    }
+
+    #[test]
+    fn a_cancelled_read_stops_instead_of_listing_files() {
+        let repo = Repo::new();
+        repo.write("new", "x\n");
+        let cancel = Cancel::new();
+        cancel.cancel();
+        assert_eq!(
+            super::read(repo.path(), &cancel),
+            Err(ops::CANCELLED.to_owned())
+        );
+    }
+
+    #[test]
+    fn thousands_of_changed_files_are_listed_and_a_second_read_agrees() {
+        let repo = Repo::new();
+        for n in 0..1500 {
+            repo.write(&format!("tracked/{n:04}"), "a\n");
+        }
+        repo.commit("base");
+        for n in 0..1500 {
+            repo.write(&format!("tracked/{n:04}"), "a\nb\n");
+            repo.write(&format!("new/{n:04}"), "x\ny\nz\n");
+        }
+        let first = read(repo.path()).unwrap();
+        assert_eq!(first.unstaged.len(), 3000);
+        assert_eq!(file(&first.unstaged, "tracked/0007").change.additions, 1);
+        assert_eq!(file(&first.unstaged, "new/0007").change.additions, 3);
+        assert_eq!(read(repo.path()).unwrap(), first);
     }
 
     #[test]

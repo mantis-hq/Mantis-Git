@@ -140,7 +140,7 @@ fn first_parent(repo: &Path, oid: &str) -> Option<String> {
 }
 
 /// Parses `--raw --numstat -z`: every file's raw record, then every file's numstat record.
-fn parse_changes(output: &str) -> Vec<FileChange> {
+pub(crate) fn parse_changes(output: &str) -> Vec<FileChange> {
     let mut files: Vec<FileChange> = Vec::new();
     let mut numstat_index = 0;
     let mut fields = output.split('\0').filter(|field| !field.is_empty());

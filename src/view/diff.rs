@@ -193,8 +193,7 @@ impl GraphView {
         );
     }
 
-    /// The working changes carry their plain patches already, so only another view of a
-    /// file is read from git.
+    /// A working file's text isn't read with the list, so it is read from git when opened.
     fn load_working_file(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(details) = self.shown_details().cloned() else {
             return;
@@ -214,11 +213,6 @@ impl GraphView {
         let view = self.diff.view;
         let oid = details.oid.clone();
         self.diff.file = Some(index);
-        if view.is_default() {
-            let shown =
-                Shown::new(oid, &change, &file.patch).staging(side, file.has_movable_hunks());
-            return self.show_working_patch(shown, same_file, cx);
-        }
         let Some(repo) = self.workdir() else {
             return;
         };
@@ -228,7 +222,8 @@ impl GraphView {
                 let patch = working::file_diff(&repo, &file, side, view)?;
                 // Hunks of a patch that skips white space or shows every line can't be
                 // applied on their own, so they get no boxes.
-                Ok::<_, String>(Shown::new(oid, &change, &patch).staging(side, false))
+                let movable = view.is_default() && file.has_movable_hunks();
+                Ok::<_, String>(Shown::new(oid, &change, &patch).staging(side, movable))
             },
             move |this, shown, cx| {
                 if this.diff.file != Some(index) || this.diff.view != view {

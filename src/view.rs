@@ -1219,8 +1219,8 @@ mod tests {
         assert_eq!(repo.git(&["show", ":f"]), long("top", "new bottom").trim());
         view.read_with(&cx, |view, _| {
             let changes = view.working_changes().unwrap();
-            assert_eq!(changes.staged[0].patch.hunks.len(), 1);
-            assert_eq!(changes.unstaged[0].patch.hunks.len(), 1);
+            assert_eq!(changes.staged.len(), 1);
+            assert_eq!(changes.unstaged.len(), 1);
             // The file is in both lists now, and the diff stays on the unstaged one.
             assert_eq!(view.shown_file(), Some(0));
         });
