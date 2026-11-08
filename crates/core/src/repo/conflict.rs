@@ -7,6 +7,7 @@ use crate::ops::{self, git};
 use crate::repo::status;
 use crate::text::{count, short_oid};
 use std::fs;
+use std::ops::Range;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,8 +140,8 @@ impl Progress {
             .iter()
             .filter(|decision| decision.path == path && !decision.whole_file)
             .map(|decision| {
-                let next = blocks.peek()?;
-                let (mine, other) = self.by_side(next.first.as_str(), next.second.as_str());
+                let (first, second) = blocks.peek()?.sides(text);
+                let (mine, other) = self.by_side(first, second);
                 (mine == decision.mine && other == decision.other)
                     .then(|| blocks.next())
                     .flatten()
@@ -492,37 +493,57 @@ pub fn picked_lines_label(picked: usize) -> String {
     format!("Use {}", count(picked, "selected line"))
 }
 
-/// A block of conflict markers in a file's text, by position.
+/// A block of conflict markers in a file's text, by byte position. It holds no text of its
+/// own, so finding every block in a large file copies nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Block {
     pub start: usize,
     pub end: usize,
-    /// The sides in the order git wrote them.
-    pub first: String,
-    pub second: String,
+    /// Where the sides are, in the order git wrote them.
+    first: Range<usize>,
+    second: Range<usize>,
+}
+
+impl Block {
+    /// The two sides in the order git wrote them, read from the text the block was found in.
+    pub fn sides<'a>(&self, text: &'a str) -> (&'a str, &'a str) {
+        (&text[self.first.clone()], &text[self.second.clone()])
+    }
+
+    /// What goes in the block's place to put `chosen` there. Typed or picked text often
+    /// loses its last newline, which would join two lines, so it gets it back.
+    pub fn replacement(&self, text: &str, chosen: &str) -> String {
+        let mut replacement = chosen.to_owned();
+        if !chosen.is_empty() && !chosen.ends_with('\n') && self.sides(text).0.ends_with('\n') {
+            replacement.push('\n');
+        }
+        replacement
+    }
 }
 
 /// The blocks of conflict markers in `text`, in order. A block that doesn't close is left
-/// alone, as it is in [`split_conflicts`].
+/// alone, as it is in [`split_conflicts`]. It reads the text once, however many blocks
+/// there are.
 pub fn blocks(text: &str) -> Vec<Block> {
     let mut found = Vec::new();
     let mut at = 0;
-    while at < text.len() {
-        let line_end = text[at..].find('\n').map_or(text.len(), |n| at + n + 1);
-        if text[at..].starts_with("<<<<<<< ")
-            && let Some((first, second, after)) = read_block(&text[line_end..])
-        {
-            let end = text.len() - after.len();
-            found.push(Block {
-                start: at,
-                end,
-                first: first.to_owned(),
-                second: second.to_owned(),
-            });
-            at = end;
-            continue;
-        }
-        at = line_end;
+    while let Some(start) = next_start(text, at) {
+        let body = start
+            + text[start..]
+                .find('\n')
+                .map_or(text.len() - start, |n| n + 1);
+        // Once one doesn't close, none after it can, so the rest is text.
+        let Some(read) = read_block(&text[body..]) else {
+            break;
+        };
+        let end = body + read.end;
+        found.push(Block {
+            start,
+            end,
+            first: body..body + read.first_end,
+            second: body + read.second.start..body + read.second.end,
+        });
+        at = end;
     }
     found
 }
@@ -531,11 +552,7 @@ pub fn blocks(text: &str) -> Vec<Block> {
 pub fn replace_block(text: &str, block: &Block, chosen: &str) -> String {
     let mut merged = String::with_capacity(text.len());
     merged.push_str(&text[..block.start]);
-    merged.push_str(chosen);
-    // Typed or picked text often loses the last newline, which would join two lines.
-    if !chosen.is_empty() && !chosen.ends_with('\n') && block.first.ends_with('\n') {
-        merged.push('\n');
-    }
+    merged.push_str(&block.replacement(text, chosen));
     merged.push_str(&text[block.end..]);
     merged
 }
@@ -591,53 +608,71 @@ enum Segment<'a> {
 /// text, so a file that merely contains `<<<<<<<` isn't cut up.
 fn split_conflicts(text: &str) -> Vec<Segment<'_>> {
     let mut segments = Vec::new();
-    let mut rest = text;
     let mut pending = 0;
-    let mut offset = 0;
-    while offset < rest.len() {
-        let line_end = rest[offset..]
-            .find('\n')
-            .map_or(rest.len(), |n| offset + n + 1);
-        if rest[offset..].starts_with("<<<<<<< ")
-            && let Some((first, second, after)) = read_block(&rest[line_end..])
-        {
-            if offset > pending {
-                segments.push(Segment::Text(&rest[pending..offset]));
-            }
-            segments.push(Segment::Conflict { first, second });
-            rest = after;
-            pending = 0;
-            offset = 0;
-            continue;
+    for block in blocks(text) {
+        if block.start > pending {
+            segments.push(Segment::Text(&text[pending..block.start]));
         }
-        offset = line_end;
+        let (first, second) = block.sides(text);
+        segments.push(Segment::Conflict { first, second });
+        pending = block.end;
     }
-    if pending < rest.len() {
-        segments.push(Segment::Text(&rest[pending..]));
+    if pending < text.len() {
+        segments.push(Segment::Text(&text[pending..]));
     }
     segments
 }
 
-/// Reads a conflict body: the first side, an optional base, `=======`, the second side.
-fn read_block(body: &str) -> Option<(&str, &str, &str)> {
-    let at_line = |marker: &str, start: usize| -> Option<usize> {
-        let mut offset = start;
-        while offset < body.len() {
-            if body[offset..].starts_with(marker) {
-                return Some(offset);
-            }
-            offset += body[offset..].find('\n')? + 1;
+/// Where the next line that opens a conflict starts, from the line starting at `at`.
+fn next_start(text: &str, mut at: usize) -> Option<usize> {
+    while at < text.len() {
+        if text[at..].starts_with("<<<<<<< ") {
+            return Some(at);
         }
-        None
-    };
-    let divider = at_line("=======\n", 0).or_else(|| at_line("=======\r\n", 0))?;
-    let first_end = at_line("||||||| ", 0)
-        .filter(|&base| base < divider)
-        .unwrap_or(divider);
-    let second_start = divider + body[divider..].find('\n')? + 1;
-    let end = at_line(">>>>>>> ", second_start)?;
-    let after = body[end..].find('\n').map_or(body.len(), |n| end + n + 1);
-    Some((&body[..first_end], &body[second_start..end], &body[after..]))
+        at += text[at..].find('\n')? + 1;
+    }
+    None
+}
+
+/// Where the parts of a conflict body are, by byte offset into it.
+struct Read {
+    /// Where the first side ends: at the base, if there is one, or the divider.
+    first_end: usize,
+    second: Range<usize>,
+    /// Just after the closing marker's line.
+    end: usize,
+}
+
+/// Reads a conflict body: the first side, an optional base, `=======`, the second side.
+/// It goes down the lines once and stops at the closing marker, so reading every block in
+/// a file reads the file once.
+fn read_block(body: &str) -> Option<Read> {
+    let mut base = None;
+    let mut second_start = None;
+    let mut offset = 0;
+    while offset < body.len() {
+        let line_end = body[offset..]
+            .find('\n')
+            .map_or(body.len(), |n| offset + n + 1);
+        let line = &body[offset..line_end];
+        match second_start {
+            None if line == "=======\n" || line == "=======\r\n" => {
+                second_start = Some((offset, line_end));
+            }
+            None if base.is_none() && line.starts_with("||||||| ") => base = Some(offset),
+            None => {}
+            Some((divider, start)) if line.starts_with(">>>>>>> ") => {
+                return Some(Read {
+                    first_end: base.unwrap_or(divider),
+                    second: start..offset,
+                    end: line_end,
+                });
+            }
+            Some(_) => {}
+        }
+        offset = line_end;
+    }
+    None
 }
 
 /// One answer per decision, in order: for a whole-file decision the side's text as given.
@@ -841,10 +876,7 @@ mod tests {
         let (progress, text) = two_conflicts();
         let found = blocks(&text);
         assert_eq!(found.len(), 2);
-        assert_eq!(
-            (found[0].first.as_str(), found[0].second.as_str()),
-            ("m1\n", "o1\n")
-        );
+        assert_eq!(found[0].sides(&text), ("m1\n", "o1\n"));
         assert!(text[found[0].start..].starts_with("<<<<<<< HEAD"));
         assert!(text[..found[0].end].ends_with(">>>>>>> feat\n"));
 
@@ -1216,6 +1248,36 @@ mod tests {
     fn an_unclosed_marker_is_just_text() {
         let text = "<<<<<<< not a conflict\nand nothing closes it\n";
         assert_eq!(split_conflicts(text), [Segment::Text(text)]);
+        let after = "a\n<<<<<<< HEAD\nm\n=======\no\n>>>>>>> x\nb\n<<<<<<< open\nc\n";
+        assert_eq!(split_conflicts(after).len(), 3);
+    }
+
+    #[test]
+    fn windows_line_endings_are_read_too() {
+        let text = "a\r\n<<<<<<< HEAD\r\nm\r\n=======\r\no\r\n>>>>>>> x\r\nb\r\n";
+        let found = blocks(text);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].sides(text), ("m\r\n", "o\r\n"));
+        assert_eq!(&text[found[0].end..], "b\r\n");
+    }
+
+    /// Each conflict used to be read by scanning the rest of the file, so a file with
+    /// thousands of them took seconds on every keystroke in the resolver.
+    #[test]
+    fn a_large_file_with_many_conflicts_is_read_in_one_pass() {
+        let mut text = String::new();
+        for conflict in 0..1400 {
+            for line in 0..100 {
+                text.push_str(&format!("let shared_{conflict}_{line} = {line};\n"));
+            }
+            text.push_str("<<<<<<< HEAD\nmine();\n=======\nother();\n>>>>>>> feat\n");
+        }
+        let started = std::time::Instant::now();
+        assert_eq!(blocks(&text).len(), 1400);
+        let pieces = split_conflicts(&text);
+        assert_eq!(pieces.len(), 2800);
+        // About 30 ms in a debug build, where the old reader took over 4 s.
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
     }
 
     #[test]

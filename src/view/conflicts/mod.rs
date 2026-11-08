@@ -24,12 +24,16 @@ use gpui_kit::*;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Rows are as tall as the diff's, so that a file reads the same in both.
 const ROW_HEIGHT: Pixels = px(24.);
 const NUMBER_WIDTH: Pixels = px(48.);
 /// The lines of context around a conflict when only the changes are shown.
 const CONTEXT_LINES: usize = 3;
+/// How long typing in the result pauses before it is read for the conflicts left in it, so
+/// that a large file is read once per pause and not once per key.
+const CHECK_AFTER: Duration = Duration::from_millis(150);
 
 #[derive(Default)]
 pub(super) struct State {
@@ -39,12 +43,18 @@ pub(super) struct State {
     /// The file on show in the resolver.
     shown: Option<String>,
     /// Each file's result so far. It starts as the file with its markers, and is edited
-    /// from there, by picking from the sides above it or by hand.
-    drafts: HashMap<String, String>,
+    /// from there, by picking from the sides above it or by hand. Shared, so that reading
+    /// it in the background copies nothing.
+    drafts: HashMap<String, Arc<str>>,
+    /// Whether the editor holds typing that its file's draft doesn't have yet. The editor's
+    /// text is copied into the draft when it is next needed, not on every key.
+    behind: bool,
+    /// Counts the edits to results, so that a check started before the latest one is dropped.
+    revision: u64,
     /// Each file laid out for its list, built in the background when it is opened.
     views: HashMap<String, Arc<FileView>>,
     /// For each file, which of its conflicts still stand in its result. Worked out when the
-    /// result changes, so that drawing never has to read the file again.
+    /// result changes, in the background while typing, so that drawing never reads the file.
     standing: HashMap<String, Vec<bool>>,
     scroll: UniformListScrollHandle,
     /// The side picked for a file that can only go one way as a whole, such as a binary one.
@@ -77,6 +87,7 @@ impl State {
         self.resolved.clear();
         self.saving = None;
         self.editing = None;
+        self.behind = false;
     }
 }
 
@@ -96,6 +107,11 @@ impl GraphView {
     /// Whether a conflicted file is open over the graph.
     pub fn resolver_is_open(&self) -> bool {
         self.conflict.open && self.conflict.progress.is_some()
+    }
+
+    #[cfg(test)]
+    pub(super) fn conflict_editor(&self) -> Option<Entity<TextareaState>> {
+        self.conflict.editor.clone()
     }
 
     /// Looks for a paused operation, which can appear or go away outside the app too.
@@ -213,12 +229,9 @@ impl GraphView {
     }
 
     /// The conflicts of a file that has lines to merge, in the order they come.
-    fn file_decisions(&self, path: &str) -> Vec<Decision> {
+    fn file_decisions<'a>(&'a self, path: &'a str) -> impl Iterator<Item = &'a Decision> + 'a {
         let decisions = self.conflict.progress.iter().flat_map(|p| &p.decisions);
-        decisions
-            .filter(|decision| decision.path == path && !decision.whole_file)
-            .cloned()
-            .collect()
+        decisions.filter(move |decision| decision.path == path && !decision.whole_file)
     }
 
     /// Whether a file has no lines to merge, such as a binary one, and is one choice.
@@ -228,29 +241,83 @@ impl GraphView {
     }
 
     /// How many conflicts a file still has in its result.
-    fn conflicts_left(&self, path: &str) -> usize {
+    pub(super) fn conflicts_left(&self, path: &str) -> usize {
         if self.is_whole_file(path) {
             return usize::from(!self.conflict.sides.contains_key(path));
         }
         match self.conflict.standing.get(path) {
             Some(open) => open.iter().filter(|open| **open).count(),
-            None => self.file_decisions(path).len(),
+            None => self.file_decisions(path).count(),
         }
     }
 
-    /// Works out which of a file's conflicts still stand in its result.
+    /// Works out which of a file's conflicts still stand in its result, here and now. For
+    /// a click, where it has to be right before anything else happens; typing uses
+    /// [`Self::check_later`].
     fn refresh_open(&mut self, path: &str) {
         let (Some(progress), Some(draft)) =
             (&self.conflict.progress, self.conflict.drafts.get(path))
         else {
             return;
         };
-        let open = progress
-            .open_chunks(path, draft)
-            .iter()
-            .map(Option::is_some)
-            .collect();
+        let open = standing_in(progress, path, draft);
         self.conflict.standing.insert(path.to_owned(), open);
+        // A check still on its way read an older result.
+        self.conflict.revision += 1;
+    }
+
+    /// Copies typing in the editor into its file's draft, if there is any it doesn't have.
+    fn catch_up_draft(&mut self, cx: &App) {
+        if !self.conflict.behind {
+            return;
+        }
+        self.conflict.behind = false;
+        if let (Some(path), Some(editor)) = (&self.conflict.editing, &self.conflict.editor) {
+            let text: Arc<str> = editor.read(cx).text().to_string().into();
+            self.conflict.drafts.insert(path.clone(), text);
+        }
+    }
+
+    /// Notes an edit to a result and checks it for conflicts once edits pause. A check
+    /// that an edit overtakes is dropped, so typing never waits on reading the file.
+    fn check_later(&mut self, cx: &mut Context<Self>) {
+        self.conflict.revision += 1;
+        let revision = self.conflict.revision;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(CHECK_AFTER).await;
+            this.update(cx, |this, cx| this.check_in_background(revision, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    fn check_in_background(&mut self, revision: u64, cx: &mut Context<Self>) {
+        if self.conflict.revision != revision {
+            return;
+        }
+        self.catch_up_draft(cx);
+        let Some(path) = self.conflict.editing.clone() else {
+            return;
+        };
+        let (Some(progress), Some(draft)) = (
+            self.conflict.progress.clone(),
+            self.conflict.drafts.get(&path).cloned(),
+        ) else {
+            return;
+        };
+        Self::spawn_blocking(
+            {
+                let path = path.clone();
+                move || standing_in(&progress, &path, &draft)
+            },
+            move |this, open, cx| {
+                if this.conflict.revision == revision {
+                    this.conflict.standing.insert(path, open);
+                    cx.notify();
+                }
+            },
+            cx,
+        );
     }
 
     /// Moves the operation on once every file is resolved.
@@ -434,4 +501,10 @@ impl GraphView {
                     ),
             )
     }
+}
+
+/// Which of a file's conflicts still stand in `text`, its result.
+fn standing_in(progress: &Progress, path: &str, text: &str) -> Vec<bool> {
+    let open = progress.open_chunks(path, text);
+    open.iter().map(Option::is_some).collect()
 }
