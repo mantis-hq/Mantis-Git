@@ -326,6 +326,51 @@ pub fn unstage_files(repo: &Path, paths: &[String]) -> Result<(), String> {
     ops::run(repo, &args).map(drop)
 }
 
+/// Throws away these files' changes that the index doesn't have: a tracked file goes back to
+/// what is staged and a file git doesn't know yet is deleted. Staged changes stay. Nothing
+/// can bring the discarded changes back.
+pub fn discard_files(repo: &Path, paths: &[String]) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut args = vec!["--literal-pathspecs", "ls-files", "-z", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    let listed = ops::run(repo, &args)?;
+    let tracked: Vec<&str> = listed.split('\0').filter(|path| !path.is_empty()).collect();
+    let untracked: Vec<&str> = paths
+        .iter()
+        .map(String::as_str)
+        .filter(|path| !tracked.contains(path))
+        .collect();
+    if !tracked.is_empty() {
+        let mut args = vec!["--literal-pathspecs", "restore", "--worktree", "--"];
+        args.extend(&tracked);
+        ops::run(repo, &args)?;
+    }
+    if !untracked.is_empty() {
+        let mut args = vec!["--literal-pathspecs", "clean", "-f", "-q", "--"];
+        args.extend(&untracked);
+        ops::run(repo, &args)?;
+    }
+    Ok(())
+}
+
+/// The result a menu line or button names for discarding `what`, such as `a.rs` or
+/// `3 files in src/`.
+pub fn discard_label(what: &str) -> String {
+    format!("Discard changes in {what}")
+}
+
+/// What discarding `what` does, said before it runs. Discarding can't be undone, so the
+/// sentence says so.
+pub fn discard_warning(what: &str) -> String {
+    format!(
+        "This throws away the unstaged changes in {what} and puts each file back as the index \
+         has it. A file git doesn't track yet is deleted. Staged changes stay, and nothing can \
+         bring back what is discarded."
+    )
+}
+
 /// Moves one hunk of a file into the index, or out of it. The hunk is by position in the
 /// plain patch as it stands now, so read again after each move.
 pub fn move_hunk(repo: &Path, file: &WorkingFile, hunk: usize, side: Side) -> Result<(), String> {
@@ -714,6 +759,32 @@ mod tests {
         let patch = file_diff(repo.path(), &changes.staged[0], Side::Staged, quiet).unwrap();
         assert!(patch.hunks.is_empty());
         assert_eq!(patch.path, "file");
+    }
+
+    #[test]
+    fn discarding_restores_tracked_files_and_deletes_new_ones_but_keeps_the_index() {
+        let repo = Repo::new();
+        repo.write("a.txt", "one\n");
+        repo.write("b.txt", "one\n");
+        repo.write("keep.txt", "one\n");
+        repo.commit("init");
+        repo.write("a.txt", "staged\n");
+        repo.git(&["add", "a.txt"]);
+        repo.write("a.txt", "staged\nunstaged\n");
+        repo.write("b.txt", "changed\n");
+        repo.write("keep.txt", "changed\n");
+        repo.write("new/c.txt", "new\n");
+        let paths = ["a.txt", "b.txt", "new/c.txt"].map(str::to_owned);
+        discard_files(repo.path(), &paths).unwrap();
+        assert_eq!(repo.read("a.txt"), "staged\n", "the index's version stays");
+        assert_eq!(repo.read("b.txt"), "one\n");
+        assert_eq!(
+            repo.read("keep.txt"),
+            "changed\n",
+            "unlisted files are left"
+        );
+        assert!(!repo.path().join("new/c.txt").exists());
+        assert_eq!(repo.git(&["diff", "--cached", "--name-only"]), "a.txt");
     }
 
     #[test]

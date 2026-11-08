@@ -14,7 +14,7 @@ use crate::repo::stash;
 use crate::repo::submodule;
 use crate::repo::worktree;
 use crate::text::{count, short_oid};
-use crate::working::Side;
+use crate::working::{self, Side};
 use command::Command;
 use form::Form;
 use std::path::Path;
@@ -321,9 +321,27 @@ pub fn file_menu(path: &str, index: usize, source: Option<FileSource>) -> Vec<Li
         lines.push(Line::Separator);
         lines.push(action);
     }
+    if let Some(FileSource::Working(Side::Unstaged)) = source {
+        lines.push(discard_line(vec![path.to_owned()], name));
+    }
     lines.push(Line::Separator);
     lines.push(Line::item("Copy path", copy(path, "the path")));
     lines
+}
+
+/// The red line that throws away unstaged changes in `paths`, which `what` names. It asks
+/// first.
+fn discard_line(paths: Vec<String>, what: &str) -> Line {
+    Line::item(working::discard_label(what), discard_command(paths, what)).danger()
+}
+
+/// Discards the unstaged changes in `paths`, which `what` names, once confirmed. The
+/// "Discard all" button runs this too.
+pub fn discard_command(paths: Vec<String>, what: &str) -> Command {
+    Command::DiscardChanges {
+        paths,
+        warning: working::discard_warning(what),
+    }
 }
 
 /// The menu for a conflicted file in the inspector. The sides are named by branch, since
@@ -367,10 +385,13 @@ pub fn folder_menu(path: &str, files: Vec<String>, side: Option<Side>) -> Vec<Li
         lines.push(Line::item(
             side.action(&what),
             Command::StageFiles {
-                paths: files,
+                paths: files.clone(),
                 unstage: side.unstages(),
             },
         ));
+        if side == Side::Unstaged {
+            lines.push(discard_line(files, &what));
+        }
         lines.push(Line::Separator);
     }
     lines.push(Line::item("Copy path", copy(path, "the path")));
@@ -692,6 +713,7 @@ mod tests {
                 "src/a.rs",
                 "Show changes in a.rs",
                 "Stage a.rs",
+                "Discard changes in a.rs",
                 "Copy path"
             ]
         );
@@ -737,6 +759,30 @@ mod tests {
     }
 
     #[test]
+    fn discarding_is_red_and_asks_first() {
+        let lines = file_menu("src/a.rs", 0, Some(FileSource::Working(Side::Unstaged)));
+        let Some(Line::Item {
+            danger: true,
+            command: Some(command),
+            ..
+        }) = lines
+            .iter()
+            .find(|line| matches!(line, Line::Item { label, .. } if label.starts_with("Discard")))
+        else {
+            panic!("no red discard line");
+        };
+        let confirmation = command.confirmation().unwrap();
+        assert_eq!(confirmation.action, "Discard");
+        assert_eq!(confirmation.weight, Weight::Popup);
+        let staged = file_menu("src/a.rs", 0, Some(FileSource::Working(Side::Staged)));
+        assert!(
+            !shown_lines(&staged)
+                .iter()
+                .any(|l| l.starts_with("Discard"))
+        );
+    }
+
+    #[test]
     fn a_file_with_no_source_can_only_be_shown_and_copied() {
         let lines = file_menu("a.rs", 0, None);
         assert_eq!(
@@ -751,7 +797,18 @@ mod tests {
         let lines = folder_menu("crates/src", files, Some(Side::Unstaged));
         assert_eq!(
             shown_lines(&lines),
-            ["crates/src/", "Stage 2 files in src/", "Copy path"]
+            [
+                "crates/src/",
+                "Stage 2 files in src/",
+                "Discard changes in 2 files in src/",
+                "Copy path"
+            ]
+        );
+        let lines = folder_menu("src", Vec::new(), Some(Side::Staged));
+        assert_eq!(
+            shown_lines(&lines),
+            ["src/", "Unstage 0 files in src/", "Copy path"],
+            "staged changes are not discarded from here"
         );
         let lines = folder_menu("src", Vec::new(), None);
         assert_eq!(shown_lines(&lines), ["src/", "Copy path"]);

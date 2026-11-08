@@ -11,6 +11,7 @@ use crate::repo::stash;
 use crate::repo::submodule;
 use crate::repo::worktree;
 use crate::text::short_oid;
+use crate::working;
 use std::path::{Path, PathBuf};
 
 /// What a menu line does when chosen.
@@ -110,6 +111,12 @@ pub enum Command {
     StageFiles {
         paths: Vec<String>,
         unstage: bool,
+    },
+    /// Throws away the unstaged changes in these files, after asking.
+    DiscardChanges {
+        paths: Vec<String>,
+        /// What discarding does, worked out when the menu opened.
+        warning: String,
     },
     /// Handled by the interface, which owns the resolver: opens a conflicted file's two
     /// sides next to each other.
@@ -224,6 +231,7 @@ impl Command {
             Self::DeleteStashes { .. } => "Deleting",
             Self::ShowFile { .. } | Self::ShowConflict { .. } => "Opening",
             Self::UseSide { .. } => "Resolving",
+            Self::DiscardChanges { .. } => "Discarding",
             Self::StageFiles { unstage: false, .. } => "Staging",
             Self::StageFiles { unstage: true, .. } => "Unstaging",
         }
@@ -273,6 +281,11 @@ impl Command {
             Self::DeleteStashes { warning, .. } => Some(Confirmation {
                 message: warning.clone(),
                 action: "Delete",
+                weight: Weight::Popup,
+            }),
+            Self::DiscardChanges { warning, .. } => Some(Confirmation {
+                message: warning.clone(),
+                action: "Discard",
                 weight: Weight::Popup,
             }),
             Self::DeleteMany { refs } => Some(Confirmation {
@@ -346,6 +359,9 @@ impl Command {
             }
             Self::ApplyStashes { indexes } => stash::apply_many(repo, indexes),
             Self::DeleteStashes { indexes, .. } => stash::drop_many(repo, indexes),
+            Self::DiscardChanges { paths, .. } => {
+                working::discard_files(repo, paths).map(|()| None)
+            }
             Self::SwitchWorktree { .. }
             | Self::OpenWorktreeInTab { .. }
             | Self::OpenSubmoduleInTab { .. }

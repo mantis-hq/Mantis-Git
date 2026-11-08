@@ -174,7 +174,7 @@ impl GraphView {
     }
 
     /// Closes the menu and does what the chosen line says, asking first when it must.
-    fn choose(&mut self, command: Command, cx: &mut Context<Self>) {
+    pub(super) fn choose(&mut self, command: Command, cx: &mut Context<Self>) {
         self.menu = None;
         if let Command::SwitchWorktree { path } = &command {
             cx.emit(SwitchWorktree(path.clone()));

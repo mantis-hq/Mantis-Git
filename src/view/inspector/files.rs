@@ -7,9 +7,11 @@ use crate::view::parts::TEXT_CHIP;
 use crate::view::parts::{checkbox, chip, file_path, panel_row, section_label, status_color};
 use crate::view::{GraphView, Notice};
 use gitclient_core::commit::details::{CommitDetails, FileChange};
+use gitclient_core::menu;
 use gitclient_core::text::count;
 use gitclient_core::tree::{self, FileView, TreeRow};
 use gitclient_core::working::{self, Side};
+use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
@@ -211,6 +213,10 @@ impl GraphView {
         });
         let empty = paths.is_empty();
         let unstage = side.unstages();
+        let discard_all = (side == Side::Unstaged && !empty).then(|| {
+            let what = format!("all {}", count(paths.len(), "file"));
+            menu::discard_command(paths.clone(), &what)
+        });
         let heading = if empty {
             side.heading().to_owned()
         } else {
@@ -239,7 +245,17 @@ impl GraphView {
                             ),
                         )
                     })
-                    .child(div().flex_1().min_w_0().truncate().child(heading)),
+                    .child(div().flex_1().min_w_0().truncate().child(heading))
+                    .children(discard_all.map(|command| {
+                        Button::new("discard-all")
+                            .ghost()
+                            .small()
+                            .label("Discard all")
+                            .disabled(self.busy.is_some())
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.choose(command.clone(), cx)),
+                            )
+                    })),
             )
             .when(empty, |list| {
                 list.child(div().px_2().text_color(muted).child(side.empty()))
