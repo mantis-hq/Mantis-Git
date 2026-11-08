@@ -72,6 +72,25 @@ fn copy(text: &str, what: &'static str) -> Command {
     }
 }
 
+/// The line that checks out a branch, remote branch or tag, or says it already is.
+fn check_out_ref_line(current: Option<&str>, kind: RefKind, name: &str) -> Line {
+    if kind == RefKind::Branch && current == Some(name) {
+        return Line::unavailable(format!("{name} is already checked out"));
+    }
+    let label = match kind {
+        RefKind::Remote => format!("Check out {name} as a local branch"),
+        RefKind::Tag => format!("Check out {name} without a branch"),
+        _ => format!("Check out {name}"),
+    };
+    Line::item(
+        label,
+        Command::CheckOutRef {
+            kind,
+            name: name.to_owned(),
+        },
+    )
+}
+
 /// The menu for a branch, remote branch or tag.
 pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
     let current = refs.head_branch.as_deref();
@@ -79,22 +98,7 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
     let is_current = kind == RefKind::Branch && current == Some(name.as_str());
     let mut lines = vec![Line::Heading(name.clone())];
 
-    lines.push(if is_current {
-        Line::unavailable(format!("{name} is already checked out"))
-    } else {
-        let label = match kind {
-            RefKind::Remote => format!("Check out {name} as a local branch"),
-            RefKind::Tag => format!("Check out {name} without a branch"),
-            _ => format!("Check out {name}"),
-        };
-        Line::item(
-            label,
-            Command::CheckOutRef {
-                kind,
-                name: name.clone(),
-            },
-        )
-    });
+    lines.push(check_out_ref_line(current, kind, &name));
 
     if let Some(current) = current.filter(|_| !is_current) {
         lines.push(Line::item(
@@ -445,16 +449,27 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
         commit.subject
     ))];
 
-    lines.push(if actions.can_check_out {
+    // Each ref at the commit, as its chip shows it, then the commit itself.
+    let current = refs.head_branch.as_deref();
+    for chip in refs.chips_at(&oid) {
+        if chip.label.kind != RefKind::DetachedHead {
+            lines.push(check_out_ref_line(
+                current,
+                chip.label.kind,
+                &chip.label.name,
+            ));
+        }
+    }
+    lines.push(if !actions.can_check_out && current.is_none() {
+        Line::unavailable("This commit is already checked out")
+    } else {
         Line::item(
-            actions.check_out_label(),
+            format!("Check out {} without a branch", short_oid(&oid)),
             Command::CheckOutCommit {
-                branch: actions.branch.clone(),
+                branch: None,
                 oid: oid.clone(),
             },
         )
-    } else {
-        Line::unavailable("This commit is already checked out")
     });
     if let Some(current) = refs
         .head_branch
@@ -918,22 +933,26 @@ mod tests {
     fn a_commit_names_the_branches_it_acts_on() {
         let head = commit("aaaaaaaa", &["cccccccc"]);
         let other = commit("bbbbbbbb", &["cccccccc"]);
-        let on_head = commit_menu(&refs(), &[head]);
+        let mut refs = refs();
+        refs.by_commit
+            .insert("aaaaaaaa".into(), vec![named(RefKind::Branch, "main")]);
+        let on_head = commit_menu(&refs, &[head]);
         assert_eq!(
             labels(&on_head),
             [
-                "This commit is already checked out",
+                "main is already checked out",
+                "Check out aaaaaaa without a branch",
                 "Revert",
                 "New branch from aaaaaaa",
                 "Copy hash",
                 "Copy subject"
             ]
         );
-        let elsewhere = commit_menu(&refs(), &[other]);
+        let elsewhere = commit_menu(&refs, &[other]);
         assert_eq!(
             labels(&elsewhere),
             [
-                "Check out",
+                "Check out bbbbbbb without a branch",
                 "Merge into main",
                 "Cherry-pick onto main",
                 "Revert",
@@ -943,6 +962,72 @@ mod tests {
                 "Copy hash",
                 "Copy subject"
             ]
+        );
+    }
+
+    fn named(kind: RefKind, name: &str) -> crate::history::refs::Ref {
+        crate::history::refs::Ref {
+            kind,
+            name: name.into(),
+            is_head: false,
+            color: LaneColor::default(),
+        }
+    }
+
+    #[test]
+    fn a_commit_with_several_refs_checks_out_any_of_them_or_itself() {
+        let mut refs = refs();
+        refs.by_commit.insert(
+            "bbbbbbbb".into(),
+            vec![
+                named(RefKind::Branch, "feat/x"),
+                named(RefKind::Remote, "origin/feat/x"),
+                named(RefKind::Remote, "origin/feat/y"),
+                named(RefKind::Tag, "v1.0.0"),
+            ],
+        );
+        let lines = commit_menu(&refs, &[commit("bbbbbbbb", &["cccccccc"])]);
+        assert_eq!(
+            labels(&lines)[..4],
+            [
+                "Check out feat/x",
+                "Check out origin/feat/y as a local branch",
+                "Check out v1.0.0 without a branch",
+                "Check out bbbbbbb without a branch",
+            ],
+            "a remote branch whose local copy is here is the same chip, so one line"
+        );
+        assert_eq!(
+            lines[1].command(),
+            Some(&Command::CheckOutRef {
+                kind: RefKind::Branch,
+                name: "feat/x".into()
+            })
+        );
+        assert_eq!(
+            lines[4].command(),
+            Some(&Command::CheckOutCommit {
+                branch: None,
+                oid: "bbbbbbbb".into()
+            })
+        );
+    }
+
+    #[test]
+    fn a_detached_head_is_already_checked_out_but_its_branches_are_not() {
+        let mut refs = refs();
+        refs.head_branch = None;
+        refs.by_commit.insert(
+            "aaaaaaaa".into(),
+            vec![
+                named(RefKind::DetachedHead, "HEAD"),
+                named(RefKind::Branch, "main"),
+            ],
+        );
+        let lines = commit_menu(&refs, &[commit("aaaaaaaa", &["cccccccc"])]);
+        assert_eq!(
+            labels(&lines)[..2],
+            ["Check out main", "This commit is already checked out"]
         );
     }
 
