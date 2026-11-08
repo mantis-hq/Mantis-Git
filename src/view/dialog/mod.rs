@@ -157,7 +157,10 @@ impl GraphView {
                             .ghost()
                             .small()
                             .label(frame.action)
-                            .disabled(self.busy.is_some())
+                            // A question is asked while git is busy, waiting for the answer.
+                            .disabled(
+                                self.busy.is_some() && !matches!(self.dialog, Some(Dialog::Ask(_))),
+                            )
                             .on_click(cx.listener(|this, _, _, cx| this.answer_dialog(cx))),
                     ),
             );

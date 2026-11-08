@@ -68,7 +68,12 @@ impl Request {
 
     /// The line naming the keys.
     pub fn hint(&self) -> String {
-        format!("Press Enter to {}, or Esc to cancel.", self.verb())
+        let kept = if self.is_secret() {
+            " It is kept until gitclient closes."
+        } else {
+            ""
+        };
+        format!("Press Enter to {}, or Esc to cancel.{kept}", self.verb())
     }
 
     fn verb(&self) -> &'static str {
@@ -128,14 +133,49 @@ pub(crate) fn configure(command: &mut Command) {
 #[cfg(unix)]
 mod unix {
     use super::{Questions, Request, SOCKET_VAR};
+    use std::collections::HashMap;
     use std::ffi::OsString;
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::fs::DirBuilderExt;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::PathBuf;
-    use std::sync::OnceLock;
+    use std::sync::{Mutex, OnceLock};
 
     static SOCKET: OnceLock<PathBuf> = OnceLock::new();
+    static REMEMBERED: Mutex<Option<Remembered>> = Mutex::new(None);
+
+    /// Answers kept until the app closes, so the same key isn't asked for on every fetch.
+    /// Each remembers which process it last answered: ssh asking the same question again
+    /// itself means the answer was wrong, and it is forgotten.
+    #[derive(Default)]
+    struct Remembered(HashMap<String, (String, u32)>);
+
+    impl Remembered {
+        fn recall(&mut self, prompt: &str, asker: u32) -> Option<String> {
+            match self.0.get_mut(prompt) {
+                Some((answer, last)) if *last != asker => {
+                    *last = asker;
+                    Some(answer.clone())
+                }
+                Some(_) => {
+                    self.0.remove(prompt);
+                    None
+                }
+                None => None,
+            }
+        }
+
+        fn keep(&mut self, prompt: &str, answer: &str, asker: u32) {
+            self.0.insert(prompt.to_owned(), (answer.to_owned(), asker));
+        }
+    }
+
+    fn remembered<T>(f: impl FnOnce(&mut Remembered) -> T) -> T {
+        let mut slot = REMEMBERED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        f(slot.get_or_insert_with(Remembered::default))
+    }
 
     /// Starts listening for questions from git and ssh, and returns them as they come. Call
     /// it once; the socket lives in a folder only this user can open.
@@ -166,15 +206,30 @@ mod unix {
         if BufReader::new(clone).read_line(&mut line).is_err() {
             return;
         }
-        let prompt = line.trim_end_matches(['\n', '\r']).to_owned();
-        let (reply, answer) = async_channel::bounded(1);
-        if requests.send_blocking(Request { prompt, reply }).is_err() {
+        // The process that is asking, a tab, then the question.
+        let line = line.trim_end_matches(['\n', '\r']);
+        let (asker, prompt) = line.split_once('\t').unwrap_or(("0", line));
+        let asker: u32 = asker.parse().unwrap_or(0);
+        let prompt = prompt.to_owned();
+        let mut stream = stream;
+        if let Some(value) = remembered(|kept| kept.recall(&prompt, asker)) {
+            let _ = writeln!(stream, "ok\n{value}");
             return;
         }
-        let mut stream = stream;
+        let (reply, answer) = async_channel::bounded(1);
+        let request = Request {
+            prompt: prompt.clone(),
+            reply,
+        };
+        if requests.send_blocking(request).is_err() {
+            return;
+        }
         // A closed or dropped request is a cancel.
         let _ = match answer.recv_blocking() {
-            Ok(Some(value)) => writeln!(stream, "ok\n{value}"),
+            Ok(Some(value)) => {
+                remembered(|kept| kept.keep(&prompt, &value, asker));
+                writeln!(stream, "ok\n{value}")
+            }
             _ => writeln!(stream, "cancel"),
         };
     }
@@ -196,7 +251,8 @@ mod unix {
     pub fn run_helper() -> Option<i32> {
         let socket = std::env::var_os(SOCKET_VAR)?;
         let prompt = std::env::args().nth(1).unwrap_or_default();
-        Some(match ask_app(&PathBuf::from(socket), &prompt) {
+        let asker = std::os::unix::process::parent_id();
+        Some(match ask_app(&PathBuf::from(socket), asker, &prompt) {
             Some(answer) => {
                 println!("{answer}");
                 0
@@ -205,10 +261,10 @@ mod unix {
         })
     }
 
-    fn ask_app(socket: &PathBuf, prompt: &str) -> Option<String> {
+    fn ask_app(socket: &PathBuf, asker: u32, prompt: &str) -> Option<String> {
         let mut stream = UnixStream::connect(socket).ok()?;
         // A prompt is one line to the app, whatever it held.
-        writeln!(stream, "{}", prompt.replace('\n', " ")).ok()?;
+        writeln!(stream, "{asker}\t{}", prompt.replace(['\n', '\t'], " ")).ok()?;
         let mut reader = BufReader::new(stream);
         let mut status = String::new();
         reader.read_line(&mut status).ok()?;
@@ -231,7 +287,7 @@ mod unix {
 
             let first = {
                 let socket = socket.clone();
-                std::thread::spawn(move || ask_app(&socket, "Enter passphrase for key 'k': "))
+                std::thread::spawn(move || ask_app(&socket, 1, "Enter passphrase for key 'k': "))
             };
             let request = requests.recv_blocking().unwrap();
             assert_eq!(request.sentence(), "Enter passphrase for key 'k'");
@@ -239,11 +295,24 @@ mod unix {
             request.answer(Some("hunter2".into()));
             assert_eq!(first.join().unwrap().as_deref(), Some("hunter2"));
 
-            let second = std::thread::spawn(move || ask_app(&socket, "Username for 'https://x': "));
+            let second =
+                std::thread::spawn(move || ask_app(&socket, 1, "Username for 'https://x': "));
             let request = requests.recv_blocking().unwrap();
             assert!(!request.is_secret());
             drop(request);
             assert_eq!(second.join().unwrap(), None);
+        }
+
+        #[test]
+        fn an_answer_is_reused_by_the_next_process_but_not_by_one_asking_again() {
+            let mut kept = Remembered::default();
+            assert_eq!(kept.recall("key: ", 10), None);
+            kept.keep("key: ", "secret", 10);
+            // The next fetch is a new ssh, so it gets the answer without asking.
+            assert_eq!(kept.recall("key: ", 11).as_deref(), Some("secret"));
+            // The same ssh asking again means the answer was refused.
+            assert_eq!(kept.recall("key: ", 11), None);
+            assert_eq!(kept.recall("key: ", 12), None, "and it is forgotten");
         }
     }
 }

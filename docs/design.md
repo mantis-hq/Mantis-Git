@@ -309,7 +309,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   "Log in", else "Answer"). `Enter` sends the answer, `Esc` or a click outside cancels, and
   git then fails with its own message. git and ssh ask by running the app again as their
   askpass program, which passes the question to the open window over a private socket; the
-  app never stores the answer. Where the app isn't serving, they fail at once instead of
+  app keeps the answer in memory only, until it closes, so the next fetch doesn't ask again
+  (the key line says so), and forgets it if ssh asks the same question again, which means it
+  was wrong. The answering button stays on while git waits for it. Where the app isn't serving, they fail at once instead of
   asking a terminal nobody sees. What the popup says lives in `gitclient_core::askpass`.
 - **Double-click:** double-clicking a branch, in the sidebar or on a chip, checks it out. A
   remote branch gets a local copy that follows it. The checked-out branch does nothing.
