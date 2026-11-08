@@ -1,4 +1,4 @@
-use super::{Feedback, Match, Scope, Settings, Target, config, identity};
+use super::{Feedback, Match, Page, Scope, Settings, Target, config, identity};
 use gitclient_core::settings::state::AppState;
 use gitclient_core::testing::Repo;
 use gpui_kit::component::input::InputEvent;
@@ -531,5 +531,53 @@ fn a_state_file_that_cannot_be_written_is_reported_and_changes_nothing(cx: &mut 
     view.read_with(&cx, |settings, _| {
         assert!(settings.app.reopen_tabs, "still on, as saved");
         assert!(matches!(settings.feedback, Feedback::Failed(_)));
+    });
+}
+
+#[gpui_kit::test]
+fn the_repository_page_writes_a_missing_commit_graph(cx: &mut TestAppContext) {
+    use super::repository::GraphState;
+    use gitclient_core::repo::commit_graph::Health;
+
+    let repo = Repo::new();
+    repo.commit("a");
+    let (_dir, scope) = file_scope();
+    let (view, mut cx) = open(Some(repo.path().to_owned()), scope, cx);
+
+    view.update(&mut cx, |settings, cx| settings.show_page(3, cx));
+    settle(&mut cx);
+    view.read_with(&cx, |settings, _| {
+        assert_eq!(settings.page, Page::Repository);
+        let GraphState::Read(Ok(report)) = &settings.commit_graph else {
+            panic!("the commit graph was read");
+        };
+        assert_eq!(report.health, Health::Missing);
+    });
+
+    view.update(&mut cx, |settings, cx| settings.write_commit_graph(cx));
+    view.read_with(&cx, |settings, _| assert!(settings.writing_graph));
+    settle(&mut cx);
+    view.read_with(&cx, |settings, _| {
+        assert!(!settings.writing_graph);
+        let GraphState::Read(Ok(report)) = &settings.commit_graph else {
+            panic!("the commit graph was read again");
+        };
+        assert_eq!(report.health, Health::UpToDate);
+        assert!(matches!(
+            &settings.feedback,
+            Feedback::Saved(message) if message == "Wrote the commit graph. It lists all 1 commit."
+        ));
+    });
+
+    // Without a repository there is no such page, and the window leaves it.
+    view.update_in(&mut cx, |settings, window, cx| {
+        settings.set_repository(None, window, cx)
+    });
+    view.read_with(&cx, |settings, _| {
+        assert_eq!(settings.page, Page::GitConfig)
+    });
+    view.update(&mut cx, |settings, cx| settings.show_page(3, cx));
+    view.read_with(&cx, |settings, _| {
+        assert_eq!(settings.page, Page::GitConfig)
     });
 }
