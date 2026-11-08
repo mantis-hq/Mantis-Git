@@ -916,6 +916,27 @@ fn a_saved_conflict_counts_as_resolved_before_git_is_done(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
+fn a_file_resolved_before_the_window_knew_of_the_stop_is_still_listed(cx: &mut TestAppContext) {
+    let (repo, view, mut cx) = resolving_a_conflict(cx);
+    assert!(view.read_with(&cx, |view, _| view.saved_files().is_empty()));
+
+    // Resolved with git itself, as in an earlier session of the app.
+    repo.write("a", "top\nby hand\nbottom\n");
+    repo.git(&["add", "a"]);
+    view.update(&mut cx, |view, cx| {
+        view.check_paused_operation(cx);
+        view.reload_working(cx);
+    });
+    cx.run_until_parked();
+
+    view.read_with(&cx, |view, _| {
+        assert_eq!(view.saved_files(), [("a".to_owned(), false)]);
+        let staged = &view.working_changes().unwrap().staged;
+        assert_eq!(staged.len(), 1, "the staged list has it too");
+    });
+}
+
+#[gpui_kit::test]
 fn a_conflict_git_refuses_to_save_comes_back_with_the_reason(cx: &mut TestAppContext) {
     use gitclient_core::repo::conflict::Side;
     let (repo, view, mut cx) = resolving_a_conflict(cx);

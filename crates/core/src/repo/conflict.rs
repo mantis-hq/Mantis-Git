@@ -6,6 +6,7 @@
 use crate::ops::{self, git};
 use crate::repo::status;
 use crate::text::{count, short_oid};
+use std::collections::BTreeSet;
 use std::fs;
 use std::ops::Range;
 use std::path::Path;
@@ -108,6 +109,10 @@ pub struct Progress {
     pub other: String,
     pub steps: Vec<Step>,
     pub decisions: Vec<Decision>,
+    /// Files that were in conflict at this stop and are resolved now, in path order. Git
+    /// keeps a record of them in the index, so this holds those from before the app was
+    /// opened too.
+    pub resolved: Vec<String>,
     mine_is_second: bool,
 }
 
@@ -366,6 +371,7 @@ pub fn detect(repo: &Path) -> Option<Progress> {
         other: String::new(),
         steps: Vec::new(),
         decisions: Vec::new(),
+        resolved: Vec::new(),
         mine_is_second: kind == Kind::Rebase,
     };
 
@@ -399,7 +405,20 @@ pub fn detect(repo: &Path) -> Option<Progress> {
     }
 
     progress.decisions = read_decisions(repo, &progress, &other_commit, &mine_why);
+    progress.resolved = read_resolved(repo, &progress.decisions);
     Some(progress)
+}
+
+/// The files git remembers as conflicted and since resolved, from the index's undo record
+/// (`git ls-files --resolve-undo`), leaving out any that have conflicts again.
+fn read_resolved(repo: &Path, decisions: &[Decision]) -> Vec<String> {
+    let listing = ops::run(repo, &["ls-files", "--resolve-undo", "-z"]).unwrap_or_default();
+    // One entry per stage the file had: `<mode> <oid> <stage>\t<path>`.
+    let paths: BTreeSet<&str> = (listing.split('\0'))
+        .filter_map(|entry| entry.split_once('\t').map(|(_, path)| path))
+        .filter(|path| !decisions.iter().any(|decision| decision.path == *path))
+        .collect();
+    paths.into_iter().map(str::to_owned).collect()
 }
 
 fn read_oid(path: &Path) -> Option<String> {
@@ -1002,6 +1021,7 @@ mod tests {
             other: "feat".to_owned(),
             steps: Vec::new(),
             decisions: vec![decision("b", 1), decision("a", 1), decision("b", 9)],
+            resolved: Vec::new(),
             mine_is_second: false,
         };
         let files = progress.files();
@@ -1038,6 +1058,7 @@ mod tests {
             other: "feat".to_owned(),
             steps: Vec::new(),
             decisions: vec![decision("m1\n", "o1\n", 2), decision("m2\n", "o2\n", 8)],
+            resolved: Vec::new(),
             mine_is_second: false,
         };
         let text = "a\n<<<<<<< HEAD\nm1\n=======\no1\n>>>>>>> feat\nb\n\
@@ -1221,13 +1242,41 @@ mod tests {
         save_file(repo.path(), "file", &result).unwrap();
         // Staged, so git no longer lists it as unmerged.
         assert_eq!(repo.git(&["diff", "--name-only", "--diff-filter=U"]), "");
+        assert!(progress.resolved.is_empty());
         let after = detect(repo.path()).unwrap();
         assert!(after.decisions.is_empty());
         assert!(after.is_same_stop(&progress));
+        // Git remembers it, so a window opened later still lists it.
+        assert_eq!(after.resolved, ["file"]);
 
         assert!(carry_on(repo.path(), progress.kind).is_ok());
         assert_eq!(detect(repo.path()), None);
         assert!(repo.read("file").contains("mine") && repo.read("file").contains("main's"));
+    }
+
+    #[test]
+    fn a_file_resolved_at_one_stop_isnt_listed_at_the_next() {
+        let repo = Repo::new();
+        repo.write("a", "1\n");
+        repo.write("b", "1\n");
+        repo.commit("base");
+        repo.git(&["checkout", "-q", "-b", "feature"]);
+        repo.write("a", "feature\n");
+        repo.commit("change a");
+        repo.write("b", "feature\n");
+        repo.commit("change b");
+        repo.git(&["checkout", "-q", "main"]);
+        repo.write("a", "main\n");
+        repo.write("b", "main\n");
+        repo.commit("change both");
+        repo.git(&["checkout", "-q", "feature"]);
+
+        rebase_onto(repo.path(), "main").unwrap();
+        let first = detect(repo.path()).unwrap();
+        resolve_with_side(repo.path(), &first, "a", Side::Mine).unwrap();
+        let next = carry_on(repo.path(), Kind::Rebase).unwrap().unwrap();
+        assert_eq!(next.files()[0].path, "b", "the next commit stops on b");
+        assert!(next.resolved.is_empty(), "{:?}", next.resolved);
     }
 
     #[test]
