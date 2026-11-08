@@ -356,6 +356,11 @@ impl GraphView {
         if self.entries.get(index).is_none_or(|entry| entry.working) {
             return;
         }
+        // A stash has the stash menu, as in the sidebar.
+        if let Some(stash) = self.refs.stash_at(&self.entries[index].commit.oid) {
+            self.select(index, cx);
+            return self.open_stash_menu(stash, position, cx);
+        }
         // A click inside the selection acts on all of it, one outside starts a new one.
         if !self.selection.contains(&self.entries, self.selected, index) {
             self.select(index, cx);
