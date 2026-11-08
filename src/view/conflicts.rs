@@ -1,38 +1,69 @@
-//! A paused rebase, cherry-pick, revert or merge. The inspector lists the files that need
-//! a decision, and the resolver opens over the graph with both sides next to each other.
+//! A paused rebase, cherry-pick, revert or merge. The inspector lists the files that need a
+//! decision. A file opens in the resolver over the graph: its conflicts side by side, to take
+//! whole or line by line, and the file's result in an editor, saved with one button.
 
 use super::notice::Confirm;
-use super::parts::{TEXT_CHIP, TEXT_SMALL, expand_tabs, file_path, panel_row, section_label};
-use super::parts::{pill, title};
+use super::parts::{
+    TEXT_CHIP, TEXT_SMALL, checkbox, expand_tabs, file_path, panel_row, pill, section_label,
+};
 use super::{GraphView, Notice};
 use crate::theme::{lane_color, tokens};
 use gitclient_core::conflict::{self, Decision, Progress, Side};
-use gitclient_core::text::count;
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
-use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[derive(Default)]
 pub(super) struct State {
     progress: Option<Arc<Progress>>,
-    /// The decision on show.
-    decision: usize,
     /// Whether the resolver is open over the graph.
     pub(super) open: bool,
-    /// The result chosen for each decision so far.
-    answers: Vec<Option<String>>,
-    picked: Vec<Option<Side>>,
+    /// The file on show in the resolver.
+    shown: Option<String>,
+    /// Each file's result so far. It starts as the file with its markers, and is edited
+    /// from there, by picking from the sides above it or by hand.
+    drafts: HashMap<String, String>,
+    /// The side picked for a file that can only go one way as a whole, such as a binary one.
+    sides: HashMap<String, Side>,
+    /// The lines picked in the conflicts of the file on show: conflict, side, line.
+    lines: HashSet<(usize, Side, usize)>,
+    /// Files saved at this stop. They stay listed until the operation goes on.
+    resolved: Vec<String>,
+    /// The file being saved, so that once it is, the next one opens.
+    saving: Option<String>,
     editor: Option<Entity<TextareaState>>,
-    /// Which decision the editor's text belongs to.
-    editing: Option<usize>,
-    /// Set while resolving, so that the check afterwards can tell finished from cancelled.
+    /// The file whose result is in the editor.
+    editing: Option<String>,
+    /// Set while continuing, so that the check afterwards can tell finished from cancelled.
     continuing: Option<Arc<Progress>>,
     rebase_target: Option<String>,
     _editor_changes: Option<Subscription>,
+}
+
+impl State {
+    /// Forgets everything about the stop that was open.
+    fn reset(&mut self) {
+        self.open = false;
+        self.shown = None;
+        self.drafts.clear();
+        self.sides.clear();
+        self.lines.clear();
+        self.resolved.clear();
+        self.saving = None;
+        self.editing = None;
+    }
+}
+
+/// What a conflict's button puts in the result.
+#[derive(Clone, Copy)]
+pub(super) enum Pick {
+    Mine,
+    Other,
+    Lines,
 }
 
 impl GraphView {
@@ -40,7 +71,7 @@ impl GraphView {
         self.conflict.progress.as_ref()
     }
 
-    /// Whether the two sides of a conflict are open over the graph.
+    /// Whether a conflicted file is open over the graph.
     pub fn resolver_is_open(&self) -> bool {
         self.conflict.open && self.conflict.progress.is_some()
     }
@@ -66,27 +97,58 @@ impl GraphView {
         let continuing = self.conflict.continuing.take();
         let failed = matches!(self.notice, Some(Notice::Error(_)));
         match progress {
-            Some(progress) => {
-                if self.conflict.progress.as_deref() != Some(&progress) {
-                    let count = progress.decisions.len();
-                    self.conflict.decision = 0;
-                    self.conflict.answers = vec![None; count];
-                    self.conflict.picked = vec![None; count];
-                    self.conflict.editing = None;
-                    self.conflict.open = false;
-                    self.conflict.progress = Some(Arc::new(progress));
+            Some(new) => {
+                // Saving a file changes the decisions but not where the operation stands.
+                let same =
+                    (self.conflict.progress.as_deref()).is_some_and(|old| old.is_same_stop(&new));
+                let new = Arc::new(new);
+                if same {
+                    self.conflict.progress = Some(new.clone());
+                    self.after_save(&new, cx);
+                } else {
+                    self.conflict.reset();
+                    self.conflict.progress = Some(new);
                     self.focus_conflicts(cx);
                 }
             }
             None => {
+                self.conflict.reset();
                 self.conflict.progress = None;
-                self.conflict.open = false;
                 if let Some(finished) = continuing.filter(|_| !failed) {
                     self.notice = Some(Notice::Info(finished.finished_sentence().into()));
                 }
             }
         }
         cx.notify();
+    }
+
+    /// Once a file is saved it is listed as resolved, and the resolver moves on to the next
+    /// file that needs one, or closes when there is none.
+    fn after_save(&mut self, progress: &Progress, cx: &mut Context<Self>) {
+        let Some(saved) = self.conflict.saving.take() else {
+            return;
+        };
+        let files = progress.files();
+        if files.iter().any(|file| file.path == saved) {
+            // It didn't save, and the band under the header says why.
+            return;
+        }
+        self.conflict.drafts.remove(&saved);
+        self.conflict.sides.remove(&saved);
+        if !self.conflict.resolved.contains(&saved) {
+            self.conflict.resolved.push(saved.clone());
+        }
+        if self.conflict.shown.as_deref() != Some(saved.as_str()) {
+            return;
+        }
+        self.conflict.lines.clear();
+        match files.first() {
+            Some(next) => self.show_conflict(&next.path.clone(), cx),
+            None => {
+                self.conflict.open = false;
+                self.notice = Some(Notice::Info(progress.resolved_sentence().into()));
+            }
+        }
     }
 
     /// Shows the working changes, where the conflicts are listed, so that a paused
@@ -128,21 +190,65 @@ impl GraphView {
         )
     }
 
-    /// Opens the resolver on the first decision of a file.
-    pub fn show_conflict(&mut self, path: &str, cx: &mut Context<Self>) {
-        let Some(first) = self
-            .conflict
-            .progress
-            .as_ref()
-            .and_then(|progress| progress.decisions.iter().position(|d| d.path == path))
-        else {
-            return;
+    /// The conflicts of a file that has lines to merge, in the order they come.
+    fn file_decisions(&self, path: &str) -> Vec<Decision> {
+        let decisions = self.conflict.progress.iter().flat_map(|p| &p.decisions);
+        decisions
+            .filter(|decision| decision.path == path && !decision.whole_file)
+            .cloned()
+            .collect()
+    }
+
+    /// Whether a file has no lines to merge, such as a binary one, and is one choice.
+    fn is_whole_file(&self, path: &str) -> bool {
+        let mut decisions = self.conflict.progress.iter().flat_map(|p| &p.decisions);
+        decisions.any(|decision| decision.path == path && decision.whole_file)
+    }
+
+    /// How many conflicts a file still has in its result.
+    fn conflicts_left(&self, path: &str) -> usize {
+        let Some(progress) = &self.conflict.progress else {
+            return 0;
         };
-        self.conflict.decision = first;
+        if self.is_whole_file(path) {
+            return usize::from(!self.conflict.sides.contains_key(path));
+        }
+        match self.conflict.drafts.get(path) {
+            Some(draft) => progress.open_chunks(path, draft).iter().flatten().count(),
+            None => self.file_decisions(path).len(),
+        }
+    }
+
+    /// Opens the resolver on a file, reading its result from the file as it stands.
+    pub fn show_conflict(&mut self, path: &str, cx: &mut Context<Self>) {
+        self.conflict.shown = Some(path.to_owned());
         self.conflict.open = true;
+        self.conflict.lines.clear();
+        self.conflict.editing = None;
         // Only one thing covers the graph at a time.
         self.close_diff(cx);
         cx.notify();
+        if self.is_whole_file(path) || self.conflict.drafts.contains_key(path) {
+            return;
+        }
+        let Some(repo) = self.workdir() else {
+            return;
+        };
+        let path = path.to_owned();
+        let wanted = path.clone();
+        Self::spawn_blocking(
+            move || conflict::read_text(&repo, &path),
+            move |this, text, cx| {
+                match text {
+                    Ok(text) => {
+                        this.conflict.drafts.entry(wanted).or_insert(text);
+                    }
+                    Err(message) => this.notice = Some(Notice::Error(message.into())),
+                }
+                cx.notify();
+            },
+            cx,
+        );
     }
 
     pub(super) fn close_resolver(&mut self, cx: &mut Context<Self>) {
@@ -150,84 +256,102 @@ impl GraphView {
         cx.notify();
     }
 
-    /// Takes one side for every decision in a file.
+    /// Takes one side for every conflict in a file and saves it.
     pub(super) fn use_side_for_file(&mut self, path: &str, side: Side, cx: &mut Context<Self>) {
         let Some(progress) = self.conflict.progress.clone() else {
             return;
         };
-        for (index, decision) in progress.decisions.iter().enumerate() {
-            if decision.path == path {
-                self.conflict.answers[index] = Some(decision.side(side).to_owned());
-                self.conflict.picked[index] = Some(side);
+        self.conflict.saving = Some(path.to_owned());
+        let path = path.to_owned();
+        self.run_operation(
+            "Resolving",
+            move |repo| conflict::resolve_with_side(repo, &progress, &path, side).map(|()| None),
+            cx,
+        );
+    }
+
+    pub(super) fn toggle_line(&mut self, key: (usize, Side, usize), cx: &mut Context<Self>) {
+        if !self.conflict.lines.remove(&key) {
+            self.conflict.lines.insert(key);
+        }
+        cx.notify();
+    }
+
+    /// The lines picked in one conflict: those of the first side, then the second's.
+    fn picked_lines(&self, ordinal: usize, decision: &Decision) -> String {
+        let mut picked = String::new();
+        for side in [Side::Mine, Side::Other] {
+            for (at, line) in conflict::lines_of(decision.side(side)).iter().enumerate() {
+                if self.conflict.lines.contains(&(ordinal, side, at)) {
+                    picked.push_str(line);
+                    if !line.ends_with('\n') {
+                        picked.push('\n');
+                    }
+                }
             }
         }
-        // So that the editor reads the answer again the next time it is drawn.
+        picked
+    }
+
+    /// Puts a side, or the picked lines, of one conflict in the result in place of its
+    /// markers.
+    pub(super) fn use_chunk(&mut self, ordinal: usize, pick: Pick, cx: &mut Context<Self>) {
+        let (Some(progress), Some(path)) =
+            (self.conflict.progress.clone(), self.conflict.shown.clone())
+        else {
+            return;
+        };
+        let Some(draft) = self.conflict.drafts.get(&path).cloned() else {
+            return;
+        };
+        let decisions = self.file_decisions(&path);
+        let open = progress.open_chunks(&path, &draft);
+        let (Some(decision), Some(Some(block))) = (decisions.get(ordinal), open.get(ordinal))
+        else {
+            return;
+        };
+        let chosen = match pick {
+            Pick::Mine => decision.mine.clone(),
+            Pick::Other => decision.other.clone(),
+            Pick::Lines => self.picked_lines(ordinal, decision),
+        };
+        let text = conflict::replace_block(&draft, block, &chosen);
+        self.conflict.drafts.insert(path, text);
+        // So that the editor reads the new result the next time it is drawn.
         self.conflict.editing = None;
-        cx.notify();
-    }
-
-    /// Fills the decision on show from one side.
-    fn pick_side(&mut self, side: Side, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(progress) = self.conflict.progress.clone() else {
-            return;
-        };
-        let index = self.conflict.decision;
-        let Some(decision) = progress.decisions.get(index) else {
-            return;
-        };
-        let text = decision.side(side).to_owned();
-        self.conflict.picked[index] = Some(side);
-        if let Some(editor) = &self.conflict.editor {
-            let shown = text.strip_suffix('\n').unwrap_or(&text).to_owned();
-            editor.update(cx, |editor, cx| editor.set_value(shown, window, cx));
-        }
-        self.conflict.answers[index] = Some(text);
-        cx.notify();
-    }
-
-    fn show_decision(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.conflict.decision = index;
+        self.conflict.lines.retain(|(at, ..)| *at != ordinal);
         cx.notify();
     }
 
     fn editor_changed(&mut self, editor: &Entity<TextareaState>, cx: &mut Context<Self>) {
-        let Some(index) = self.conflict.editing else {
+        let Some(path) = self.conflict.editing.clone() else {
             return;
         };
-        let value = editor.read(cx).value();
-        let trimmed = value.trim();
-        let answer = self.conflict.answers.get_mut(index);
-        let picked = self.conflict.picked.get(index).copied().flatten();
-        // Picking a side that is empty leaves the editor blank but is still an answer.
-        if let Some(answer) = answer
-            && (picked.is_none() || !trimmed.is_empty())
-        {
-            *answer = (!trimmed.is_empty()).then(|| value.to_string());
-        }
+        let value = editor.read(cx).value().to_string();
+        self.conflict.drafts.insert(path, value);
         cx.notify();
     }
 
-    /// Keeps the editor on the decision on show while the resolver is open, making it the
-    /// first time it's needed.
+    /// Keeps the editor on the result of the file on show, making it the first time it is
+    /// needed.
     pub(super) fn sync_conflict_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(progress) = self
-            .conflict
-            .progress
-            .clone()
-            .filter(|_| self.conflict.open)
-        else {
+        if !self.conflict.open {
+            return;
+        }
+        let Some(path) = self.conflict.shown.clone() else {
             return;
         };
-        let index = self.conflict.decision;
-        if progress.decisions.get(index).is_none_or(|d| d.whole_file) {
+        let Some(draft) = self.conflict.drafts.get(&path).cloned() else {
+            return;
+        };
+        if self.is_whole_file(&path) {
             return;
         }
         let editor = match &self.conflict.editor {
             Some(editor) => editor.clone(),
             None => {
                 let editor = cx.new(|cx| {
-                    TextareaState::new(window, cx)
-                        .placeholder("Pick a side above, or type the code you want here.")
+                    TextareaState::new(window, cx).placeholder("The file as it will be saved.")
                 });
                 let changes = cx.subscribe(&editor, |this, editor, event, cx| {
                     if matches!(event, InputEvent::Change) {
@@ -239,29 +363,62 @@ impl GraphView {
                 editor
             }
         };
-        if self.conflict.editing != Some(index) {
-            let text = self.conflict.answers.get(index).cloned().flatten();
-            let shown = text.unwrap_or_default();
-            let shown = shown.strip_suffix('\n').unwrap_or(&shown).to_owned();
+        if self.conflict.editing.as_deref() != Some(path.as_str()) {
+            // Setting the text is a change too, which isn't the user's.
             self.conflict.editing = None;
-            editor.update(cx, |editor, cx| editor.set_value(shown, window, cx));
-            self.conflict.editing = Some(index);
+            editor.update(cx, |editor, cx| editor.set_value(draft, window, cx));
+            self.conflict.editing = Some(path);
         }
     }
 
+    /// Saves the result of the file on show and stages it, which takes the conflict off it.
+    pub(super) fn save_conflict(&mut self, cx: &mut Context<Self>) {
+        let (Some(progress), Some(path)) =
+            (self.conflict.progress.clone(), self.conflict.shown.clone())
+        else {
+            return;
+        };
+        if self.conflicts_left(&path) > 0 {
+            return;
+        }
+        self.conflict.saving = Some(path.clone());
+        if self.is_whole_file(&path) {
+            let Some(side) = self.conflict.sides.get(&path).copied() else {
+                return;
+            };
+            self.run_operation(
+                "Saving",
+                move |repo| {
+                    conflict::resolve_with_side(repo, &progress, &path, side).map(|()| None)
+                },
+                cx,
+            );
+            return;
+        }
+        let Some(result) = self.conflict.drafts.get(&path).cloned() else {
+            return;
+        };
+        self.run_operation(
+            "Saving",
+            move |repo| conflict::save_file(repo, &path, &result).map(|()| None),
+            cx,
+        );
+    }
+
+    /// Moves the operation on once every file is resolved.
     pub(super) fn continue_operation(&mut self, cx: &mut Context<Self>) {
         let Some(progress) = self.conflict.progress.clone() else {
             return;
         };
-        let answers: Option<Vec<String>> = self.conflict.answers.iter().cloned().collect();
-        let Some(answers) = answers else {
+        if !progress.decisions.is_empty() {
             return;
-        };
+        }
+        let kind = progress.kind;
         self.conflict.continuing = Some(progress.clone());
-        let label = format!("Continuing {}", progress.kind.title().to_lowercase());
+        let label = format!("Continuing {}", kind.title().to_lowercase());
         self.run_operation(
             label,
-            move |repo| conflict::finish(repo, &progress, &answers).map(|()| None),
+            move |repo| conflict::carry_on(repo, kind).map(|_| None),
             cx,
         );
     }
@@ -278,35 +435,18 @@ impl GraphView {
     pub(super) fn render_conflict_panel(&self, progress: &Progress, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
         let colors = tokens(theme.is_dark());
-        let (border, muted) = (theme.border, theme.muted_foreground);
+        let (border, muted, success) = (theme.border, theme.muted_foreground, theme.success);
         let kind = progress.kind.title().to_lowercase();
-        let ready = self.conflict.answers.iter().all(Option::is_some);
+        let ready = progress.decisions.is_empty();
         let busy = self.busy.is_some();
         let files = progress.files();
-        let shown_path = self
-            .conflict
-            .open
-            .then(|| progress.decisions.get(self.conflict.decision))
-            .flatten()
-            .map(|decision| decision.path.clone());
+        let shown_path = self.conflict.shown.clone().filter(|_| self.conflict.open);
 
-        let rows: Vec<_> = files
-            .iter()
-            .enumerate()
-            .map(|(index, file)| {
-                let answered = file
-                    .decisions
-                    .iter()
-                    .filter(|at| self.conflict.answers.get(**at).is_some_and(Option::is_some))
-                    .count();
-                let decided = answered >= file.decisions.len();
-                let (mark, mark_color) = if decided {
-                    ("✓", theme_success(cx))
-                } else {
-                    ("!", colors.peach)
-                };
-                let path = file.path.clone();
-                let menu_path = file.path.clone();
+        let mut rows: Vec<Stateful<Div>> = Vec::new();
+        for (index, file) in files.iter().enumerate() {
+            let left = self.conflicts_left(&file.path);
+            let (path, menu_path) = (file.path.clone(), file.path.clone());
+            rows.push(
                 panel_row(
                     ("conflict-file", index),
                     shown_path.as_deref() == Some(file.path.as_str()),
@@ -327,8 +467,8 @@ impl GraphView {
                         .flex_none()
                         .text_size(TEXT_CHIP)
                         .font_semibold()
-                        .text_color(mark_color)
-                        .child(mark),
+                        .text_color(colors.peach)
+                        .child("!"),
                 )
                 .child(file_path(&file.path, muted))
                 .child(
@@ -336,10 +476,35 @@ impl GraphView {
                         .flex_none()
                         .text_size(TEXT_CHIP)
                         .text_color(muted)
-                        .child(file.note(answered)),
-                )
-            })
-            .collect();
+                        .child(file.note(left)),
+                ),
+            );
+        }
+        // Saved files stay in the list, ticked, until the operation goes on.
+        for (index, path) in self.conflict.resolved.iter().enumerate() {
+            rows.push(
+                panel_row(("resolved-file", index), false, cx)
+                    .h(px(28.))
+                    .cursor_default()
+                    .child(
+                        div()
+                            .w(px(12.))
+                            .flex_none()
+                            .text_size(TEXT_CHIP)
+                            .font_semibold()
+                            .text_color(success)
+                            .child("✓"),
+                    )
+                    .child(file_path(path, muted))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(TEXT_CHIP)
+                            .text_color(muted)
+                            .child("Resolved"),
+                    ),
+            );
+        }
 
         div()
             .v_flex()
@@ -365,13 +530,13 @@ impl GraphView {
                     .min_h_0()
                     .gap(px(2.))
                     .mx(px(-8.))
-                    .child(section_label(muted).h(px(24.)).px_2().h_flex().child(
-                        if files.is_empty() {
-                            "Nothing to decide".to_owned()
-                        } else {
-                            format!("Conflicts · {}", count(files.len(), "file"))
-                        },
-                    ))
+                    .child(
+                        section_label(muted)
+                            .h(px(24.))
+                            .px_2()
+                            .h_flex()
+                            .child(progress.list_heading(self.conflict.resolved.len())),
+                    )
                     .child(
                         div()
                             .id("conflict-files")
@@ -422,259 +587,484 @@ impl GraphView {
             )
     }
 
-    /// The two sides of a conflict next to each other, over the graph.
+    /// The conflicted file on show, over the graph.
     pub(super) fn render_resolver(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.conflict.open {
             return None;
         }
         let progress = self.conflict.progress.clone()?;
-        let decision = progress.decisions.get(self.conflict.decision)?.clone();
+        let path = self.conflict.shown.clone()?;
         Some(
-            self.render_decision(&progress, &decision, cx)
+            self.render_file_resolver(&progress, &path, cx)
                 .into_any_element(),
         )
     }
 
-    fn render_decision(
-        &self,
-        shown: &Progress,
-        decision: &Decision,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_file_resolver(&self, progress: &Progress, path: &str, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
         let is_dark = theme.is_dark();
-        let (head, subtext, panel) = (theme.primary, tokens(is_dark).subtext0, theme.title_bar);
-        let other = lane_color(self.refs.branch_color(&shown.other), is_dark);
-        let index = self.conflict.decision;
-        let count = shown.decisions.len();
-        let picked = self.conflict.picked.get(index).copied().flatten();
-        let location = if decision.whole_file {
-            decision.path.clone()
+        let (panel, border, muted) = (theme.title_bar, theme.border, theme.muted_foreground);
+        let (success, peach) = (theme.success, tokens(is_dark).peach);
+        let whole = self.is_whole_file(path);
+        let loaded = whole || self.conflict.drafts.contains_key(path);
+        let left = self.conflicts_left(path);
+        let ready = loaded && left == 0;
+        let hint = if whole {
+            if ready {
+                "Ready to save".to_owned()
+            } else {
+                "Choose which version to keep".to_owned()
+            }
         } else {
-            format!("{}:{}", decision.path, decision.line)
+            conflict::result_hint(left)
         };
-        let headline = if decision.whole_file {
-            "Both branches changed this file"
+        let busy = self.busy.is_some();
+
+        let header = div()
+            .h_flex()
+            .h(px(40.))
+            .flex_none()
+            .px_4()
+            .gap_3()
+            .bg(panel)
+            .border_b_1()
+            .border_color(border)
+            .text_size(TEXT_SMALL)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_flex()
+                    .gap_3()
+                    .child(file_path(path, muted))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(if ready { success } else { peach })
+                            .child(hint),
+                    ),
+            )
+            .child(
+                Button::new("close-resolver")
+                    .ghost()
+                    .xsmall()
+                    .label("Close")
+                    .on_click(cx.listener(|this, _, _, cx| this.close_resolver(cx))),
+            );
+
+        let body = if whole {
+            self.render_whole_file_choice(progress, path, cx)
         } else {
-            "Both branches changed this code"
+            self.render_conflicts_and_result(progress, path, cx)
         };
-        let mine = SideView {
-            side: Side::Mine,
-            branch: shown.mine.clone(),
-            color: head,
-            code: &decision.mine,
-            why: &decision.mine_why,
-            picked: picked == Some(Side::Mine),
-        };
-        let theirs = SideView {
-            side: Side::Other,
-            branch: shown.other.clone(),
-            color: other,
-            code: &decision.other,
-            why: &decision.other_why,
-            picked: picked == Some(Side::Other),
-        };
-        let cards = [self.render_side(mine, cx), self.render_side(theirs, cx)];
-        let result = (!decision.whole_file).then(|| self.render_result(index, cx));
+
+        let save = div()
+            .flex_none()
+            .p_4()
+            .bg(panel)
+            .border_t_1()
+            .border_color(border)
+            .child(
+                Button::new("save-conflict")
+                    .primary()
+                    .large()
+                    .w_full()
+                    .label("Save and mark as resolved")
+                    .disabled(!ready || busy)
+                    .on_click(cx.listener(|this, _, _, cx| this.save_conflict(cx))),
+            );
 
         div()
-            .id("decision")
             .v_flex()
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .p_4()
-            .gap_4()
-            .bg(panel)
-            .overflow_y_scrollbar()
-            .child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .child(title().child(headline))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(TEXT_SMALL)
-                            .text_color(subtext)
-                            .child(location),
-                    )
-                    .when(count > 1, |row| {
-                        row.child(
-                            div()
-                                .flex_none()
-                                .text_size(TEXT_SMALL)
-                                .text_color(subtext)
-                                .child(format!("{} of {count}", index + 1)),
-                        )
-                        .child(
-                            Button::new("previous-decision")
-                                .ghost()
-                                .small()
-                                .label("Previous")
-                                .disabled(index == 0)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.show_decision(index.saturating_sub(1), cx);
-                                })),
-                        )
-                        .child(
-                            Button::new("next-decision")
-                                .ghost()
-                                .small()
-                                .label("Next")
-                                .disabled(index + 1 == count)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.show_decision(index + 1, cx);
-                                })),
-                        )
-                    })
-                    .child(
-                        Button::new("close-resolver")
-                            .ghost()
-                            .small()
-                            .label("Close")
-                            .on_click(cx.listener(|this, _, _, cx| this.close_resolver(cx))),
-                    ),
-            )
-            .child(div().h_flex().items_stretch().gap_3().children(cards))
-            .children(result)
+            .child(header)
+            .child(body)
+            .child(save)
     }
 
-    fn render_side(&self, view: SideView, cx: &mut Context<Self>) -> Div {
-        let SideView {
-            side,
-            branch,
-            color,
-            code,
-            why,
-            picked,
-        } = view;
+    /// A file with nothing to merge line by line: one version or the other, as a whole.
+    fn render_whole_file_choice(
+        &self,
+        progress: &Progress,
+        path: &str,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let theme = cx.theme();
         let is_dark = theme.is_dark();
         let (background, border, foreground) = (theme.background, theme.border, theme.foreground);
-        let on_color = theme.primary_foreground;
-        let subtext = tokens(is_dark).subtext0;
-        let lines = code.lines().map(|line| {
+        let (on_color, subtext) = (theme.primary_foreground, tokens(is_dark).subtext0);
+        let picked = self.conflict.sides.get(path).copied();
+        let decision = progress
+            .decisions
+            .iter()
+            .find(|decision| decision.path == path);
+        let other = lane_color(self.refs.branch_color(&progress.other), is_dark);
+        let sides = [
+            (Side::Mine, &progress.mine, theme.primary),
+            (Side::Other, &progress.other, other),
+        ];
+        let cards = sides.map(|(side, branch, color)| {
+            let on = picked == Some(side);
+            let (what, why) = decision.map_or(("", ""), |decision| match side {
+                Side::Mine => (decision.mine.as_str(), decision.mine_why.as_str()),
+                Side::Other => (decision.other.as_str(), decision.other_why.as_str()),
+            });
             div()
-                .h(px(22.))
-                .whitespace_nowrap()
-                .child(expand_tabs(line))
+                .v_flex()
+                .flex_1()
+                .min_w_0()
+                .p_4()
+                .gap_2()
+                .rounded(px(8.))
+                .bg(background)
+                .border(px(if on { 2. } else { 1. }))
+                .border_color(if on { color } else { border })
+                .child(
+                    div()
+                        .h_flex()
+                        .gap_2()
+                        .font_semibold()
+                        .text_color(color)
+                        .child(div().size(px(8.)).flex_none().rounded_full().bg(color))
+                        .child(div().min_w_0().truncate().child(branch.clone())),
+                )
+                .child(div().text_color(subtext).child(why.to_owned()))
+                .child(div().child(what.to_owned()))
+                .child(
+                    div()
+                        .id(match side {
+                            Side::Mine => "keep-mine",
+                            Side::Other => "keep-other",
+                        })
+                        .mt_auto()
+                        .h_flex()
+                        .h(px(34.))
+                        .justify_center()
+                        .rounded(px(6.))
+                        .cursor_pointer()
+                        .font_semibold()
+                        .bg(if on { color } else { border })
+                        .text_color(if on { on_color } else { foreground })
+                        .child(div().min_w_0().truncate().child(format!("Use {branch}")))
+                        .on_click({
+                            let path = path.to_owned();
+                            cx.listener(move |this, _, _, cx| {
+                                this.conflict.sides.insert(path.clone(), side);
+                                cx.notify();
+                            })
+                        }),
+                )
         });
-        let id = match side {
-            Side::Mine => "use-mine",
-            Side::Other => "use-other",
+        div()
+            .h_flex()
+            .items_stretch()
+            .flex_1()
+            .min_h_0()
+            .p_4()
+            .gap_4()
+            .children(cards)
+    }
+
+    /// The file's conflicts side by side, over its result in an editor.
+    fn render_conflicts_and_result(
+        &self,
+        progress: &Progress,
+        path: &str,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let theme = cx.theme();
+        let is_dark = theme.is_dark();
+        let (border, muted) = (theme.border, theme.muted_foreground);
+        let subtext = tokens(is_dark).subtext0;
+        let draft = self.conflict.drafts.get(path);
+        let decisions = self.file_decisions(path);
+        let open: Vec<bool> = match draft {
+            Some(draft) => progress
+                .open_chunks(path, draft)
+                .iter()
+                .map(Option::is_some)
+                .collect(),
+            None => vec![true; decisions.len()],
+        };
+        let any_open = open.iter().any(|open| *open);
+        let total = decisions.len();
+        let cards: Vec<Div> = decisions
+            .iter()
+            .enumerate()
+            .map(|(ordinal, decision)| {
+                if open[ordinal] {
+                    self.render_chunk(progress, ordinal, total, decision, cx)
+                } else {
+                    div()
+                        .h_flex()
+                        .flex_none()
+                        .h(px(30.))
+                        .px_3()
+                        .rounded(px(8.))
+                        .border_1()
+                        .border_color(border)
+                        .text_size(TEXT_SMALL)
+                        .text_color(muted)
+                        .child(format!(
+                            "Conflict {} of {total} · line {} · settled in the result",
+                            ordinal + 1,
+                            decision.line
+                        ))
+                }
+            })
+            .collect();
+
+        let editor = match (&self.conflict.editor, draft) {
+            (Some(editor), Some(_)) if self.conflict.editing.as_deref() == Some(path) => div()
+                .flex_1()
+                .min_h_0()
+                .child(Textarea::new(editor).h_full()),
+            _ => div()
+                .flex_1()
+                .min_h_0()
+                .text_color(muted)
+                .child("Reading the file…"),
         };
 
         div()
             .v_flex()
             .flex_1()
-            .min_w_0()
-            .rounded(px(8.))
-            .overflow_hidden()
-            .bg(background)
-            .border(px(if picked { 2. } else { 1. }))
-            .border_color(if picked { color } else { border })
+            .min_h_0()
+            .p_4()
+            .gap_4()
             .child(
                 div()
+                    .id("conflict-chunks")
                     .v_flex()
-                    .p_3()
-                    .gap(px(2.))
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .font_semibold()
-                            .text_color(color)
-                            .child(div().size(px(8.)).flex_none().rounded_full().bg(color))
-                            .child(div().min_w_0().truncate().child(branch.clone())),
-                    )
-                    .when(!why.is_empty(), |heading| {
-                        heading.child(div().text_color(subtext).child(why.to_owned()))
-                    }),
+                    .gap_3()
+                    .when(any_open, |list| list.flex_1().min_h(px(160.)))
+                    .when(!any_open, |list| list.flex_none())
+                    .overflow_y_scroll()
+                    .children(cards),
             )
             .child(
                 div()
                     .v_flex()
                     .flex_1()
-                    .px_3()
-                    .py_2()
-                    .overflow_hidden()
-                    .text_size(TEXT_SMALL)
-                    .text_color(foreground)
-                    .border_t_1()
-                    .border_color(border)
-                    .children(lines),
-            )
-            .child(
-                div().p_2().border_t_1().border_color(border).child(
-                    div()
-                        .id(id)
-                        .h_flex()
-                        .h(px(30.))
-                        .justify_center()
-                        .rounded(px(6.))
-                        .cursor_pointer()
-                        .font_semibold()
-                        .bg(if picked { color } else { border })
-                        .text_color(if picked { on_color } else { foreground })
-                        .child(div().min_w_0().truncate().child(format!("Use {branch}")))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.pick_side(side, window, cx);
-                        })),
-                ),
+                    .min_h(px(200.))
+                    .gap_2()
+                    .child(
+                        div()
+                            .h_flex()
+                            .justify_between()
+                            .gap_3()
+                            .child(div().font_semibold().child("Result"))
+                            .child(
+                                div()
+                                    .text_size(TEXT_SMALL)
+                                    .text_color(subtext)
+                                    .child("The whole file. Pick above, or edit it by hand."),
+                            ),
+                    )
+                    .child(editor),
             )
     }
 
-    fn render_result(&self, index: usize, cx: &mut Context<Self>) -> Div {
+    /// One conflict: both sides next to each other, with the lines to pick from and the
+    /// buttons that put them in the result.
+    fn render_chunk(
+        &self,
+        progress: &Progress,
+        ordinal: usize,
+        total: usize,
+        decision: &Decision,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let theme = cx.theme();
-        let (success, peach) = (theme.success, tokens(theme.is_dark()).peach);
-        let answered = self
+        let is_dark = theme.is_dark();
+        let (panel, border, muted) = (theme.title_bar, theme.border, theme.muted_foreground);
+        let other = lane_color(self.refs.branch_color(&progress.other), is_dark);
+        let picked = self
             .conflict
-            .answers
-            .get(index)
-            .is_some_and(Option::is_some);
-        let (hint, hint_color) = if answered {
-            ("Ready. Edit it here if you need both.", success)
-        } else {
-            ("Choose what the code should be to continue", peach)
+            .lines
+            .iter()
+            .filter(|(at, ..)| *at == ordinal)
+            .count();
+
+        let button = |id: &'static str, label: String, pick: Pick| {
+            Button::new((id, ordinal))
+                .ghost()
+                .small()
+                .label(label)
+                .on_click(cx.listener(move |this, _, _, cx| this.use_chunk(ordinal, pick, cx)))
         };
+        let header = div()
+            .h_flex()
+            .h(px(38.))
+            .px_3()
+            .gap_2()
+            .border_b_1()
+            .border_color(border)
+            .text_size(TEXT_SMALL)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(muted)
+                    .child(format!(
+                        "Conflict {} of {total} · line {}",
+                        ordinal + 1,
+                        decision.line
+                    )),
+            )
+            .child(button(
+                "use-mine",
+                format!("Use {}", progress.mine),
+                Pick::Mine,
+            ))
+            .child(button(
+                "use-other",
+                format!("Use {}", progress.other),
+                Pick::Other,
+            ))
+            .when(picked > 0, |header| {
+                header.child(button(
+                    "use-lines",
+                    conflict::picked_lines_label(picked),
+                    Pick::Lines,
+                ))
+            });
+
         div()
             .v_flex()
-            .gap_2()
+            .flex_none()
+            .rounded(px(8.))
+            .overflow_hidden()
+            .bg(panel)
+            .border_1()
+            .border_color(border)
+            .child(header)
             .child(
                 div()
                     .h_flex()
-                    .justify_between()
-                    .gap_3()
-                    .child(div().font_semibold().child("Result"))
-                    .child(
-                        div()
-                            .text_size(TEXT_SMALL)
-                            .text_color(hint_color)
-                            .child(hint),
-                    ),
-            )
-            .children(
-                self.conflict
-                    .editor
-                    .as_ref()
-                    .map(|editor| div().h(px(160.)).child(Textarea::new(editor).h_full())),
+                    .items_stretch()
+                    .child(self.render_chunk_side(
+                        ordinal,
+                        Side::Mine,
+                        &progress.mine,
+                        cx.theme().primary,
+                        decision,
+                        cx,
+                    ))
+                    .child(div().w(px(1.)).flex_none().bg(border))
+                    .child(self.render_chunk_side(
+                        ordinal,
+                        Side::Other,
+                        &progress.other,
+                        other,
+                        decision,
+                        cx,
+                    )),
             )
     }
-}
 
-fn theme_success(cx: &App) -> Hsla {
-    cx.theme().success
-}
+    /// One side of a conflict. Each line can be ticked to pick it for the result.
+    fn render_chunk_side(
+        &self,
+        ordinal: usize,
+        side: Side,
+        branch: &str,
+        color: Hsla,
+        decision: &Decision,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let theme = cx.theme();
+        let (border, muted) = (theme.border, theme.muted_foreground);
+        let foreground = theme.foreground;
+        let subtext = tokens(theme.is_dark()).subtext0;
+        let (text, why) = match side {
+            Side::Mine => (&decision.mine, &decision.mine_why),
+            Side::Other => (&decision.other, &decision.other_why),
+        };
+        let (row_id, box_id) = match side {
+            Side::Mine => ("pick-mine-line", "pick-mine-box"),
+            Side::Other => ("pick-other-line", "pick-other-box"),
+        };
+        let lines = conflict::lines_of(text);
+        let rows: Vec<Stateful<Div>> = lines
+            .iter()
+            .enumerate()
+            .map(|(at, line)| {
+                let key = (ordinal, side, at);
+                let on = self.conflict.lines.contains(&key);
+                let id = ordinal * 10_000 + at;
+                div()
+                    .id((row_id, id))
+                    .h_flex()
+                    .h(px(22.))
+                    .px_3()
+                    .gap_2()
+                    .cursor_pointer()
+                    .text_size(TEXT_SMALL)
+                    .text_color(foreground)
+                    .when(on, |row| row.bg(color.opacity(0.14)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_line(key, cx)))
+                    .child(checkbox((box_id, id), on, false, cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(expand_tabs(line.trim_end_matches('\n'))),
+                    )
+            })
+            .collect();
 
-/// One side of a decision, as a card.
-struct SideView<'a> {
-    side: Side,
-    branch: String,
-    color: Hsla,
-    code: &'a str,
-    why: &'a str,
-    picked: bool,
+        div()
+            .v_flex()
+            .flex_1()
+            .min_w_0()
+            .child(
+                div()
+                    .v_flex()
+                    .px_3()
+                    .py_2()
+                    .gap(px(2.))
+                    .border_b_1()
+                    .border_color(border)
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .font_semibold()
+                            .text_size(TEXT_SMALL)
+                            .text_color(color)
+                            .child(div().size(px(8.)).flex_none().rounded_full().bg(color))
+                            .child(div().min_w_0().truncate().child(branch.to_owned())),
+                    )
+                    .when(!why.is_empty(), |heading| {
+                        heading.child(
+                            div()
+                                .text_size(TEXT_CHIP)
+                                .text_color(subtext)
+                                .child(why.clone()),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .v_flex()
+                    .py_1()
+                    .children(rows)
+                    .when(lines.is_empty(), |body| {
+                        body.child(
+                            div()
+                                .h(px(22.))
+                                .px_3()
+                                .text_size(TEXT_SMALL)
+                                .text_color(muted)
+                                .child("Nothing on this side"),
+                        )
+                    }),
+            )
+    }
 }

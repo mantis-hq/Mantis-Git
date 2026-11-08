@@ -322,16 +322,30 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Conflicts:** a paused rebase, cherry-pick, revert or merge shows in the inspector, and
   the working changes are selected when one appears. The inspector then holds a Peach pill
   ("Rebase paused"), the sentence that says where it stopped, a "Conflicts" list of the files
-  that need a decision (a "!" and "Needs a decision", or a tick and "Decided"), and at the
-  foot "Cancel rebase" and the one blue "Continue rebase", which waits until everything is
-  decided. The two lists and the commit form wait while it is paused. Clicking a file opens
-  the resolver over the graph, as a diff does: the two branches' code next to each other as
-  cards, "Use feat/x" under each (the branch's name, never "mine" or "theirs", in line with
-  principle 5), and the result in an editor below for when both are needed. Previous and Next
-  walk the decisions, `Esc` or "Close" brings the graph back. Right-clicking a conflicted file
-  offers "Show both sides", "Use feat/x" and "Use main" for the whole file, and "Copy path".
-  A file with nothing to merge line by line, such as a binary file, is one choice between
-  the two sides. When it finishes, the band under the header says what is now true.
+  that need a decision (a "!" and how many conflicts are left, or a tick and "Resolved" once
+  saved, which stay listed until the operation goes on), and at the foot "Cancel rebase" and
+  the one blue "Continue rebase", which waits until every file is saved. The two lists and the
+  commit form wait while it is paused.
+  Clicking a file opens the resolver over the graph, as a diff does, and `Esc` or "Close"
+  brings the graph back. It is one file at a time, in three parts that share the height:
+  - **Conflicts**, each a card with both branches' code next to each other (named by branch,
+    never "mine" or "theirs", in line with principle 5) and a tick box on every line. Its
+    header says "Conflict 2 of 3 · line 40" and has "Use feat/x", "Use main" and, once lines
+    are ticked, "Use 3 selected lines" (the ticked lines of the first side, then the
+    second's), which put that in the result. A conflict already settled shrinks to a line.
+  - **Result**, the whole file in an editor, which starts as the file as it stands with its
+    conflict markers. The cards edit it, and so can the user, by hand, anywhere. A conflict
+    counts as settled when its markers are gone from the result, however that happened. The
+    top bar says how many are left ("2 conflicts left in the result", Peach) or "Ready to
+    save" (Green).
+  - **Save and mark as resolved**, a large blue button across the foot, enabled once no
+    conflict is left. It writes the result and stages the file, which takes the conflict state
+    off it, then opens the next file that needs a decision, or closes when there is none.
+  A file with nothing to merge line by line, such as a binary file or a deleted one, has two
+  cards with a "Use feat/x" choice each instead of the editor, saved with the same button.
+  Right-clicking a conflicted file offers "Show both sides", "Use feat/x" and "Use main" for
+  the whole file, which save it at once, and "Copy path". When the operation finishes, the
+  band under the header says what is now true.
 - **Files:** a status letter, then the path with its folder muted, then `+n −n`.
 - **Diffs:** each hunk is a card on Mantle with a Surface 0 border and 8 px radius, over the
   Base of the pane. Its header has the hunk's tick box (working changes), where it starts or
