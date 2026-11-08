@@ -395,6 +395,13 @@ pub fn set_upstream(
                 &format!("{branch}:{name}"),
             ],
         )?;
+        // A repository that fetches only some branches (a single-branch clone) keeps no
+        // local copy of what a push made, and a fetch would never bring it in, so the
+        // branch would be missing from the app. Fetching it is what a push does here.
+        if !ops::resolves(repo, &format!("refs/remotes/{upstream}")) {
+            ops::run(repo, &["remote", "set-branches", "--add", remote, name])?;
+            ops::run(repo, &["fetch", remote, name])?;
+        }
     }
     let back = match before {
         Some(before) => format!("git branch --set-upstream-to={before} {branch}"),
@@ -494,6 +501,31 @@ mod tests {
             repo.git(&["rev-parse", "side"])
         );
         assert!(said.contains("push origin --delete topic"), "{said}");
+    }
+
+    #[test]
+    fn a_pushed_branch_shows_up_even_when_the_repository_fetches_only_some_branches() {
+        let repo = ahead();
+        let remote = Repo::new();
+        repo.git(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
+        repo.git(&[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/main:refs/remotes/origin/main",
+        ]);
+        remote.git(&["config", "receive.denyCurrentBranch", "ignore"]);
+        set_upstream(repo.path(), "side", "origin", "feat/x/12345").unwrap();
+        let read = crate::history::refs::read_refs(repo.path()).unwrap();
+        let names: Vec<_> = read.remotes.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["origin/feat/x/12345"]);
+        assert_eq!(
+            repo.git(&["rev-parse", "--abbrev-ref", "side@{upstream}"])
+                .trim(),
+            "origin/feat/x/12345"
+        );
+        // So a later fetch keeps it up to date.
+        let wanted = repo.git(&["config", "--get-all", "remote.origin.fetch"]);
+        assert!(wanted.contains("refs/heads/feat/x/12345"), "{wanted}");
     }
 
     #[test]
