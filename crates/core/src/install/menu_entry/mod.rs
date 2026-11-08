@@ -1,9 +1,9 @@
 //! The launcher that puts gitclient in the application menu (Linux) or the Start menu
-//! (Windows), for a copy unpacked from an archive. The app asks once whether to add it, and
+//! (Windows), for a copy unpacked from an archive. The welcome panel offers it once, and
 //! Settings can add or remove it at any time.
 //!
 //! What is on disk is the truth: there is no remembered "wanted" flag to fall out of step
-//! with it. The only thing remembered is that the question has been asked.
+//! with it. The only thing remembered is that the welcome has been shown.
 
 mod desktop;
 mod shortcut;
@@ -21,12 +21,16 @@ pub enum Status {
     },
 }
 
-/// The question put to the user the first time, in words.
+/// The launcher as the welcome panel offers it: a tick box with a title, and under it what
+/// ticking it does, in words.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Question {
-    pub message: String,
-    /// The answering button, named for its result.
-    pub action: &'static str,
+pub struct Offer {
+    /// "Add gitclient to the application menu".
+    pub title: String,
+    /// What will be written, and how to take it away again.
+    pub detail: String,
+    /// The panel's button while the box is ticked, named for its result.
+    pub button: &'static str,
 }
 
 /// The launcher this system has, if it has one.
@@ -76,24 +80,24 @@ impl Kind {
         }
     }
 
-    fn question(&self, exe: &Path) -> Question {
-        let message = match self {
+    fn offer(&self, exe: &Path) -> Offer {
+        let detail = match self {
             Self::Desktop(places) => format!(
-                "Add gitclient to your application menu? That writes a launcher to {} and an \
-                 icon beside it, so you can start gitclient without opening its folder. \
-                 Settings → App takes them away again.",
+                "Writes a launcher to {} and an icon beside it, so you can start gitclient \
+                 without opening its folder. Settings → App takes them away again.",
                 places.folder().display()
             ),
             Self::Shortcut(place) => format!(
-                "Add gitclient to your Start menu? That puts a shortcut to {} in {}. \
-                 Settings → App takes it away again.",
+                "Puts a shortcut to {} in {}, so you can start gitclient without opening its \
+                 folder. Settings → App takes it away again.",
                 exe.display(),
                 place.folder().display()
             ),
         };
-        Question {
-            message,
-            action: "Add gitclient",
+        Offer {
+            title: format!("Add gitclient to the {}", self.menu()),
+            detail,
+            button: "Add to menu and start",
         }
     }
 
@@ -168,9 +172,9 @@ impl Launcher {
         Ok(true)
     }
 
-    /// The question for the first run.
-    pub fn question(&self, exe: &Path) -> Question {
-        self.0.question(exe)
+    /// What the welcome panel offers.
+    pub fn offer(&self, exe: &Path) -> Offer {
+        self.0.offer(exe)
     }
 
     /// The title of the Settings row, such as "Add gitclient to the application menu".
@@ -211,26 +215,18 @@ mod tests {
     }
 
     #[test]
-    fn the_question_says_what_will_be_written_and_how_to_undo_it() {
+    fn the_offer_says_what_will_be_written_and_how_to_undo_it() {
         let exe = Path::new("/h/gitclient");
-        let asked = linux().question(exe);
-        assert!(
-            asked
-                .message
-                .starts_with("Add gitclient to your application menu?")
-        );
-        assert!(asked.message.contains("/d/applications"));
-        assert!(asked.message.contains("Settings → App"));
-        assert_eq!(asked.action, "Add gitclient");
+        let offer = linux().offer(exe);
+        assert_eq!(offer.title, "Add gitclient to the application menu");
+        assert!(offer.detail.contains("/d/applications"));
+        assert!(offer.detail.contains("Settings → App"));
+        assert_eq!(offer.button, "Add to menu and start");
 
-        let asked = windows().question(Path::new("C:/g/gitclient.exe"));
-        assert!(
-            asked
-                .message
-                .starts_with("Add gitclient to your Start menu?")
-        );
-        assert!(asked.message.contains("C:/g/gitclient.exe"));
-        assert!(asked.message.contains("C:/Programs"));
+        let offer = windows().offer(Path::new("C:/g/gitclient.exe"));
+        assert_eq!(offer.title, "Add gitclient to the Start menu");
+        assert!(offer.detail.contains("C:/g/gitclient.exe"));
+        assert!(offer.detail.contains("C:/Programs"));
     }
 
     #[test]

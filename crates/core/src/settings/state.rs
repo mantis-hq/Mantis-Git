@@ -34,9 +34,9 @@ pub struct AppState {
     pub files_view: FileView,
     /// How the dock along the bottom of the window was left.
     pub dock: DockLayout,
-    /// Whether the user has been asked about adding gitclient to the application menu.
-    /// The question is asked once; what the menu holds is read from disk, not remembered.
-    pub menu_entry_asked: bool,
+    /// Whether the welcome panel has been shown. It shows once, and holds the choice of
+    /// adding gitclient to the application menu; what the menu holds is read from disk.
+    pub welcome_seen: bool,
     /// Whether a portable copy looks for a newer release when it starts.
     pub check_updates: bool,
 }
@@ -77,7 +77,7 @@ impl Default for AppState {
             commit_limit: DEFAULT_COMMIT_LIMIT,
             files_view: FileView::List,
             dock: DockLayout::default(),
-            menu_entry_asked: false,
+            welcome_seen: false,
             check_updates: true,
         }
     }
@@ -140,7 +140,7 @@ impl AppState {
                     };
                 }
                 "files_view" => state.files_view = FileView::from_key(value),
-                "menu_entry_asked" => state.menu_entry_asked = value.trim() == "true",
+                "welcome_seen" => state.welcome_seen = value.trim() == "true",
                 "check_updates" => state.check_updates = value.trim() != "false",
                 "dock_open" => state.dock.open = value.trim() == "true",
                 "dock_terminals" => state.dock.terminals = value.trim().parse().unwrap_or(0),
@@ -162,7 +162,7 @@ impl AppState {
         text.push_str(&format!("cache_mb={}\n", self.cache_mb));
         text.push_str(&format!("commit_limit={}\n", self.commit_limit));
         text.push_str(&format!("files_view={}\n", self.files_view.key()));
-        text.push_str(&format!("menu_entry_asked={}\n", self.menu_entry_asked));
+        text.push_str(&format!("welcome_seen={}\n", self.welcome_seen));
         text.push_str(&format!("check_updates={}\n", self.check_updates));
         text.push_str(&format!("dock_open={}\n", self.dock.open));
         text.push_str(&format!("dock_terminals={}\n", self.dock.terminals));
@@ -420,7 +420,7 @@ mod tests {
                 terminals: 2,
                 tab: 1,
             },
-            menu_entry_asked: true,
+            welcome_seen: true,
             check_updates: false,
         };
         state.save(&file).unwrap();
@@ -432,13 +432,13 @@ mod tests {
     }
 
     #[test]
-    fn nobody_is_asked_twice_about_the_menu_and_updates_are_checked_unless_turned_off() {
+    fn the_welcome_shows_once_and_updates_are_checked_unless_turned_off() {
         let fresh = AppState::parse("");
-        assert!(!fresh.menu_entry_asked);
+        assert!(!fresh.welcome_seen);
         assert!(fresh.check_updates);
-        assert!(AppState::parse("menu_entry_asked=true").menu_entry_asked);
-        // Anything but a plain "true" doesn't count as having asked.
-        assert!(!AppState::parse("menu_entry_asked=yes").menu_entry_asked);
+        assert!(AppState::parse("welcome_seen=true").welcome_seen);
+        // Anything but a plain "true" doesn't count as having been welcomed.
+        assert!(!AppState::parse("welcome_seen=yes").welcome_seen);
         assert!(!AppState::parse("check_updates=false").check_updates);
         assert!(AppState::parse("check_updates=maybe").check_updates);
     }
@@ -454,11 +454,11 @@ mod tests {
         .save(&file)
         .unwrap();
 
-        let state = AppState::change(&file, |state| state.menu_entry_asked = true).unwrap();
+        let state = AppState::change(&file, |state| state.welcome_seen = true).unwrap();
 
-        assert!(state.menu_entry_asked);
+        assert!(state.welcome_seen);
         let saved = AppState::load(&file);
-        assert!(saved.menu_entry_asked);
+        assert!(saved.welcome_seen);
         assert_eq!(saved.tabs, [PathBuf::from("/work/a")]);
     }
 
