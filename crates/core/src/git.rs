@@ -279,17 +279,18 @@ pub enum LoadEvent {
 
 /// Loads a repository on its own thread. The channel closes when loading is done, and
 /// dropping the receiver cancels the load and stops `git`.
-pub fn spawn_load(repo: PathBuf) -> async_channel::Receiver<LoadEvent> {
+pub fn spawn_load(repo: PathBuf, limit: u32) -> async_channel::Receiver<LoadEvent> {
     let (sender, receiver) = async_channel::bounded(4);
     thread::Builder::new()
         .name("git-load".into())
-        .spawn(move || load(&repo, |event| sender.send_blocking(event).is_ok()))
+        .spawn(move || load(&repo, limit, |event| sender.send_blocking(event).is_ok()))
         .expect("failed to spawn the git loader thread");
     receiver
 }
 
 /// Reads refs and history, passing each step to `emit` until it returns false.
-pub fn load(repo: &Path, mut emit: impl FnMut(LoadEvent) -> bool) {
+/// Reads at most `limit` commits.
+pub fn load(repo: &Path, limit: u32, mut emit: impl FnMut(LoadEvent) -> bool) {
     let refs = match read_refs(repo) {
         Ok(refs) => Arc::new(refs),
         Err(message) => {
@@ -311,7 +312,7 @@ pub fn load(repo: &Path, mut emit: impl FnMut(LoadEvent) -> bool) {
         return;
     }
     let mut working = working.filter(|_| !refs.tips.is_empty());
-    let result = stream_commits(repo, &refs.tips, |commits| {
+    let result = stream_commits(repo, &refs.tips, limit, |commits| {
         let batch = working
             .take()
             .into_iter()
@@ -668,11 +669,12 @@ fn classify_ref(full_name: &str) -> Option<(RefKind, &str)> {
     }
 }
 
-/// Streams commits reachable from `tips`, children before parents, until `sink` returns
-/// false.
+/// Streams up to `limit` commits reachable from `tips`, children before parents, until
+/// `sink` returns false.
 fn stream_commits(
     repo: &Path,
     tips: &[Arc<str>],
+    limit: u32,
     mut sink: impl FnMut(Vec<Commit>) -> bool,
 ) -> Result<(), String> {
     if tips.is_empty() {
@@ -683,6 +685,7 @@ fn stream_commits(
     command.args([
         "log",
         "--stdin",
+        &format!("--max-count={}", limit.min(i32::MAX as u32)),
         "--topo-order",
         "--encoding=UTF-8",
         "--no-color",
@@ -761,9 +764,25 @@ mod tests {
     use std::process::{Command, Stdio};
     use tempfile::TempDir;
 
+    #[test]
+    fn loading_stops_at_the_commit_limit() {
+        let repo = Repo::new();
+        for name in ["a", "b", "c"] {
+            repo.commit(name);
+        }
+        let mut subjects = Vec::new();
+        load(repo.path(), 2, |event| {
+            if let LoadEvent::Batch(batch) = event {
+                subjects.extend(batch.into_iter().map(|e| e.commit.subject));
+            }
+            true
+        });
+        assert_eq!(subjects.len(), 2);
+    }
+
     fn load_all(repo: &Path) -> (Option<Arc<Refs>>, Vec<Entry>, Option<String>) {
         let (mut refs, mut entries, mut error) = (None, Vec::new(), None);
-        load(repo, |event| {
+        load(repo, i32::MAX as u32, |event| {
             match event {
                 LoadEvent::Refs(loaded) => refs = Some(loaded),
                 LoadEvent::Batch(batch) => entries.extend(batch),
@@ -982,7 +1001,7 @@ mod tests {
         assert!(child.wait().unwrap().success());
 
         let mut batches = Vec::new();
-        load(repo.path(), |event| {
+        load(repo.path(), i32::MAX as u32, |event| {
             if let LoadEvent::Batch(batch) = event {
                 batches.push(batch.len());
             }
@@ -991,7 +1010,7 @@ mod tests {
         assert_eq!(batches, [BATCH_SIZE, 10]);
 
         let mut seen = 0;
-        load(repo.path(), |event| {
+        load(repo.path(), i32::MAX as u32, |event| {
             seen += matches!(event, LoadEvent::Batch(_)) as usize;
             seen == 0
         });

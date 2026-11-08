@@ -15,7 +15,10 @@ use gitclient_core::caches::Caches;
 use gitclient_core::config::{self, Kind, Scope, Setting, Sources, Values, Version};
 use gitclient_core::identity::{self, Book, Choice, Identity, Match, Profile, RepoState};
 use gitclient_core::ssh;
-use gitclient_core::state::{self, AppState, CACHE_SIZES_MB, bytes_label, cache_size_label};
+use gitclient_core::state::{
+    self, AppState, CACHE_SIZES_MB, COMMIT_LIMITS, bytes_label, cache_size_label,
+};
+use gitclient_core::text::count;
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::*;
@@ -2017,6 +2020,69 @@ impl Settings {
         );
     }
 
+    fn set_commit_limit(&mut self, limit: u32, cx: &mut Context<Self>) {
+        self.change_cache_setting(
+            |state| state.commit_limit = limit,
+            AppState::commit_limit_saved_message,
+            cx,
+        );
+    }
+
+    /// The "Graph" card: how many commits are loaded from a repository.
+    fn render_graph_group(&self, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let mut limits: Vec<u32> = COMMIT_LIMITS.to_vec();
+        // A limit set by hand, which no chip stands for, stays visible.
+        if !limits.contains(&self.app.commit_limit) {
+            limits.push(self.app.commit_limit);
+            limits.sort_unstable();
+        }
+        let chips = limits.into_iter().map(|limit| {
+            chip(
+                ("commit-limit", limit as usize),
+                &count(limit, "commit"),
+                limit == self.app.commit_limit,
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.set_commit_limit(limit, cx)))
+        });
+        let note = if self.state_file.is_some() {
+            self.app.commit_limit_sentence()
+        } else {
+            "gitclient can't find a folder to keep this in.".to_owned()
+        };
+        let row = div()
+            .v_flex()
+            .px_4()
+            .py_3()
+            .gap_2()
+            .child(
+                div()
+                    .v_flex()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .text_size(TEXT_BODY)
+                            .line_height(px(20.))
+                            .child("Commits to load"),
+                    )
+                    .child(
+                        div()
+                            .text_size(TEXT_SMALL)
+                            .line_height(px(17.))
+                            .text_color(muted)
+                            .child(note),
+                    ),
+            )
+            .children(
+                self.state_file
+                    .is_some()
+                    .then(|| div().flex().flex_wrap().gap_1().children(chips)),
+            )
+            .into_any_element();
+        self.render_group("Graph", vec![row], cx)
+    }
+
     fn clear_cache(&mut self, cx: &mut Context<Self>) {
         self.caches.clear();
         self.feedback = Feedback::Saved(AppState::cache_cleared_message().to_owned());
@@ -2176,6 +2242,7 @@ impl Settings {
                 ],
                 cx,
             ))
+            .child(self.render_graph_group(cx))
             .child(self.render_cache_group(cx))
             .into_any_element()
     }
