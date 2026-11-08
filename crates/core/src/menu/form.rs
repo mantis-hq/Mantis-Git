@@ -21,6 +21,8 @@ pub enum Form {
     Remote { original: Option<String> },
     /// Adds a submodule, or edits the one at the path `original`.
     Submodule { original: Option<String> },
+    /// Picks the remote branch a local branch follows.
+    Upstream { branch: String },
 }
 
 /// One input of a form.
@@ -45,6 +47,11 @@ const REMOTE_FIELDS: &[Field] = &[
         placeholder: "https://example.com/you/repo.git",
     },
 ];
+
+const UPSTREAM_FIELDS: &[Field] = &[Field {
+    label: "Remote branch",
+    placeholder: "origin/main",
+}];
 
 const SUBMODULE_ADD_FIELDS: &[Field] = &[
     Field {
@@ -94,6 +101,7 @@ impl Form {
             Self::Submodule {
                 original: Some(path),
             } => format!("Edit the submodule {path}"),
+            Self::Upstream { branch } => format!("Set the upstream of {branch}"),
         }
     }
 
@@ -104,6 +112,7 @@ impl Form {
             Self::Remote { .. } => REMOTE_FIELDS,
             Self::Submodule { original: None } => SUBMODULE_ADD_FIELDS,
             Self::Submodule { original: Some(_) } => SUBMODULE_EDIT_FIELDS,
+            Self::Upstream { .. } => UPSTREAM_FIELDS,
         }
     }
 
@@ -126,6 +135,15 @@ impl Form {
                     return vec![url, module.path.clone()];
                 }
             }
+            Self::Upstream { branch } => {
+                // The remote branch with the same name is the usual answer.
+                let guess = refs.remotes.iter().find(|r| {
+                    r.name
+                        .split_once('/')
+                        .is_some_and(|(_, name)| name == branch)
+                });
+                return vec![guess.map(|r| r.name.clone()).unwrap_or_default()];
+            }
             _ => {}
         }
         vec![String::new(); self.fields().len()]
@@ -146,6 +164,10 @@ impl Form {
             Self::Submodule {
                 original: Some(path),
             } => format!("Save {path}"),
+            Self::Upstream { .. } => match value(values, 0) {
+                "" => "Set upstream".to_owned(),
+                name => format!("Follow {name}"),
+            },
         }
     }
 
@@ -173,6 +195,9 @@ impl Form {
                     submodule::why_bad_path(path)
                 }
             }
+            Self::Upstream { .. } => value(values, 0)
+                .is_empty()
+                .then_some("Name the remote branch to follow, such as origin/main."),
         };
         problem.map(str::to_owned)
     }
@@ -185,6 +210,7 @@ impl Form {
             Self::Remote { original: Some(_) } => "Saving the remote",
             Self::Submodule { original: None } => "Adding the submodule",
             Self::Submodule { original: Some(_) } => "Saving the submodule",
+            Self::Upstream { .. } => "Setting the upstream",
         }
     }
 
@@ -210,6 +236,7 @@ impl Form {
                 value(values, 1),
                 value(values, 0),
             ),
+            Self::Upstream { branch } => branch::set_upstream(repo, branch, value(values, 0)),
         }
     }
 }
