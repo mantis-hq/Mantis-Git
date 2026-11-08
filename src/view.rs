@@ -51,7 +51,9 @@ actions!(
         CloseMenu,
         ActivateMenu,
         NextField,
-        PreviousField
+        PreviousField,
+        PreviousConflict,
+        NextConflict
     ]
 );
 
@@ -84,6 +86,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("enter", ActivateMenu, context),
         KeyBinding::new("tab", NextField, context),
         KeyBinding::new("shift-tab", PreviousField, context),
+        KeyBinding::new("alt-up", PreviousConflict, context),
+        KeyBinding::new("alt-down", NextConflict, context),
     ]);
 }
 
@@ -726,6 +730,10 @@ impl Render for GraphView {
             .on_action(
                 cx.listener(|this, _: &PreviousField, window, cx| this.step_field(-1, window, cx)),
             )
+            .on_action(
+                cx.listener(|this, _: &PreviousConflict, _, cx| this.go_to_conflict(false, cx)),
+            )
+            .on_action(cx.listener(|this, _: &NextConflict, _, cx| this.go_to_conflict(true, cx)))
             .children(bar)
             .children(notice)
             .child(content)

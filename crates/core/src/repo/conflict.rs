@@ -493,6 +493,20 @@ pub fn picked_lines_label(picked: usize) -> String {
     format!("Use {}", count(picked, "selected line"))
 }
 
+/// The conflict to go to from a point between two, where `at` is how many conflicts come
+/// before that point: the first one after it that still stands in the result, or with
+/// `forward` false the last one before it. It goes round at either end, and skips the
+/// conflicts the result has settled. `None` once none stand.
+pub fn next_standing(standing: &[bool], at: usize, forward: bool) -> Option<usize> {
+    let at = at.min(standing.len());
+    let open = |index: &usize| standing[*index];
+    if forward {
+        (at..standing.len()).chain(0..at).find(open)
+    } else {
+        (0..at).rev().chain((at..standing.len()).rev()).find(open)
+    }
+}
+
 /// A block of conflict markers in a file's text, by byte position. It holds no text of its
 /// own, so finding every block in a large file copies nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -930,6 +944,20 @@ mod tests {
                 other: "m1\n".to_owned()
             }
         );
+    }
+
+    #[test]
+    fn going_between_conflicts_skips_settled_ones_and_goes_round() {
+        let standing = [true, false, true, true];
+        // From between the first and second: the third, since the second is settled.
+        assert_eq!(next_standing(&standing, 1, true), Some(2));
+        assert_eq!(next_standing(&standing, 1, false), Some(0));
+        // Past the last it starts again at the first, and before the first at the last.
+        assert_eq!(next_standing(&standing, 4, true), Some(0));
+        assert_eq!(next_standing(&standing, 0, false), Some(3));
+        assert_eq!(next_standing(&standing, 9, false), Some(3));
+        assert_eq!(next_standing(&[false, false], 0, true), None);
+        assert_eq!(next_standing(&[], 0, false), None);
     }
 
     #[test]

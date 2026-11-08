@@ -68,6 +68,8 @@ pub(super) struct State {
     editor: Option<Entity<TextareaState>>,
     /// The file whose result is in the editor.
     editing: Option<String>,
+    /// The conflict the list last went to with Previous or Next, in the file on show.
+    jumped: Option<usize>,
     /// Set while continuing, so that the check afterwards can tell finished from cancelled.
     continuing: Option<Arc<Progress>>,
     rebase_target: Option<String>,
@@ -88,6 +90,7 @@ impl State {
         self.saving = None;
         self.editing = None;
         self.behind = false;
+        self.jumped = None;
     }
 }
 
