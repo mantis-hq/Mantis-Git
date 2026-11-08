@@ -894,7 +894,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         use super::notice::Confirm;
-        use gitclient_core::menu::Weight;
+        use gitclient_core::menu::command::Weight;
         use std::cell::Cell;
         use std::rc::Rc;
         let (view, mut cx) = open_view(cx);
@@ -943,7 +943,7 @@ mod tests {
     #[gpui_kit::test]
     fn the_keys_reach_a_popup_even_when_focus_was_elsewhere(cx: &mut TestAppContext) {
         use super::notice::Confirm;
-        use gitclient_core::menu::Weight;
+        use gitclient_core::menu::command::Weight;
         use std::cell::Cell;
         use std::rc::Rc;
         let (view, mut cx) = open_view(cx);
@@ -1085,7 +1085,7 @@ mod tests {
             let lines = view.menu.as_ref().unwrap().lines();
             assert!(lines.iter().any(|line| matches!(
                 line.command(),
-                Some(gitclient_core::menu::Command::DeleteMany { refs }) if refs.len() == 2
+                Some(gitclient_core::menu::command::Command::DeleteMany { refs }) if refs.len() == 2
             )));
 
             // A branch outside the picks keeps its own menu.
@@ -1093,7 +1093,7 @@ mod tests {
             let lines = view.menu.as_ref().unwrap().lines();
             assert!(!lines.iter().any(|line| matches!(
                 line.command(),
-                Some(gitclient_core::menu::Command::DeleteMany { .. })
+                Some(gitclient_core::menu::command::Command::DeleteMany { .. })
             )));
         });
     }
@@ -1111,7 +1111,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn ticking_a_file_moves_it_between_the_lists_and_its_menu_follows(cx: &mut TestAppContext) {
-        use gitclient_core::menu::Command;
+        use gitclient_core::menu::command::Command;
         use gitclient_core::testing::Repo;
         use gitclient_core::working::Side;
         let repo = Repo::new();
@@ -1212,7 +1212,7 @@ mod tests {
     fn a_conflict_is_listed_in_the_inspector_resolved_from_its_menu_and_continued(
         cx: &mut TestAppContext,
     ) {
-        use gitclient_core::menu::Command;
+        use gitclient_core::menu::command::Command;
         use gitclient_core::testing::Repo;
         let repo = Repo::new();
         repo.git(&["config", "user.name", "Ada"]);

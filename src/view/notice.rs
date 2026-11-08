@@ -6,7 +6,7 @@
 use super::GraphView;
 use super::parts::TEXT_BODY;
 use crate::theme::tokens;
-use gitclient_core::menu::Weight;
+use gitclient_core::menu::command::Weight;
 use gpui_kit::component::button::*;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
