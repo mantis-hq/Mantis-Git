@@ -370,10 +370,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   42% of the inspector and scrolls past that, and each list keeps at least 110 px.
   A quiet "Stash 2 files" button sits beside the blue one and runs `git stash push --staged`,
   so only what is staged is set aside and unstaged changes stay. A typed summary names the
-  stash. The band says how to bring it back. When the repository has stashes, a "Stashes"
-  label under the form lists the newest three, each with a quiet "Apply", and says how many
-  more the sidebar holds.
-- **Stashes:** the sidebar lists them under "Stashes", each row its number, what it says and
+  stash. The band says how to bring it back. The inspector doesn't list stashes; the sidebar does.
+- **Stashes:** the graph draws each as a commit on the one it was made on, joined to it by a
+  line in its lane's colour, with a dashed hollow dot like the working changes (the index and
+  untracked commits git keeps beside it are not drawn). A plain click on a stash in the
+  sidebar selects its row in the graph, which shows its changes in the inspector. The sidebar
+  lists them under "Stashes", each row its number, what it says and
   the branch it was made on in Overlay 2. They pick like branches: a click picks one,
   `Ctrl`-click adds or removes one, `Shift`-click picks the run from the last. Right-clicking
   opens a menu for every picked stash, or the one under the pointer when it isn't picked:

@@ -18,8 +18,6 @@ use gpui_kit::*;
 use std::path::PathBuf;
 
 const SUBJECT_LIMIT: usize = 72;
-/// How many stashes the form lists before sending the rest to the sidebar.
-const STASHES_SHOWN: usize = 3;
 
 #[derive(Default)]
 pub(in crate::view) struct State {
@@ -324,67 +322,6 @@ impl GraphView {
             .gap_2()
             .child(heading)
             .when(!collapsed, |root| root.child(body))
-            .when(!collapsed && !self.refs.stashes.is_empty(), |root| {
-                root.child(self.render_stash_list(cx))
-            })
-    }
-
-    /// The newest stashes under the form, each with a button that applies it. The sidebar
-    /// holds all of them, and deletes.
-    fn render_stash_list(&self, cx: &mut Context<Self>) -> Div {
-        let theme = cx.theme();
-        let (muted, quiet) = (theme.muted_foreground, theme.secondary_foreground);
-        let total = self.refs.stashes.len();
-        let rows: Vec<_> = self
-            .refs
-            .stashes
-            .iter()
-            .take(STASHES_SHOWN)
-            .enumerate()
-            .map(|(index, subject)| {
-                div()
-                    .h_flex()
-                    .h(px(26.))
-                    .gap_2()
-                    .text_size(TEXT_SMALL)
-                    .text_color(quiet)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .child(stash::title(subject).to_owned()),
-                    )
-                    .child(
-                        Button::new(("apply-stash", index))
-                            .ghost()
-                            .small()
-                            .label("Apply")
-                            .disabled(self.busy.is_some())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.run_command(
-                                    Command::ApplyStashes {
-                                        indexes: vec![index],
-                                    },
-                                    cx,
-                                )
-                            })),
-                    )
-            })
-            .collect();
-        div()
-            .v_flex()
-            .gap_1()
-            .child(section_label(muted).child(format!("Stashes · {total}")))
-            .children(rows)
-            .when(total > STASHES_SHOWN, |list| {
-                list.child(
-                    div()
-                        .text_size(TEXT_CHIP)
-                        .text_color(muted)
-                        .child(format!("{} more in the sidebar", total - STASHES_SHOWN)),
-                )
-            })
     }
 }
 
