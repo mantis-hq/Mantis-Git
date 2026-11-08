@@ -2,6 +2,7 @@
 //! whose ticked lines make up the file's result in an editor, saved with one button.
 
 use super::*;
+use crate::view::notice::After;
 
 impl GraphView {
     /// Opens the resolver on a file at its first conflict, reading its result from the file
@@ -102,13 +103,39 @@ impl GraphView {
         let Some(progress) = self.conflict.progress.clone() else {
             return;
         };
-        self.conflict.saving = Some(path.to_owned());
+        if self.busy.is_some() {
+            return;
+        }
+        self.save_ahead(path, cx);
         let path = path.to_owned();
-        self.run_operation(
+        self.run_operation_then(
             "Resolving",
             move |repo| conflict::resolve_with_side(repo, &progress, &path, side).map(|()| None),
+            After::ConflictSaved,
             cx,
         );
+    }
+
+    /// Counts a file as resolved at once and moves on to the next one, without waiting for
+    /// git. Saving a file whose conflicts are all decided can't leave it in conflict, so
+    /// the screen needn't wait for git to say so; the file is listed with a spinner until it
+    /// does, and comes back, with what was typed in it, if git refuses.
+    fn save_ahead(&mut self, path: &str, cx: &mut Context<Self>) {
+        self.conflict.saving = Some(path.to_owned());
+        if !self.conflict.resolved.iter().any(|saved| saved == path) {
+            self.conflict.resolved.push(path.to_owned());
+        }
+        if self.conflict.open && self.conflict.shown.as_deref() == Some(path) {
+            let next = self.conflict.progress.clone().and_then(|progress| {
+                let files = self.files_to_decide(&progress);
+                files.into_iter().next().map(|file| file.path)
+            });
+            match next {
+                Some(next) => self.show_conflict(&next, cx),
+                None => self.conflict.open = false,
+            }
+        }
+        cx.notify();
     }
 
     /// The lines ticked in one conflict of the file on show.
@@ -380,19 +407,20 @@ impl GraphView {
             self.catch_up_draft(cx);
             self.refresh_open(&path);
         }
-        if self.conflicts_left(&path) > 0 {
+        if self.conflicts_left(&path) > 0 || self.busy.is_some() {
             return;
         }
-        self.conflict.saving = Some(path.clone());
         if self.is_whole_file(&path) {
             let Some(side) = self.conflict.sides.get(&path).copied() else {
                 return;
             };
-            self.run_operation(
+            self.save_ahead(&path, cx);
+            self.run_operation_then(
                 "Saving",
                 move |repo| {
                     conflict::resolve_with_side(repo, &progress, &path, side).map(|()| None)
                 },
+                After::ConflictSaved,
                 cx,
             );
             return;
@@ -400,9 +428,11 @@ impl GraphView {
         let Some(result) = self.conflict.drafts.get(&path).cloned() else {
             return;
         };
-        self.run_operation(
+        self.save_ahead(&path, cx);
+        self.run_operation_then(
             "Saving",
             move |repo| conflict::save_file(repo, &path, &result).map(|()| None),
+            After::ConflictSaved,
             cx,
         );
     }

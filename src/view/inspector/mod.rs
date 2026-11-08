@@ -52,8 +52,36 @@ pub(super) struct State {
     /// window used again, a file staged) waits for the read in progress rather than
     /// starting one git per event.
     reading_working: bool,
-    /// Whether another refresh came in during that read, which then runs once more.
-    read_working_again: bool,
+    /// Set when another refresh came in during that read, which then runs once more, as
+    /// widely as the widest asked for.
+    read_working_again: Option<Scan>,
+    /// The read in progress, as far as it has come.
+    read: WorkingRead,
+    /// Set while git walks the working tree for untracked files, after everything else is
+    /// in. The list shows what it has, and says more may follow.
+    pub(super) scanning_untracked: bool,
+}
+
+/// How much of the working changes a read looks at.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Scan {
+    /// Only the files git tracks. The untracked ones stay as the last read had them, which
+    /// is right when nothing happened that could add or remove one, such as saving a file
+    /// that was in conflict.
+    Tracked,
+    /// Every file, walking the whole tree for the untracked ones, which can take seconds.
+    #[default]
+    Everything,
+}
+
+/// The parts of one read of the working changes, which arrive apart: the tracked files
+/// are quick, and the walk for untracked ones is not.
+#[derive(Default)]
+struct WorkingRead {
+    scan: Scan,
+    tracked: Option<Result<Changes, String>>,
+    /// Stays `None` for a read that doesn't look for them.
+    untracked: Option<Result<Vec<WorkingFile>, String>>,
 }
 
 /// What the working changes row shows: what is staged and what is not, and the same list
@@ -199,59 +227,133 @@ impl GraphView {
     /// they change under the app as files are edited. One read runs at a time: a request
     /// during it makes it run once more when it ends, and selecting a commit stops it.
     pub(super) fn reload_working(&mut self, cx: &mut Context<Self>) {
+        self.reload_working_as(Scan::Everything, cx);
+    }
+
+    /// Reads the uncommitted changes as far as `scan` says. The tracked files go on show
+    /// as soon as they are read, without waiting for the walk for untracked ones.
+    pub(super) fn reload_working_as(&mut self, scan: Scan, cx: &mut Context<Self>) {
         let Some(repo) = self.workdir() else {
             return;
         };
         if self.inspector.reading_working {
-            self.inspector.read_working_again = true;
+            let wider = self
+                .inspector
+                .read_working_again
+                .map_or(scan, |a| a.max(scan));
+            self.inspector.read_working_again = Some(wider);
             return;
         }
+        // With nothing read yet there are no untracked files to keep.
+        let scan = if self.inspector.working.is_none() {
+            Scan::Everything
+        } else {
+            scan
+        };
         self.inspector.reading_working = true;
+        self.inspector.read = WorkingRead {
+            scan,
+            ..WorkingRead::default()
+        };
         let cancel = Cancel::new();
         self.inspector.loading = Some(cancel.clone());
+        if scan == Scan::Everything {
+            let (repo, cancel) = (repo.clone(), cancel.clone());
+            Self::spawn_blocking(
+                move || working::read_untracked(&repo, &cancel),
+                |this, found, cx| {
+                    this.inspector.read.untracked = Some(found);
+                    this.working_read_arrived(cx);
+                },
+                cx,
+            );
+        }
         Self::spawn_blocking(
-            move || working::read(&repo, &cancel),
-            move |this, changes, cx| {
-                this.inspector.reading_working = false;
-                let again = std::mem::take(&mut this.inspector.read_working_again);
-                if !this.working_row_is_selected() {
-                    return;
-                }
-                if again || changes.as_ref().is_err_and(|e| e == ops::CANCELLED) {
-                    // Out of date, or stopped: only the newest read has anything to say.
-                    return this.reload_working(cx);
-                }
-                this.inspector.loading = None;
-                let Ok(changes) = changes else {
-                    this.inspector.working = None;
-                    return cx.notify();
-                };
-                let same = this
-                    .inspector
-                    .working
-                    .as_ref()
-                    .is_some_and(|working| working.changes == changes);
-                if same {
-                    // Nothing in the list moved, so only an open diff may have changed.
-                    if this.diff_is_open() {
-                        this.working_loaded(cx);
-                    }
-                    return;
-                }
-                let details = CommitDetails {
-                    oid: WORKING_ID.into(),
-                    body: String::new(),
-                    files: changes.all().map(WorkingFile::change).collect(),
-                };
-                this.inspector.working = Some(Working {
-                    changes,
-                    details: Arc::new(details),
-                });
-                this.working_loaded(cx);
-                cx.notify();
+            move || working::read_tracked(&repo, &cancel),
+            |this, found, cx| {
+                this.inspector.read.tracked = Some(found);
+                this.working_read_arrived(cx);
             },
             cx,
         );
+    }
+
+    /// Takes in one part of the read. Once the tracked files are in they are shown, and
+    /// once everything is in the read is over.
+    fn working_read_arrived(&mut self, cx: &mut Context<Self>) {
+        let read = &self.inspector.read;
+        let Some(tracked) = &read.tracked else {
+            return;
+        };
+        if read.scan == Scan::Everything && read.untracked.is_none() {
+            let stale = self.inspector.read_working_again.is_some();
+            if let (false, true, Ok(tracked)) = (stale, self.working_row_is_selected(), tracked) {
+                let changes = tracked.clone().with_untracked(self.kept_untracked());
+                self.inspector.scanning_untracked = true;
+                self.show_working(changes, cx);
+                cx.notify();
+            }
+            return;
+        }
+
+        let read = std::mem::take(&mut self.inspector.read);
+        self.inspector.reading_working = false;
+        self.inspector.scanning_untracked = false;
+        let again = self.inspector.read_working_again.take();
+        if !self.working_row_is_selected() {
+            return;
+        }
+        let gone = || Err("git stopped".to_owned());
+        let (tracked, untracked) = (read.tracked.unwrap_or_else(gone), read.untracked);
+        let stopped = |error: &String| error == ops::CANCELLED;
+        let cancelled = tracked.as_ref().is_err_and(stopped)
+            || untracked
+                .as_ref()
+                .is_some_and(|found| found.as_ref().is_err_and(stopped));
+        if again.is_some() || cancelled {
+            // Out of date, or stopped: only the newest read has anything to say.
+            return self.reload_working_as(again.unwrap_or(read.scan), cx);
+        }
+        self.inspector.loading = None;
+        let changes = match (tracked, untracked) {
+            (Err(error), _) | (_, Some(Err(error))) => Err(error),
+            (Ok(tracked), Some(Ok(found))) => Ok(tracked.with_untracked(found)),
+            (Ok(tracked), None) => Ok(tracked.with_untracked(self.kept_untracked())),
+        };
+        match changes {
+            Ok(changes) => self.show_working(changes, cx),
+            Err(_) => self.inspector.working = None,
+        }
+        cx.notify();
+    }
+
+    /// The untracked files of the last read, for a read that doesn't look for them again.
+    fn kept_untracked(&self) -> Vec<WorkingFile> {
+        (self.inspector.working.as_ref())
+            .map_or_else(Vec::new, |working| working.changes.untracked())
+    }
+
+    /// Puts the working changes on show, unless they are what is there already.
+    fn show_working(&mut self, changes: Changes, cx: &mut Context<Self>) {
+        let same = (self.inspector.working.as_ref()).is_some_and(|w| w.changes == changes);
+        if same {
+            // Nothing in the list moved, so only an open diff may have changed.
+            if self.diff_is_open() {
+                self.working_loaded(cx);
+            }
+            return;
+        }
+        let details = CommitDetails {
+            oid: WORKING_ID.into(),
+            body: String::new(),
+            files: changes.all().map(WorkingFile::change).collect(),
+        };
+        self.inspector.working = Some(Working {
+            changes,
+            details: Arc::new(details),
+        });
+        self.working_loaded(cx);
+        cx.notify();
     }
 
     /// Selects the working changes row, if there is one.

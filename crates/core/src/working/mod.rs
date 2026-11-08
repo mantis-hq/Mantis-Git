@@ -96,6 +96,21 @@ pub struct Changes {
 }
 
 impl Changes {
+    /// These changes with `untracked` listed as unstaged, in path order.
+    pub fn with_untracked(mut self, untracked: Vec<WorkingFile>) -> Changes {
+        self.unstaged.extend(untracked);
+        self.unstaged.sort_by(|a, b| a.path.cmp(&b.path));
+        self
+    }
+
+    /// The files git doesn't track yet, which a read of only the tracked ones leaves out.
+    pub fn untracked(&self) -> Vec<WorkingFile> {
+        (self.unstaged.iter())
+            .filter(|file| file.untracked)
+            .cloned()
+            .collect()
+    }
+
     pub fn side(&self, side: Side) -> &[WorkingFile] {
         match side {
             Side::Unstaged => &self.unstaged,
@@ -121,11 +136,23 @@ impl Changes {
 }
 
 /// Reads which files are staged and which are not, with their line counts but not their
-/// text. The three git commands run side by side, and an untracked file is counted here
-/// rather than by running git on each of what may be thousands.
+/// text. Untracked files are read beside them, so this takes as long as
+/// [`read_untracked`]; a caller that can show the rest first reads the two apart.
 ///
 /// A set `cancel` stops it with [`ops::CANCELLED`].
 pub fn read(repo: &Path, cancel: &Cancel) -> Result<Changes, String> {
+    let (tracked, untracked) = std::thread::scope(|scope| {
+        let untracked = scope.spawn(|| read_untracked(repo, cancel));
+        let tracked = read_tracked(repo, cancel);
+        let gone = || Err("git stopped".to_owned());
+        (tracked, untracked.join().unwrap_or_else(|_| gone()))
+    });
+    Ok(tracked?.with_untracked(untracked?))
+}
+
+/// Reads the changes to files git already tracks, staged and not. This is quick however
+/// many files there are, which a walk of the whole tree for untracked ones is not.
+pub fn read_tracked(repo: &Path, cancel: &Cancel) -> Result<Changes, String> {
     let list = |cached: bool| -> Result<Vec<WorkingFile>, String> {
         let mut command = vec!["diff", "--no-renames", "--raw", "--numstat", "-z"];
         if cached {
@@ -142,32 +169,29 @@ pub fn read(repo: &Path, cancel: &Cancel) -> Result<Changes, String> {
             })
             .collect())
     };
-    let (staged, unstaged, untracked) = std::thread::scope(|scope| {
+    let (staged, unstaged) = std::thread::scope(|scope| {
         let staged = scope.spawn(|| list(true));
-        let unstaged = scope.spawn(|| list(false));
-        let untracked = ops::run_cancellable(
-            repo,
-            &["ls-files", "--others", "--exclude-standard", "-z"],
-            cancel,
-        );
+        let unstaged = list(false);
         let gone = || Err("git stopped".to_owned());
-        (
-            staged.join().unwrap_or_else(|_| gone()),
-            unstaged.join().unwrap_or_else(|_| gone()),
-            untracked,
-        )
+        (staged.join().unwrap_or_else(|_| gone()), unstaged)
     });
     let (mut staged, mut unstaged) = (staged?, unstaged?);
-    let untracked = untracked?;
-
-    let paths: Vec<&str> = untracked
-        .split('\0')
-        .filter(|path| !path.is_empty())
-        .collect();
-    unstaged.extend(untracked_files(repo, &paths, cancel)?);
     staged.sort_by(|a, b| a.path.cmp(&b.path));
     unstaged.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(Changes { unstaged, staged })
+}
+
+/// Finds the files git doesn't track yet, each counted as added. Git walks the whole
+/// working tree for this, which takes seconds in a large repository, so it is read apart
+/// from [`read_tracked`]. A file is counted here rather than by running git on each of
+/// what may be thousands.
+pub fn read_untracked(repo: &Path, cancel: &Cancel) -> Result<Vec<WorkingFile>, String> {
+    let args = ["ls-files", "--others", "--exclude-standard", "-z"];
+    let output = ops::run_cancellable(repo, &args, cancel)?;
+    let paths: Vec<&str> = (output.split('\0'))
+        .filter(|path| !path.is_empty())
+        .collect();
+    untracked_files(repo, &paths, cancel)
 }
 
 /// How long after a file was last written what was read of it can be kept: one written
@@ -439,6 +463,29 @@ mod tests {
     fn long(top: &str, bottom: &str) -> String {
         let middle: String = (0..18).map(|n| format!("line {n}\n")).collect();
         format!("{top}\n{middle}{bottom}\n")
+    }
+
+    #[test]
+    fn tracked_and_untracked_files_are_read_apart_and_put_back_together() {
+        let repo = Repo::new();
+        repo.write("kept.txt", "a\n");
+        repo.commit("first");
+        repo.write("kept.txt", "b\n");
+        repo.write("new.txt", "x\ny\n");
+        let cancel = Cancel::new();
+
+        let tracked = read_tracked(repo.path(), &cancel).unwrap();
+        assert_eq!(
+            names(&tracked.unstaged),
+            ["kept.txt"],
+            "no untracked file yet"
+        );
+        let untracked = read_untracked(repo.path(), &cancel).unwrap();
+        assert_eq!(names(&untracked), ["new.txt"]);
+
+        let together = tracked.with_untracked(untracked);
+        assert_eq!(together, read(repo.path()).unwrap());
+        assert_eq!(names(&together.untracked()), ["new.txt"]);
     }
 
     #[test]
