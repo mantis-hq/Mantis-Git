@@ -33,20 +33,26 @@ impl GraphView {
         Self::spawn_blocking(
             move || {
                 let text: Arc<str> = conflict::read_text(&repo, &path)?.into();
-                let view = FileView::new(&progress.pieces(&text));
-                let open = standing_in(&progress, &path, &text);
-                Ok::<_, String>((text, Arc::new(view), open))
+                let view = Arc::new(FileView::new(&progress.pieces(&text)));
+                let check = Check {
+                    progress,
+                    path,
+                    text: text.clone(),
+                    view: Some(view.clone()),
+                    settled: Vec::new(),
+                };
+                Ok::<_, String>((text, view, check.run()))
             },
             move |this, loaded, cx| {
                 match loaded {
-                    Ok((text, view, open)) => {
+                    Ok((text, view, found)) => {
                         this.conflict.views.insert(wanted.clone(), view);
                         if this.conflict.drafts.contains_key(&wanted) {
                             // A result from earlier at this stop wins over the file.
                             this.refresh_open(&wanted);
                         } else {
                             this.conflict.drafts.insert(wanted.clone(), text);
-                            this.conflict.standing.insert(wanted.clone(), open);
+                            this.apply_check(&wanted, found);
                         }
                     }
                     Err(message) => this.notice = Some(Notice::Error(message.into())),
@@ -136,35 +142,39 @@ impl GraphView {
             Pick::Other => decision.other.clone(),
             Pick::Lines => self.picked_lines(ordinal, &decision),
         };
+        let replacement = block.replacement(&draft, &chosen);
         let text: Arc<str> = conflict::replace_block(&draft, block, &chosen).into();
         self.conflict.drafts.insert(path.clone(), text);
-        // The other blocks are untouched, so they stand as they did.
-        let standing = open
-            .iter()
-            .enumerate()
-            .map(|(at, block)| block.is_some() && at != ordinal)
-            .collect();
-        self.conflict.standing.insert(path.clone(), standing);
-        self.conflict.revision += 1;
+        // How long the conflict is in the result now, for lining the result up with the
+        // two versions above it.
+        let count = self.file_decisions(&path).count();
+        let settled = (self.conflict.settled)
+            .entry(path.clone())
+            .or_insert_with(|| vec![None; count]);
+        if let Some(lines) = settled.get_mut(ordinal) {
+            *lines = Some(conflict::lines_of(&replacement).len());
+        }
+        self.refresh_open(&path);
         self.conflict.lines.retain(|(at, ..)| *at != ordinal);
 
         // The editor changes only where the conflict was, so it keeps its place and the
         // pick can be undone there, and a large file isn't loaded into it again.
-        match &self.conflict.editor {
+        let on_show = self.conflict.editing.as_deref() == Some(path.as_str());
+        match self.conflict.editors.get_mut(&path) {
             // The block was found in the draft, which holds what the editor does.
-            Some(editor)
-                if self.conflict.editing.as_deref() == Some(path.as_str())
-                    && editor.read(cx).text().len() == draft.len() =>
-            {
-                let replacement = block.replacement(&draft, &chosen);
+            Some(editor) if on_show && editor.state.read(cx).text().len() == draft.len() => {
                 let range = block.start..block.end;
-                editor.update(cx, |editor, cx| {
-                    editor.set_selected_range(range, cx);
-                    editor.replace(replacement, window, cx);
+                editor.state.update(cx, |state, cx| {
+                    state.set_selected_range(range, cx);
+                    state.replace(replacement, window, cx);
                 });
             }
             // So that the editor reads the new result the next time it is drawn.
-            _ => self.conflict.editing = None,
+            Some(editor) => {
+                editor.loaded = false;
+                self.conflict.editing = None;
+            }
+            None => {}
         }
         cx.notify();
     }
@@ -182,7 +192,6 @@ impl GraphView {
         let Some(view) = self.conflict.views.get(&path).cloned() else {
             return;
         };
-        let whole_file = self.diff.view.whole_file;
         let count = view.conflicts.len();
         let standing: Vec<bool> = match self.conflict.standing.get(&path) {
             Some(standing) => standing.clone(),
@@ -196,17 +205,17 @@ impl GraphView {
                 None => scroll.base_handle.logical_scroll_top().0,
             }
         };
-        let from_last = (self.conflict.jumped)
-            .filter(|&last| last < count && view.header_row(whole_file, last) >= top);
+        let from_last =
+            (self.conflict.jumped).filter(|&last| last < count && view.header_row(last) >= top);
         let at = match from_last {
             Some(last) => last + usize::from(forward),
-            None => view.conflicts_above(whole_file, top, forward),
+            None => view.conflicts_above(top, forward),
         };
         let Some(target) = conflict::next_standing(&standing, at, forward) else {
             return;
         };
         self.conflict.jumped = Some(target);
-        let row = view.header_row(whole_file, target);
+        let row = view.header_row(target);
         self.conflict
             .scroll
             .scroll_to_item(row, ScrollStrategy::Top);
@@ -242,32 +251,53 @@ impl GraphView {
         if self.is_whole_file(&path) {
             return;
         }
-        let editor = match &self.conflict.editor {
-            Some(editor) => editor.clone(),
+        if self.conflict.editing.as_deref() == Some(path.as_str()) {
+            return;
+        }
+        // The file that was on show keeps what was typed into it.
+        self.catch_up_draft(cx);
+        self.conflict.editing = None;
+        match self.conflict.editors.get_mut(&path) {
             None => {
-                let editor = cx.new(|cx| {
+                // Made empty and drawn once, and the result goes in on the next frame: a
+                // large file drawn full in a new editor's first frame takes far longer.
+                let state = cx.new(|cx| {
                     // Wrapping is worked out for every line of the file, which takes most
                     // of a second for a large one and again at every change of width.
                     TextareaState::new(window, cx)
                         .soft_wrap(false)
                         .placeholder("The file as it will be saved.")
                 });
-                let changes = cx.subscribe(&editor, |this, _, event, cx| {
-                    if matches!(event, InputEvent::Change) {
+                let owner = path.clone();
+                let changes = cx.subscribe(&state, move |this, _, event, cx| {
+                    let on_show = this.conflict.editing.as_deref() == Some(owner.as_str());
+                    if on_show && matches!(event, InputEvent::Change) {
                         this.editor_changed(cx);
                     }
                 });
-                self.conflict._editor_changes = Some(changes);
-                self.conflict.editor = Some(editor.clone());
-                editor
+                let scrolled = cx.observe(&state, |this, _, cx| this.result_scrolled(cx));
+                let editor = ResultEditor {
+                    state,
+                    loaded: false,
+                    _changes: changes,
+                    _scrolled: scrolled,
+                };
+                self.conflict.editors.insert(path, editor);
+                // A notify while drawing doesn't ask for another frame, so ask for it.
+                draw_again(cx);
             }
-        };
-        if self.conflict.editing.as_deref() != Some(path.as_str()) {
-            // The file that was in the editor keeps what was typed into it.
-            self.catch_up_draft(cx);
-            self.conflict.editing = None;
-            editor.update(cx, |editor, cx| editor.set_value(draft, window, cx));
-            self.conflict.editing = Some(path);
+            Some(editor) if !editor.loaded => {
+                let state = editor.state.clone();
+                editor.loaded = true;
+                state.update(cx, |state, cx| state.set_value(draft, window, cx));
+                self.conflict.editing = Some(path);
+                self.conflict.synced = None;
+            }
+            // It still holds the result, which nothing else changes while it is away.
+            Some(_) => {
+                self.conflict.editing = Some(path);
+                self.conflict.synced = None;
+            }
         }
     }
 
@@ -392,7 +422,6 @@ impl GraphView {
                         ))
                         .child(step("next-conflict", "Next", "Next conflict (Alt ↓)", true)),
                 )
-                .child(self.render_view_modes(cx))
             })
             .child(
                 Button::new("close-resolver")
@@ -525,7 +554,7 @@ impl GraphView {
         cx: &mut Context<Self>,
     ) -> Div {
         let theme = cx.theme();
-        let (panel, border) = (theme.title_bar, theme.border);
+        let (panel, border, background) = (theme.title_bar, theme.border, theme.background);
         let subtext = tokens(theme.is_dark()).subtext0;
         let draft = self.conflict.drafts.get(path);
         let shown = match self.conflict.views.get(path).cloned() {
@@ -538,17 +567,30 @@ impl GraphView {
             )),
         };
 
-        let editor = match (&self.conflict.editor, draft) {
-            (Some(editor), Some(_)) if self.conflict.editing.as_deref() == Some(path) => div()
+        let result_loading = || {
+            loading("conflict-result-loading", "Reading the file…", 8, cx)
+                .size_full()
+                .bg(background)
+        };
+        let editor = match (self.conflict.editors.get(path), draft) {
+            // An editor is drawn from its first frame, empty until the result goes in, with
+            // the loading rows over it until then.
+            (Some(editor), Some(_)) => {
+                let loaded = self.conflict.editing.as_deref() == Some(path);
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(Textarea::new(&editor.state).h_full())
+                    .when(!loaded, |area| {
+                        area.child(div().absolute().inset_0().child(result_loading()))
+                    })
+            }
+            _ => div()
                 .flex_1()
                 .min_h_0()
-                .child(Textarea::new(editor).h_full()),
-            _ => div().flex_1().min_h_0().overflow_hidden().child(loading(
-                "conflict-result-loading",
-                "Reading the file…",
-                8,
-                cx,
-            )),
+                .overflow_hidden()
+                .child(result_loading()),
         };
 
         div()
@@ -609,8 +651,7 @@ impl GraphView {
             theme.primary,
             lane_color(self.refs.branch_color(&progress.other), is_dark),
         );
-        let whole_file = self.diff.view.whole_file;
-        let len = view.len(whole_file);
+        let len = view.len();
         let first = self.file_decisions(path).next();
         let side = |color: Hsla, branch: &str, why: Option<&str>| {
             div()
@@ -658,16 +699,12 @@ impl GraphView {
 
         let rows_view = view.clone();
         let owner = path.to_owned();
-        let marks = if whole_file {
-            scroll_marks(
-                view.conflicts
-                    .iter()
-                    .map(|&(start, rows)| (start, rows, peach)),
-                view.whole.len(),
-            )
-        } else {
-            Vec::new()
-        };
+        let marks = scroll_marks(
+            view.conflicts
+                .iter()
+                .map(|&(start, rows)| (start, rows, peach)),
+            len,
+        );
         let list = div()
             .relative()
             .flex_1()
@@ -679,11 +716,7 @@ impl GraphView {
                     cx.processor(move |this, rows_in_view: Range<usize>, _, cx| {
                         rows_in_view
                             .filter(|at| *at < len)
-                            .map(|at| {
-                                this.render_conflict_row(
-                                    &rows_view, &owner, whole_file, at, colors, cx,
-                                )
-                            })
+                            .map(|at| this.render_conflict_row(&rows_view, &owner, at, colors, cx))
                             .collect::<Vec<_>>()
                     }),
                 )
@@ -696,12 +729,12 @@ impl GraphView {
         div().v_flex().size_full().child(columns).child(list)
     }
 
-    /// One row of the list, by its place in what is shown.
+    /// One row of the list: a line of both versions, a conflict's header, or a line of
+    /// each side of a conflict.
     fn render_conflict_row(
         &self,
         view: &FileView,
         path: &str,
-        whole_file: bool,
         at: usize,
         colors: (Hsla, Hsla),
         cx: &mut Context<Self>,
@@ -716,16 +749,14 @@ impl GraphView {
             .w_full()
             .text_size(TEXT_SMALL)
             .whitespace_nowrap();
-
-        let index = match view.visible(whole_file, at) {
-            Visible::Gap(skipped) => {
-                return row
-                    .justify_center()
-                    .text_size(TEXT_CHIP)
-                    .text_color(muted)
-                    .child(format!("⋯ {}", count(skipped, "unchanged line")));
-            }
-            Visible::Row(index) => index,
+        let number = |line: Option<u32>| {
+            div()
+                .w(NUMBER_WIDTH)
+                .flex_none()
+                .pr_3()
+                .text_right()
+                .text_color(overlay)
+                .children(line.map(|line| line.to_string()))
         };
         let open_at = |ordinal: usize| {
             let open = self.conflict.standing.get(path);
@@ -734,25 +765,30 @@ impl GraphView {
                 .unwrap_or(true)
         };
 
-        match &view.whole[index] {
-            Row::Context { number, text } => row
-                .child(
+        match &view.rows[at] {
+            // Both versions have it, so it shows in both, each with its own number.
+            Row::Context { mine, other, text } => {
+                let half = |line: u32| {
                     div()
-                        .w(NUMBER_WIDTH)
-                        .flex_none()
-                        .pr_3()
-                        .text_right()
-                        .text_color(overlay)
-                        .child(number.to_string()),
-                )
-                .child(
-                    div()
+                        .h_flex()
                         .flex_1()
                         .min_w_0()
-                        .truncate()
-                        .text_color(subtext)
-                        .child(expand_tabs(text)),
-                ),
+                        .h_full()
+                        .child(number(Some(line)))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .pr_3()
+                                .truncate()
+                                .text_color(subtext)
+                                .child(expand_tabs(text)),
+                        )
+                };
+                row.child(half(*mine))
+                    .child(div().w(px(1.)).h_full().flex_none().bg(border))
+                    .child(half(*other))
+            }
             Row::Header { ordinal, line } => {
                 let ordinal = *ordinal;
                 let open = open_at(ordinal);
@@ -818,7 +854,10 @@ impl GraphView {
                 let ordinal = *ordinal;
                 let open = open_at(ordinal);
                 let half =
-                    |side: Side, text: &Option<Arc<str>>, color: Hsla, cx: &mut Context<Self>| {
+                    |side: Side,
+                     text: &Option<(u32, Arc<str>)>,
+                     color: Hsla,
+                     cx: &mut Context<Self>| {
                         let key = (ordinal, side, *line);
                         let on = open && self.conflict.lines.contains(&key);
                         let id = ordinal * 1_000_000 + line;
@@ -832,13 +871,14 @@ impl GraphView {
                             .flex_1()
                             .min_w_0()
                             .h_full()
-                            .px_3()
+                            .pr_3()
                             .gap_2()
-                            .bg(color.opacity(if on { 0.22 } else { 0.07 }));
+                            .bg(color.opacity(if on { 0.22 } else { 0.07 }))
+                            .child(number(text.as_ref().map(|(line, _)| *line)));
                         match text {
                             // A side with fewer lines leaves the rest of the row empty.
                             None => half,
-                            Some(text) => half
+                            Some((_, text)) => half
                                 .when(open, |half| {
                                     half.cursor_pointer()
                                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -865,23 +905,22 @@ impl GraphView {
     }
 }
 
-/// A conflicted file laid out for a list, built once in the background.
+/// A conflicted file laid out for the list, built once in the background: both versions
+/// of the whole file next to each other, the lines they agree on in both, and each
+/// conflict as a header and then its two sides' lines.
 pub(in crate::view) struct FileView {
-    /// Every line of the file: those both sides agree on, and each conflict as a header and
-    /// then its lines side by side.
-    whole: Vec<Row>,
-    /// What to draw when only the changes are shown: the conflicts with a few lines of
-    /// context around each, and a note for every stretch left out.
-    changes: Vec<Visible>,
-    /// Where each conflict is in `whole`: its first row, and how many rows.
+    rows: Vec<Row>,
+    /// Where each conflict is in `rows`: its header's row, and how many rows with it.
     conflicts: Vec<(usize, usize)>,
-    /// Where each conflict's header is in `changes`.
-    headers_in_changes: Vec<usize>,
+    /// How many lines both sides agree on before each conflict, for lining the result up.
+    agreed: Vec<usize>,
 }
 
 enum Row {
+    /// A line both versions have, with its number in each.
     Context {
-        number: u32,
+        mine: u32,
+        other: u32,
         text: Arc<str>,
     },
     Header {
@@ -892,131 +931,96 @@ enum Row {
     Pair {
         ordinal: usize,
         at: usize,
-        mine: Option<Arc<str>>,
-        other: Option<Arc<str>>,
+        mine: Option<(u32, Arc<str>)>,
+        other: Option<(u32, Arc<str>)>,
     },
-}
-
-enum Visible {
-    Row(usize),
-    /// This many lines left out.
-    Gap(usize),
 }
 
 impl FileView {
     fn new(pieces: &[Piece]) -> Self {
         let line_of = |line: &str| -> Arc<str> { line.trim_end_matches('\n').into() };
-        let mut whole = Vec::new();
+        let mut rows = Vec::new();
         let mut conflicts = Vec::new();
-        let (mut number, mut ordinal) = (1u32, 0usize);
+        let mut agreed = Vec::new();
+        let (mut mine_number, mut other_number) = (1u32, 1u32);
+        let (mut ordinal, mut since) = (0usize, 0usize);
         for piece in pieces {
             match piece {
                 Piece::Text(text) => {
                     for line in conflict::lines_of(text) {
-                        whole.push(Row::Context {
-                            number,
+                        rows.push(Row::Context {
+                            mine: mine_number,
+                            other: other_number,
                             text: line_of(line),
                         });
-                        number += 1;
+                        mine_number += 1;
+                        other_number += 1;
+                        since += 1;
                     }
                 }
                 Piece::Conflict { mine, other } => {
                     let (mine, other) = (conflict::lines_of(mine), conflict::lines_of(other));
-                    let rows = mine.len().max(other.len());
-                    let start = whole.len();
-                    whole.push(Row::Header {
+                    let start = rows.len();
+                    rows.push(Row::Header {
                         ordinal,
-                        line: number,
+                        line: mine_number,
                     });
-                    for at in 0..rows {
-                        whole.push(Row::Pair {
+                    for at in 0..mine.len().max(other.len()) {
+                        let side = |lines: &[&str], first: u32| {
+                            let line = lines.get(at)?;
+                            Some((first + at as u32, line_of(line)))
+                        };
+                        rows.push(Row::Pair {
                             ordinal,
                             at,
-                            mine: mine.get(at).map(|line| line_of(line)),
-                            other: other.get(at).map(|line| line_of(line)),
+                            mine: side(&mine, mine_number),
+                            other: side(&other, other_number),
                         });
                     }
-                    conflicts.push((start, whole.len() - start));
-                    number += rows as u32;
-                    ordinal += 1;
+                    conflicts.push((start, rows.len() - start));
+                    agreed.push(since);
+                    mine_number += mine.len() as u32;
+                    other_number += other.len() as u32;
+                    (ordinal, since) = (ordinal + 1, 0);
                 }
             }
-        }
-
-        let mut keep = vec![false; whole.len()];
-        for &(start, rows) in &conflicts {
-            let end = start + rows;
-            let around =
-                start.saturating_sub(CONTEXT_LINES)..(end + CONTEXT_LINES).min(whole.len());
-            keep[around].fill(true);
-        }
-        let mut changes = Vec::new();
-        let mut headers_in_changes = Vec::with_capacity(conflicts.len());
-        let mut skipped = 0;
-        for (index, keep) in keep.into_iter().enumerate() {
-            if keep {
-                if skipped > 0 {
-                    changes.push(Visible::Gap(skipped));
-                    skipped = 0;
-                }
-                if matches!(whole[index], Row::Header { .. }) {
-                    headers_in_changes.push(changes.len());
-                }
-                changes.push(Visible::Row(index));
-            } else {
-                skipped += 1;
-            }
-        }
-        if skipped > 0 {
-            changes.push(Visible::Gap(skipped));
         }
         Self {
-            whole,
-            changes,
+            rows,
             conflicts,
-            headers_in_changes,
+            agreed,
         }
     }
 
-    /// The row of a conflict's header in what is shown.
-    fn header_row(&self, whole_file: bool, ordinal: usize) -> usize {
-        if whole_file {
-            self.conflicts[ordinal].0
-        } else {
-            self.headers_in_changes[ordinal]
-        }
+    /// The row of a conflict's header.
+    fn header_row(&self, ordinal: usize) -> usize {
+        self.conflicts[ordinal].0
     }
 
-    /// How many conflicts have their header above `row` in what is shown, or at it too when
-    /// `at_too`.
-    fn conflicts_above(&self, whole_file: bool, row: usize, at_too: bool) -> usize {
+    /// How many conflicts have their header above `row`, or at it too when `at_too`.
+    fn conflicts_above(&self, row: usize, at_too: bool) -> usize {
         let above = |header: usize| header < row || (at_too && header == row);
-        if whole_file {
-            self.conflicts.partition_point(|&(start, _)| above(start))
-        } else {
-            self.headers_in_changes
-                .partition_point(|&header| above(header))
-        }
+        self.conflicts.partition_point(|&(start, _)| above(start))
     }
 
-    /// How many rows there are to draw.
-    fn len(&self, whole_file: bool) -> usize {
-        if whole_file {
-            self.whole.len()
-        } else {
-            self.changes.len()
-        }
+    fn len(&self) -> usize {
+        self.rows.len()
     }
 
-    fn visible(&self, whole_file: bool, at: usize) -> Visible {
-        if whole_file {
-            Visible::Row(at)
-        } else {
-            match self.changes[at] {
-                Visible::Row(index) => Visible::Row(index),
-                Visible::Gap(skipped) => Visible::Gap(skipped),
-            }
+    /// How many lines both sides agree on before each conflict.
+    pub(super) fn agreed(&self) -> &[usize] {
+        &self.agreed
+    }
+
+    /// Pairs of places that match in the list and in the result, as rows and lines: the
+    /// start and end of each conflict. Between them, lines match one to one.
+    pub(super) fn anchors(&self, places: &[Range<usize>]) -> Vec<(f32, f32)> {
+        let mut anchors = vec![(0., 0.)];
+        for (&(start, rows), place) in self.conflicts.iter().zip(places) {
+            anchors.push((start as f32, place.start as f32));
+            anchors.push(((start + rows) as f32, place.end as f32));
         }
+        anchors
     }
 }
 

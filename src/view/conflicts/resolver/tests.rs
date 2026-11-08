@@ -1,4 +1,4 @@
-use super::{FileView, Row, Visible};
+use super::{FileView, Row};
 use gitclient_core::repo::conflict::Piece;
 
 fn lines(prefix: &str, count: usize) -> String {
@@ -6,7 +6,7 @@ fn lines(prefix: &str, count: usize) -> String {
 }
 
 #[test]
-fn a_file_is_laid_out_with_context_around_each_conflict_and_gaps_between() {
+fn both_versions_of_the_whole_file_are_laid_out_side_by_side() {
     let pieces = [
         Piece::Text(lines("above", 20)),
         Piece::Conflict {
@@ -18,57 +18,39 @@ fn a_file_is_laid_out_with_context_around_each_conflict_and_gaps_between() {
     let view = FileView::new(&pieces);
 
     // Every line of the file, and the conflict as a header and three rows of lines.
-    assert_eq!(view.whole.len(), 20 + 1 + 3 + 20);
+    assert_eq!(view.len(), 20 + 1 + 3 + 20);
     assert_eq!(view.conflicts, [(20, 4)]);
+    assert_eq!(view.agreed, [20]);
     assert!(matches!(
-        view.whole[20],
+        view.rows[20],
         Row::Header {
             ordinal: 0,
             line: 21
         }
     ));
-    // The side with fewer lines runs out before the other.
+    // Inside the conflict each side is numbered in its own version of the file, and the
+    // side with fewer lines runs out before the other.
     assert!(matches!(
-        &view.whole[23],
+        &view.rows[23],
         Row::Pair {
             mine: None,
-            other: Some(_),
+            other: Some((23, _)),
             ..
         }
     ));
-
-    // Only the changes: three lines of context each way and a note for what was left out.
-    assert_eq!(view.len(true), 44);
-    assert_eq!(view.len(false), 1 + 3 + 4 + 3 + 1);
-    assert!(matches!(view.changes[0], Visible::Gap(17)));
+    // Below it, the line both versions have shows in both, at its number in each.
     assert!(matches!(
-        view.changes[view.changes.len() - 1],
-        Visible::Gap(17)
+        &view.rows[24],
+        Row::Context {
+            mine: 23,
+            other: 24,
+            ..
+        }
     ));
-    assert!(matches!(view.visible(false, 1), Visible::Row(17)));
-    assert!(matches!(view.visible(true, 5), Visible::Row(5)));
 }
 
 #[test]
-fn a_conflict_near_the_edges_has_no_gap_where_nothing_was_left_out() {
-    let pieces = [
-        Piece::Conflict {
-            mine: "a\n".to_owned(),
-            other: "b\n".to_owned(),
-        },
-        Piece::Text(lines("below", 2)),
-    ];
-    let view = FileView::new(&pieces);
-    assert!(
-        view.changes
-            .iter()
-            .all(|row| matches!(row, Visible::Row(_)))
-    );
-    assert_eq!(view.len(false), view.len(true));
-}
-
-#[test]
-fn each_conflict_header_is_found_in_both_ways_of_showing_the_file() {
+fn each_conflict_header_is_found_by_its_row() {
     let conflict = || Piece::Conflict {
         mine: "a\n".to_owned(),
         other: "b\n".to_owned(),
@@ -80,15 +62,29 @@ fn each_conflict_header_is_found_in_both_ways_of_showing_the_file() {
         conflict(),
     ];
     let view = FileView::new(&pieces);
-    assert_eq!(view.header_row(true, 0), 10);
-    assert_eq!(view.header_row(true, 1), 22);
-    // Changes: a gap, three lines, the first; three, a gap, three, the second.
-    assert_eq!(view.header_row(false, 0), 4);
-    assert_eq!(view.header_row(false, 1), 13);
-    assert!(matches!(view.changes[13], Visible::Row(22)));
+    assert_eq!(view.header_row(0), 10);
+    assert_eq!(view.header_row(1), 22);
+    assert_eq!(view.agreed, [10, 10]);
 
     // Counting from a row in view, with the header at that row counted or not.
-    assert_eq!(view.conflicts_above(false, 4, false), 0);
-    assert_eq!(view.conflicts_above(false, 4, true), 1);
-    assert_eq!(view.conflicts_above(true, 30, false), 2);
+    assert_eq!(view.conflicts_above(10, false), 0);
+    assert_eq!(view.conflicts_above(10, true), 1);
+    assert_eq!(view.conflicts_above(30, false), 2);
+}
+
+#[test]
+fn the_list_and_the_result_are_lined_up_at_each_conflicts_edges() {
+    let pieces = [
+        Piece::Text(lines("above", 10)),
+        Piece::Conflict {
+            mine: lines("mine", 2),
+            other: lines("other", 2),
+        },
+        Piece::Text(lines("below", 10)),
+    ];
+    let view = FileView::new(&pieces);
+    // Three rows in the list; settled with one line in the result.
+    let settled_in_one_line = vec![10..11];
+    let anchors = view.anchors(&settled_in_one_line);
+    assert_eq!(anchors, [(0., 0.), (10., 10.), (13., 11.)]);
 }

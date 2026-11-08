@@ -373,25 +373,27 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   commit form wait while it is paused.
   Clicking a file opens the resolver over the graph, as a diff does, and `Esc` or "Close"
   brings the graph back. It is one file at a time, in three parts that share the height:
-  - **Conflicts**, shown in the context of the file, as a list of rows that draws only
-    those in view, so a file of any size costs the same. A bar over it names the two
-    branches. The lines both sides agree on are plain rows with their line numbers; each
-    conflict is a header row, "Conflict 2 of 3 · line 40" with "Use feat/x", "Use main" and,
-    once lines are ticked, "Use 3 selected lines" (the ticked lines of the first side, then
-    the second's), and under it the two sides' lines next to each other, each with a tick box
-    and a tint in its branch's colour. A conflict already settled in the result dims, says so
-    and loses its buttons. The branches are named, never "mine" or "theirs", in line with
-    principle 5. The header has the same "Changes" and "Whole file" chips as a diff, and they
-    are the same setting: "Changes" shows each conflict with three lines of context around it
-    and "⋯ 17 unchanged lines" for what was left out, "Whole file" shows every line and marks
-    each conflict beside the scrollbar in Peach. Before the chips, quiet "Previous" and "Next"
+  - **Both versions**, the whole file as each branch has it, next to each other, as a list of
+    rows that draws only those in view, so a file of any size costs the same. There is no
+    view of only the changes: resolving needs the whole file. A bar over it names the two
+    branches, each over its own column. A line both versions have shows in both columns,
+    each with its line number in that version. Each conflict is a header row across both,
+    "Conflict 2 of 3 · line 40" with "Use feat/x", "Use main" and, once lines are ticked,
+    "Use 3 selected lines" (the ticked lines of the first side, then the second's), and
+    under it each side's lines in its own column, with their line numbers, a tick box and a
+    tint in the branch's colour; the side with fewer lines leaves the rest of its column
+    empty. A conflict already settled in the result dims, says so and loses its buttons.
+    Each conflict is marked beside the scrollbar in Peach. The branches are named, never
+    "mine" or "theirs", in line with principle 5. In the header, quiet "Previous" and "Next"
     buttons (`Alt ↑`, `Alt ↓`) bring the next conflict still left in the result to the top of
     the list, going on from the last one gone to, or from the top of the view once it has been
     scrolled past. They skip settled conflicts, go round at either end, and are dimmed when
     none is left.
   - **Result**, the whole file in an editor, which starts as the file as it stands with its
     conflict markers. Its lines don't wrap, as in a diff, so a file of any length opens
-    quickly. The cards edit it, and so can the user, by hand, anywhere. A conflict
+    quickly. The versions and the result scroll together: scrolling either brings the other
+    to the same place in the file, line for line, with each conflict lined up with where it
+    is in the result. The cards edit it, and so can the user, by hand, anywhere. A conflict
     counts as settled when its markers are gone from the result, however that happened. The
     top bar says how many are left ("2 conflicts left in the result", Peach) or "Ready to
     save" (Green).
