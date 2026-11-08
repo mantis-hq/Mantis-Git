@@ -197,10 +197,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
   under the bar, so history stays in view. `Ctrl \`` shows and hides it, and
   `Ctrl Shift \`` opens a terminal. Closed, the bar still says which command is running
-  and for how long, so a slow command is never a silent wait. Whether the dock is open, how
-  many terminals it has and which of its tabs is in front are saved with the open tabs (see
-  "App") and come back on launch, the terminals as fresh shells in the front repository's
-  folder. The keyboard starts with the repository, not a terminal.
+  and for how long, so a slow command is never a silent wait. Terminals belong to the
+  repository tab they were opened in, and start in its folder. The dock shows the front
+  tab's terminals; switching tabs brings that tab's own back, and with the dock open a tab
+  that has none gets a clean one at once. Closing a tab ends its shells. Whether the dock is
+  open, how many terminals the front tab has and which of its tabs is in front are saved with
+  the open tabs (see "App") and come back on launch, the terminals as fresh shells in the
+  front repository's folder. The keyboard starts with the repository, not a terminal.
 - Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide. Rows have no
   column headings or hash: the refs column, the graph, the subject, then author and a short time
   ("12m", "3h", "Tue", "Oct 30"). The full hash belongs to the inspector.
@@ -264,6 +267,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   that can't be used stays and says why. Checking out the recorded commit in a submodule
   that is on another one asks first, and gives the `git -C <path> checkout <hash>` that
   goes back. The app never forces anything.
+- Pull and push without checking out: the menu of a local branch that isn't checked out and
+  follows a remote branch has "Pull origin/x into x" and "Push 2 commits to origin/x". Pull
+  asks the remote and only fast-forwards, so nothing is merged and the working tree stays
+  as it is; it is always offered, since the counts come from the last fetch. Push is
+  offered when the branch is ahead, else it stays and says why. The band says how to undo
+  each. A branch that follows nothing gets neither line.
 - Upstream: a local branch's menu has "Set upstream of <name>", which opens a form popup
   with the remote and the branch on one row, as `origin / main` reads: a "Remote" dropdown
   that starts on the remote holding a branch of the same name (or the first), a `/`, and a
