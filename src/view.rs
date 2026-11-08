@@ -12,7 +12,6 @@ mod parts;
 mod rows;
 mod settings;
 mod sidebar;
-mod terminal;
 mod workspace;
 
 pub use settings::{OpenSettings, Settings, open as open_settings, should_quit};

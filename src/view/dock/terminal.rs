@@ -1,7 +1,7 @@
 //! One terminal in the dock: a shell in the repository's folder, drawn as text on a grid.
 
-use super::parts::TEXT_BODY;
 use crate::theme::{ansi_color, rgb_color};
+use crate::view::parts::TEXT_BODY;
 use gitclient_core::terminal::{Color, Cursor, Key, Run, Size, Snapshot, Terminal};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
@@ -10,9 +10,9 @@ use std::ops::Range;
 use std::path::Path;
 use std::time::Duration;
 
-pub(super) const FONT_SIZE: f32 = 12.;
+pub(in crate::view) const FONT_SIZE: f32 = 12.;
 /// The design's line height for code.
-pub(super) const ROW_HEIGHT: f32 = 22.;
+pub(in crate::view) const ROW_HEIGHT: f32 = 22.;
 const PADDING_X: f32 = 12.;
 const PADDING_Y: f32 = 4.;
 /// Rows and columns until the first layout says how many fit.
@@ -20,7 +20,7 @@ const INITIAL_SIZE: Size = Size { rows: 12, cols: 80 };
 /// Screen changes arrive in bursts, and one redraw covers a burst.
 const REDRAW_EVERY: Duration = Duration::from_millis(16);
 
-pub(super) const KEY_CONTEXT: &str = "Terminal";
+pub(in crate::view) const KEY_CONTEXT: &str = "Terminal";
 
 pub struct TerminalPane {
     terminal: Result<Terminal, String>,
