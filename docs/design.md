@@ -264,6 +264,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   that can't be used stays and says why. Checking out the recorded commit in a submodule
   that is on another one asks first, and gives the `git -C <path> checkout <hash>` that
   goes back. The app never forces anything.
+- Pull and push without checking out: the menu of a local branch that isn't checked out and
+  follows a remote branch has "Pull origin/x into x" and "Push 2 commits to origin/x". Pull
+  asks the remote and only fast-forwards, so nothing is merged and the working tree stays
+  as it is; it is always offered, since the counts come from the last fetch. Push is
+  offered when the branch is ahead, else it stays and says why. The band says how to undo
+  each. A branch that follows nothing gets neither line.
 - Upstream: a local branch's menu has "Set upstream of <name>", which opens a form popup
   with the remote and the branch on one row, as `origin / main` reads: a "Remote" dropdown
   that starts on the remote holding a branch of the same name (or the first), a `/`, and a

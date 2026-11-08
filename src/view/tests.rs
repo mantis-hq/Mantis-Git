@@ -312,6 +312,7 @@ fn branches(names: &[&str]) -> Arc<gitclient_core::history::refs::Refs> {
             is_head: false,
             ahead_behind: None,
             upstream: None,
+            upstream_name: None,
         })
         .collect();
     Arc::new(refs)
