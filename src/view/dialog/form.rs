@@ -6,15 +6,49 @@ use super::{Dialog, Frame};
 use crate::theme::tokens;
 use crate::view::GraphView;
 use crate::view::parts::section_label;
+use gitclient_core::history::refs::Refs;
 use gitclient_core::menu::form::Form;
 use gpui_kit::component::IndexPath;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
+use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-type PickState = SelectState<SearchableVec<String>>;
+/// One choice of a dropdown: what it holds, and what it says.
+#[derive(Clone)]
+struct Choice {
+    value: String,
+    label: SharedString,
+}
+
+impl SelectItem for Choice {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        self.label.clone()
+    }
+
+    fn value(&self) -> &String {
+        &self.value
+    }
+}
+
+type Choices = SearchableVec<Choice>;
+type PickState = SelectState<Choices>;
+
+/// The choices `form` offers for field `index`, each named as the form words it.
+fn choices(form: &Form, index: usize, values: &[String], refs: &Refs) -> Choices {
+    SearchableVec::new(
+        form.options(index, values, refs)
+            .into_iter()
+            .map(|value| Choice {
+                label: form.option_label(&value, values).into(),
+                value,
+            })
+            .collect::<Vec<_>>(),
+    )
+}
 
 /// What one field of a form is drawn as: a typed input, or a dropdown with a search box
 /// for a field that only takes what the repository already has.
@@ -198,23 +232,18 @@ impl GraphView {
             // from anywhere else in the window, so a form answers to the same keys as a
             // question.
             if form.is_pick(index) {
-                let options = form.options(index, &initial, &self.refs);
-                let at = options.iter().position(|option| option == value);
+                let options = choices(&form, index, &initial, &self.refs);
+                let at = form
+                    .options(index, &initial, &self.refs)
+                    .iter()
+                    .position(|option| option == value);
                 let select = cx.new(|cx| {
-                    SelectState::new(
-                        SearchableVec::new(options),
-                        at.map(IndexPath::new),
-                        window,
-                        cx,
-                    )
-                    .searchable(true)
+                    SelectState::new(options, at.map(IndexPath::new), window, cx).searchable(true)
                 });
                 events.push(cx.subscribe_in(
                     &select,
                     window,
-                    |this, _, _: &SelectEvent<SearchableVec<String>>, window, cx| {
-                        this.pick_changed(window, cx)
-                    },
+                    |this, _, _: &SelectEvent<Choices>, window, cx| this.pick_changed(window, cx),
                 ));
                 inputs.push(Control::Pick(select));
             } else {
@@ -271,10 +300,8 @@ impl GraphView {
         };
         for (index, control) in dialog.inputs.iter().enumerate() {
             if let Control::Pick(select) = control {
-                let options = dialog.form.options(index, &dialog.values(cx), &self.refs);
-                select.update(cx, |select, cx| {
-                    select.set_items(SearchableVec::new(options), window, cx)
-                });
+                let options = choices(&dialog.form, index, &dialog.values(cx), &self.refs);
+                select.update(cx, |select, cx| select.set_items(options, window, cx));
             }
         }
         self.form_changed(cx);
