@@ -23,6 +23,7 @@ pub use workspace::Workspace;
 use gitclient_core::caches::{self, Caches};
 use gitclient_core::git::{self, Entry, LoadEvent, Refs};
 use gitclient_core::selection::Selection;
+use gitclient_core::state::{self, AppState};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
@@ -272,7 +273,8 @@ impl GraphView {
         self.status = Status::Loading;
         self.pending_refs = None;
         self.refresh_fingerprint(cx);
-        let events = git::spawn_load(repo);
+        let limit = self.commit_limit();
+        let events = git::spawn_load(repo, limit);
         self.load_task = Some(cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 if this.update(cx, |this, cx| this.apply(event, cx)).is_err() {

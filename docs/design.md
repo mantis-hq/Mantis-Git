@@ -146,6 +146,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     `gitclient`), and empty tabs are left out. A path on the command line wins over the
     remembered tabs, and a folder that is gone is skipped. If there is no config folder the
     page says so and the tick box is not drawn.
+    Under "Graph", a row of chips picks how many commits the graph loads from a repository
+    (100, 500 by default, 1000, 5000, 20000), kept as `commit_limit` in the same file. The
+    newest commits by history order come first, and a change applies the next time a
+    repository loads.
     Under "Cache", a tick box "Keep a cache on disk" (on by default) says that what git
     reports about commits and their file diffs is kept between runs, so a commit seen before
     opens at once. When it is on, a row of chips picks the size limit (64 MB, 256 MB by
