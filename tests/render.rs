@@ -348,6 +348,7 @@ mod render {
                 },
             ),
             ("form-remote", Form::Remote { original: None }),
+            ("form-submodule", Form::Submodule { original: None }),
         ];
         for (name, form) in forms {
             cx.update_window(handle, |_, _, cx| {
@@ -362,6 +363,39 @@ mod render {
             let y = frame.height() / 2;
             assert_eq!(*frame.get_pixel(x, y), mantle, "{name}: the card is drawn");
         }
+    }
+
+    /// The sidebar, open, with the submodules pinned to its foot under a border, though
+    /// the fixture has none.
+    fn assert_sidebar_pins_submodules() {
+        let repo = fixture();
+        let mut cx = app(ThemeMode::Dark);
+        let (handle, view) = open(&mut cx, repo.path());
+        cx.update_window(handle, |_, _, cx| {
+            view.update(cx, |view, cx| {
+                if !view.sidebar_is_open() {
+                    view.toggle_sidebar(cx);
+                }
+            });
+        })
+        .unwrap();
+        let frame = capture(&mut cx, handle, "sidebar");
+        // Down the sidebar's middle: the pinned section's top border is a Surface 0 line
+        // that starts under the panel's Mantle. It is more than one pixel on a scaled
+        // display, so only its top edge is looked for.
+        let scale = frame.width() as f32 / 1200.;
+        let x = (150. * scale) as u32;
+        let surface0 = image::Rgba([0x31, 0x32, 0x44, 0xff]);
+        let mantle = image::Rgba([0x18, 0x18, 0x25, 0xff]);
+        let lines: Vec<u32> = (1..frame.height())
+            .filter(|&y| *frame.get_pixel(x, y) == surface0 && *frame.get_pixel(x, y - 1) == mantle)
+            .collect();
+        assert!(
+            lines
+                .iter()
+                .any(|&y| y as f32 > frame.height() as f32 * 0.6),
+            "a border low in the sidebar sets off the submodules: {lines:?}"
+        );
     }
 
     /// The dock over a loaded repository: the log with the commands that loaded it, then a
@@ -562,6 +596,7 @@ mod render {
         assert_draws_lanes(ThemeMode::Light, "graph-light");
         assert_dock_shows_the_log_and_a_terminal();
         assert_forms_draw();
+        assert_sidebar_pins_submodules();
         println!("render: passed (real offscreen renderer)");
     }
 }

@@ -1,11 +1,11 @@
 //! The small forms that ask for a few words before something is made: a new branch's
-//! name, or a remote's name and address. The interface draws every form the same way, as
+//! name, a remote's name and address, or a submodule's address and folder. The interface draws every form the same way, as
 //! a popup with one input per field, and asks here what it says, what its button is
 //! called, what is wrong with what was typed, and what to run.
 
 use super::command::Weight;
 use crate::history::refs::Refs;
-use crate::repo::{branch, remote};
+use crate::repo::{branch, remote, submodule};
 use std::path::Path;
 
 /// A form, and what it applies to.
@@ -19,6 +19,8 @@ pub enum Form {
     },
     /// Adds a remote, or edits the one called `original`.
     Remote { original: Option<String> },
+    /// Adds a submodule, or edits the one at the path `original`.
+    Submodule { original: Option<String> },
 }
 
 /// One input of a form.
@@ -44,6 +46,28 @@ const REMOTE_FIELDS: &[Field] = &[
     },
 ];
 
+const SUBMODULE_ADD_FIELDS: &[Field] = &[
+    Field {
+        label: "Address",
+        placeholder: "https://example.com/you/lib.git",
+    },
+    Field {
+        label: "Folder",
+        placeholder: "Named after the address when left empty",
+    },
+];
+
+const SUBMODULE_EDIT_FIELDS: &[Field] = &[
+    Field {
+        label: "Address",
+        placeholder: "https://example.com/you/lib.git",
+    },
+    Field {
+        label: "Folder",
+        placeholder: "vendor/lib",
+    },
+];
+
 /// The trimmed value of field `index`, or nothing when there is no such field.
 fn value(values: &[String], index: usize) -> &str {
     values.get(index).map_or("", |value| value.trim())
@@ -66,6 +90,10 @@ impl Form {
             Self::Remote {
                 original: Some(name),
             } => format!("Edit {name}"),
+            Self::Submodule { original: None } => "Add a submodule".to_owned(),
+            Self::Submodule {
+                original: Some(path),
+            } => format!("Edit the submodule {path}"),
         }
     }
 
@@ -74,17 +102,31 @@ impl Form {
         match self {
             Self::NewBranch { .. } => BRANCH_FIELDS,
             Self::Remote { .. } => REMOTE_FIELDS,
+            Self::Submodule { original: None } => SUBMODULE_ADD_FIELDS,
+            Self::Submodule { original: Some(_) } => SUBMODULE_EDIT_FIELDS,
         }
     }
 
-    /// What the inputs hold when the form opens: an edited remote starts from itself.
+    /// What the inputs hold when the form opens: an edited remote or submodule starts
+    /// from itself.
     pub fn initial_values(&self, refs: &Refs) -> Vec<String> {
-        if let Self::Remote {
-            original: Some(name),
-        } = self
-            && let Some(remote) = refs.remote_configs.iter().find(|r| &r.name == name)
-        {
-            return vec![remote.name.clone(), remote.url.clone()];
+        match self {
+            Self::Remote {
+                original: Some(name),
+            } => {
+                if let Some(remote) = refs.remote_configs.iter().find(|r| &r.name == name) {
+                    return vec![remote.name.clone(), remote.url.clone()];
+                }
+            }
+            Self::Submodule {
+                original: Some(path),
+            } => {
+                if let Some(module) = refs.submodules.iter().find(|m| &m.path == path) {
+                    let url = module.url.clone().unwrap_or_default();
+                    return vec![url, module.path.clone()];
+                }
+            }
+            _ => {}
         }
         vec![String::new(); self.fields().len()]
     }
@@ -100,6 +142,10 @@ impl Form {
             Self::Remote {
                 original: Some(name),
             } => format!("Save {name}"),
+            Self::Submodule { original: None } => "Add submodule".to_owned(),
+            Self::Submodule {
+                original: Some(path),
+            } => format!("Save {path}"),
         }
     }
 
@@ -117,6 +163,16 @@ impl Form {
             Self::Remote { .. } => remote::why_bad_name(value(values, 0)).or(value(values, 1)
                 .is_empty()
                 .then_some("Give the remote an address to fetch from.")),
+            Self::Submodule { original } => {
+                let path = value(values, 1);
+                if value(values, 0).is_empty() {
+                    Some("Give the submodule an address to clone from.")
+                } else if original.is_some() && path.is_empty() {
+                    Some("Give the submodule a folder.")
+                } else {
+                    submodule::why_bad_path(path)
+                }
+            }
         };
         problem.map(str::to_owned)
     }
@@ -127,6 +183,8 @@ impl Form {
             Self::NewBranch { .. } => "Creating a branch",
             Self::Remote { original: None } => "Adding the remote",
             Self::Remote { original: Some(_) } => "Saving the remote",
+            Self::Submodule { original: None } => "Adding the submodule",
+            Self::Submodule { original: Some(_) } => "Saving the submodule",
         }
     }
 
@@ -145,6 +203,12 @@ impl Form {
                 original.as_deref(),
                 value(values, 0),
                 value(values, 1),
+            ),
+            Self::Submodule { original } => submodule::save(
+                repo,
+                original.as_deref(),
+                value(values, 1),
+                value(values, 0),
             ),
         }
     }
@@ -223,6 +287,63 @@ mod tests {
             edit.initial_values(&refs),
             values(&["origin", "git@host:a.git"]),
             "an edit starts from the remote as it is"
+        );
+    }
+
+    #[test]
+    fn a_submodule_form_adds_or_edits_and_turns_down_folders_outside() {
+        let add = Form::Submodule { original: None };
+        assert_eq!(
+            (add.title(), add.action(&[])),
+            ("Add a submodule".into(), "Add submodule".into())
+        );
+        assert_eq!(add.fields()[0].label, "Address", "the cursor starts there");
+        assert_eq!(add.initial_values(&Refs::default()), values(&["", ""]));
+        assert!(
+            add.problem(&values(&[" ", "lib"]))
+                .unwrap()
+                .contains("address")
+        );
+        assert!(
+            add.problem(&values(&["u", "../lib"]))
+                .unwrap()
+                .contains("inside")
+        );
+        assert_eq!(
+            add.problem(&values(&["u", ""])),
+            None,
+            "git names the folder"
+        );
+
+        let edit = Form::Submodule {
+            original: Some("vendor/lib".into()),
+        };
+        assert_eq!(
+            (edit.title(), edit.action(&[])),
+            (
+                "Edit the submodule vendor/lib".into(),
+                "Save vendor/lib".into()
+            )
+        );
+        assert!(
+            edit.problem(&values(&["u", " "]))
+                .unwrap()
+                .contains("folder")
+        );
+        let mut refs = Refs::default();
+        refs.submodules = vec![crate::repo::submodule::Submodule {
+            name: "vendor/lib".into(),
+            path: "vendor/lib".into(),
+            folder: "/code/app/vendor/lib".into(),
+            url: Some("https://example.com/lib.git".into()),
+            recorded: "a".repeat(40),
+            head: None,
+            state: crate::repo::submodule::State::NotDownloaded,
+        }];
+        assert_eq!(
+            edit.initial_values(&refs),
+            values(&["https://example.com/lib.git", "vendor/lib"]),
+            "an edit starts from the submodule as it is"
         );
     }
 
