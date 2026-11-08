@@ -1,4 +1,7 @@
-//! How the commit screen lists changed files: flat, or grouped by folder.
+//! How the inspector lists changed files: flat, or grouped by folder. The sidebar's
+//! folders of refs are in [`branches`].
+
+pub mod branches;
 
 use std::collections::{BTreeMap, HashSet};
 
