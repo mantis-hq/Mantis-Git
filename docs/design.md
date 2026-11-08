@@ -270,6 +270,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   ("Merge feat/x into main", "Rebase main onto feat/x"). A line that can't be used stays,
   in Overlay 2, and says why. Only lines that remove something are red, and they ask
   first, saying how to undo. `Up`/`Down` move, `Enter` chooses, `Esc` closes.
+  A commit's menu starts with a check-out line for each of its refs, as its chips show
+  them ("Check out feat/x", "Check out origin/y as a local branch", "Check out v1.0.0
+  without a branch"), then "Check out 1a2b3c4 without a branch" for the commit itself.
 - **Popups:** a 420 px card centred over the window, on Mantle with a Surface 0 border
   and 8 px radius. It holds a sentence, then any inputs, then a line naming the keys
   ("Press Enter to create feat/x, or Esc to cancel.", in Overlay 2), and "Cancel" and the

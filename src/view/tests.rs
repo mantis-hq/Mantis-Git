@@ -827,7 +827,7 @@ fn right_clicking_opens_a_menu_for_the_whole_selection_and_escape_closes_it(
         // Outside it: the click selects that commit alone.
         view.open_commit_menu(2, point(px(10.), px(10.)), cx);
         assert_eq!(view.selected, Some(2));
-        assert_eq!(labels(view)[0], "Check out");
+        assert_eq!(labels(view)[0], "Check out c without a branch");
 
         view.close_menu(cx);
         assert!(view.menu.is_none());
@@ -1003,7 +1003,7 @@ fn the_keyboard_walks_a_menu_wraps_and_skips_lines_that_do_nothing(cx: &mut Test
 
         view.open_commit_menu(0, point(px(10.), px(10.)), cx);
         view.step_menu(1, cx);
-        assert_eq!(at(view).as_deref(), Some("Check out"));
+        assert_eq!(at(view).as_deref(), Some("Check out a without a branch"));
         view.step_menu(-1, cx);
         assert_eq!(
             at(view).as_deref(),
