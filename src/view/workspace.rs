@@ -7,7 +7,7 @@
 use super::dock::{Dock, NewTerminal, ToggleDock};
 use super::parts::TEXT_BODY;
 use super::updates::{Updates, render_band, shared_updates};
-use super::{GraphView, OpenWorktreeInTab, SwitchWorktree, launcher, parts, repository_name};
+use super::{GraphView, OpenWorktreeInTab, SwitchWorktree, dialog, parts, repository_name};
 use gitclient_core::install::menu_entry::Launcher;
 use gitclient_core::settings::state::{AppState, DockLayout};
 use gpui_kit::component::button::*;
@@ -138,14 +138,15 @@ impl Workspace {
         .detach();
     }
 
-    /// At launch, for a portable copy: mends the application menu launcher if it points at a
-    /// copy that has moved, and asks once whether to add it. Needs the state file, which is
-    /// where the question is remembered.
-    pub fn offer_launcher(&mut self, launcher: Option<Launcher>, cx: &mut Context<Self>) {
-        let (Some(launcher), Some(file)) = (launcher, self.state_file.clone()) else {
+    /// At launch: mends the application menu launcher of a portable copy if it points at a
+    /// copy that has moved, and shows the welcome panel once, with the choice of adding the
+    /// launcher when there is one to add. Needs the state file, which is where "shown" is
+    /// remembered.
+    pub fn welcome(&mut self, launcher: Option<Launcher>, cx: &mut Context<Self>) {
+        let Some(file) = self.state_file.clone() else {
             return;
         };
-        launcher::offer(self.active_view(), &launcher, &file, cx);
+        dialog::offer_welcome(self.active_view(), launcher.as_ref(), &file, cx);
     }
 
     /// Brings the dock back as it was left, with its terminals in the front repository.

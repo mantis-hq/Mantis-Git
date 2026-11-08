@@ -331,13 +331,31 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     under the inputs, whether the form found it or git refused, and typing clears it. On
     success the popup closes and the band says what happened. What each form asks lives in
     core (`Form` in `crates/core/src/menu/form.rs`).
-- **Launcher question:** the first time a portable copy starts, with a place to remember
-  the answer, the front tab asks in the usual popup: "Add gitclient to your application
-  menu? That writes a launcher to `~/.local/share/applications` and an icon beside it, so
-  you can start gitclient without opening its folder. Settings → App takes them away
-  again." The result is "Add gitclient". It is asked once, whatever the answer, and never
-  when a launcher is already there; Settings → App adds or removes it from then on. The
-  band says what was written and how to take it away.
+- **Welcome panel:** the first time gitclient runs, with a place to remember that it has,
+  a 640 px panel opens over the front tab, on Mantle with a Surface 0 border and 8 px
+  radius, drawn by the popup module so it shares the backdrop and keys. Its parts, top to
+  bottom, each under a Surface 0 rule:
+  - The app's mark (the icon, drawn at 56 px: a blue lane with HEAD on it and a branch
+    bending away), "Welcome to gitclient" as a commit title, and one status sentence.
+  - Three ideas side by side, each a picture on Base over a one-line heading and a few words:
+    "Your branch is straight" (a small graph: HEAD's blue lane, `main` below the fork in
+    its own colour, another branch bending away), "Say what will happen" (a primary button
+    named for its result, with the line that undoes it) and "Branches, not “ours”" (a
+    conflict header with each side named). Pictures use only the palette, and show chips and
+    buttons as they are drawn elsewhere.
+  - "Keys worth knowing": keycaps in Surface 0 (`Ctrl O` open a repository, `Ctrl T` new
+    tab, `Ctrl B` sidebar, `Ctrl ,` settings; `Cmd` on macOS).
+  - For a portable copy that has no launcher, a tick box, ticked: "Add gitclient to the
+    application menu" ("Start menu" on Windows), with a muted sentence that names what will
+    be written and where, and says Settings → App takes it away. A launcher that is already
+    there, one gitclient didn't write, or a package manager's copy shows no box.
+  - A footer with the key line, "Skip" as a quiet button and the one blue button, named for
+    its result: "Add to menu and start" while the box is ticked, otherwise "Get started".
+  `Enter` goes on and does what the button says, `Space` ticks or clears the box, `Esc` or
+  a click outside skips, and a key held down never goes on. Skipping writes nothing. It is
+  shown once, whatever the answer, and the band says what was written and how to take it
+  away. Settings → App adds or removes the launcher from then on. On a window too short for
+  it, the panel scrolls.
 - **Update band:** when a newer release is found, a band across the top of the window, above
   the tabs, in the same style as the band under the header: a blue "Update" pill, "gitclient
   0.2.0 is available.", and quiet buttons "Later" (hides it until a newer release) and
