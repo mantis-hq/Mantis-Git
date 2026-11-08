@@ -12,6 +12,7 @@ use super::parts::{self, Edge, fit, grip, on_resize};
 use super::parts::{TEXT_BODY, TEXT_SMALL};
 use crate::theme::tokens;
 use gitclient_core::log::{self, Entry, State, Stream};
+use gitclient_core::settings::state::DockLayout;
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::spinner::Spinner;
@@ -147,6 +148,12 @@ impl Dock {
     }
 
     pub fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.add_terminal(cx);
+        self.show(self.terminals.len(), window, cx);
+    }
+
+    /// Starts a shell in the repository's folder, in a tab at the end.
+    fn add_terminal(&mut self, cx: &mut Context<Self>) {
         let directory = self
             .directory
             .clone()
@@ -157,7 +164,27 @@ impl Dock {
             number: self.terminals_opened,
             pane: cx.new(|cx| TerminalPane::new(&directory, cx)),
         });
-        self.show(self.terminals.len(), window, cx);
+    }
+
+    /// Whether the dock is open, with how many terminals and which tab in front.
+    pub fn layout(&self) -> DockLayout {
+        DockLayout {
+            open: self.open,
+            terminals: self.terminals.len(),
+            tab: self.active,
+        }
+    }
+
+    /// Brings the dock back as `layout` says, with fresh shells for its terminals. The
+    /// keyboard stays with the repository, so the app's shortcuts work from the start.
+    pub fn restore(&mut self, layout: DockLayout, cx: &mut Context<Self>) {
+        let layout = layout.bounded();
+        while self.terminals.len() < layout.terminals {
+            self.add_terminal(cx);
+        }
+        self.open = layout.open;
+        self.active = layout.tab.min(self.terminals.len());
+        cx.notify();
     }
 
     fn close_terminal(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
