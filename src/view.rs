@@ -1267,16 +1267,89 @@ mod tests {
             assert!(taking_other);
             view.close_menu(cx);
             view.use_side_for_file("a", gitclient_core::conflict::Side::Mine, cx);
-            view.continue_operation(cx);
         });
+        cx.run_until_parked();
+        view.update(&mut cx, |view, cx| view.check_paused_operation(cx));
+        cx.run_until_parked();
+        // Taking a side saved the file, so nothing is left to decide and the merge can go on.
+        view.read_with(&cx, |view, _| {
+            let progress = view
+                .paused_operation()
+                .expect("still paused until continued");
+            assert!(progress.decisions.is_empty());
+            assert!(!view.resolver_is_open(), "the last file was saved");
+        });
+        view.update(&mut cx, |view, cx| view.continue_operation(cx));
         cx.run_until_parked();
         view.update(&mut cx, |view, cx| view.check_paused_operation(cx));
         cx.run_until_parked();
         view.read_with(&cx, |view, _| {
             assert!(view.paused_operation().is_none(), "the merge finished");
-            assert!(!view.resolver_is_open());
         });
         assert_eq!(repo.read("a"), "main\n");
+    }
+
+    #[gpui_kit::test]
+    fn a_result_is_built_from_picked_lines_and_saved_with_one_button(cx: &mut TestAppContext) {
+        use super::conflicts::Pick;
+        use gitclient_core::conflict::Side;
+        use gitclient_core::testing::Repo;
+        let repo = Repo::new();
+        repo.git(&["config", "user.name", "Ada"]);
+        repo.git(&["config", "user.email", "ada@example.com"]);
+        repo.write("a", "top\nbase\nbottom\n");
+        repo.commit("base");
+        let main = repo.git(&["branch", "--show-current"]);
+        repo.git(&["checkout", "-q", "-b", "feat"]);
+        repo.write("a", "top\nfeat one\nfeat two\nbottom\n");
+        repo.commit("feat change");
+        repo.git(&["checkout", "-q", &main]);
+        repo.write("a", "top\nmain\nbottom\n");
+        repo.commit("main change");
+        let merged = std::process::Command::new("git")
+            .current_dir(repo.path())
+            .args(["merge", "feat"])
+            .output()
+            .unwrap();
+        assert!(!merged.status.success());
+
+        let (view, mut cx) = open_view(cx);
+        load(&view, &["x"], &mut cx);
+        view.update(&mut cx, |view, cx| {
+            view.repo = Some(repo.path().to_owned());
+            view.entries[0].working = true;
+            view.check_paused_operation(cx);
+        });
+        cx.run_until_parked();
+        view.update(&mut cx, |view, cx| view.show_conflict("a", cx));
+        cx.run_until_parked();
+        // Drawing reads the file's result into the editor.
+        cx.simulate_click(point(px(2.), px(2.)), Modifiers::none());
+
+        // Saving waits for the conflict to be settled in the result.
+        view.update(&mut cx, |view, cx| view.save_conflict(cx));
+        cx.run_until_parked();
+        assert!(view.read_with(&cx, |view, _| view.resolver_is_open()));
+        assert!(repo.read("a").contains("<<<<<<<"), "nothing was saved");
+
+        // The second line of the other side, and the first of the first side's.
+        view.update(&mut cx, |view, cx| {
+            view.toggle_line((0, Side::Other, 1), cx);
+            view.toggle_line((0, Side::Mine, 0), cx);
+            view.use_chunk(0, Pick::Lines, cx);
+        });
+        cx.simulate_click(point(px(2.), px(2.)), Modifiers::none());
+        view.update(&mut cx, |view, cx| view.save_conflict(cx));
+        cx.run_until_parked();
+        view.update(&mut cx, |view, cx| view.check_paused_operation(cx));
+        cx.run_until_parked();
+
+        assert_eq!(repo.read("a"), "top\nmain\nfeat two\nbottom\n");
+        assert_eq!(repo.git(&["diff", "--name-only", "--diff-filter=U"]), "");
+        view.read_with(&cx, |view, _| {
+            assert!(!view.resolver_is_open(), "the last file was saved");
+            assert!(view.paused_operation().unwrap().decisions.is_empty());
+        });
     }
 
     #[gpui_kit::test]

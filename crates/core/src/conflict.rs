@@ -5,7 +5,7 @@
 
 use crate::ops::{self, git};
 use crate::status;
-use crate::text::short_oid;
+use crate::text::{count, short_oid};
 use std::fs;
 use std::path::Path;
 
@@ -50,7 +50,7 @@ pub struct Step {
     pub state: StepState,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Side {
     Mine,
     Other,
@@ -88,12 +88,12 @@ pub struct ConflictFile {
 }
 
 impl ConflictFile {
-    /// How far along the file is, given how many of its decisions have an answer.
-    pub fn note(&self, answered: usize) -> String {
-        match (answered, self.decisions.len()) {
-            (answered, total) if answered >= total => "Decided".to_owned(),
-            (_, 1) => "Needs a decision".to_owned(),
-            (answered, total) => format!("{answered} of {total} decided"),
+    /// How far along the file is, given how many of its conflicts are left in its result.
+    pub fn note(&self, left: usize) -> String {
+        match left {
+            0 => "Ready to save".to_owned(),
+            1 => "1 conflict left".to_owned(),
+            left => format!("{left} conflicts left"),
         }
     }
 }
@@ -118,6 +118,34 @@ impl Progress {
         } else {
             (first, second)
         }
+    }
+
+    /// Whether `other` is the same stop as this one, with the same files still to settle or
+    /// fewer: saving a file changes the decisions but not where the operation is.
+    pub fn is_same_stop(&self, other: &Progress) -> bool {
+        self.kind == other.kind
+            && self.mine == other.mine
+            && self.other == other.other
+            && self.steps == other.steps
+    }
+
+    /// For each decision in `path`, in order: the block that still stands for it in `text`,
+    /// or `None` once the text has dealt with it. `text` is the file's result, which starts
+    /// as the file with its markers and is edited from there, so a block is matched by what
+    /// is in it.
+    pub fn open_chunks(&self, path: &str, text: &str) -> Vec<Option<Block>> {
+        let mut blocks = blocks(text).into_iter().peekable();
+        self.decisions
+            .iter()
+            .filter(|decision| decision.path == path && !decision.whole_file)
+            .map(|decision| {
+                let next = blocks.peek()?;
+                let (mine, other) = self.by_side(next.first.as_str(), next.second.as_str());
+                (mine == decision.mine && other == decision.other)
+                    .then(|| blocks.next())
+                    .flatten()
+            })
+            .collect()
     }
 
     /// The files with decisions to make, in the order their first decision comes.
@@ -159,6 +187,24 @@ impl Progress {
             Kind::Revert => format!("Reverting {} on {}: {decisions}.", self.other, self.mine),
             Kind::Merge => format!("Merging {} into {}: {decisions}.", self.other, self.mine),
         }
+    }
+
+    /// What the inspector's list of conflicted files is called, given how many files have
+    /// been saved at this stop.
+    pub fn list_heading(&self, resolved: usize) -> String {
+        match (self.files().len(), resolved) {
+            (0, 0) => "Nothing to decide".to_owned(),
+            (0, _) => "Every conflict is resolved".to_owned(),
+            (files, _) => format!("Conflicts · {}", count(files, "file")),
+        }
+    }
+
+    /// What to tell the user when the last conflicted file is saved.
+    pub fn resolved_sentence(&self) -> String {
+        format!(
+            "Every conflict is resolved. Continue the {} to go on.",
+            self.kind.title().to_lowercase()
+        )
     }
 
     /// What the list of steps shows.
@@ -408,6 +454,108 @@ fn whole_file_sides(repo: &Path, path: &str, progress: &Progress) -> (String, St
     )
 }
 
+/// What the resolver says about a file's result, given how many conflicts it still holds.
+pub fn result_hint(left: usize) -> String {
+    match left {
+        0 => "Ready to save".to_owned(),
+        left => format!("{} left in the result", count(left, "conflict")),
+    }
+}
+
+/// The button that puts picked lines of a conflict into the result.
+pub fn picked_lines_label(picked: usize) -> String {
+    format!("Use {}", count(picked, "selected line"))
+}
+
+/// A block of conflict markers in a file's text, by position.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Block {
+    pub start: usize,
+    pub end: usize,
+    /// The sides in the order git wrote them.
+    pub first: String,
+    pub second: String,
+}
+
+/// The blocks of conflict markers in `text`, in order. A block that doesn't close is left
+/// alone, as it is in [`split_conflicts`].
+pub fn blocks(text: &str) -> Vec<Block> {
+    let mut found = Vec::new();
+    let mut at = 0;
+    while at < text.len() {
+        let line_end = text[at..].find('\n').map_or(text.len(), |n| at + n + 1);
+        if text[at..].starts_with("<<<<<<< ")
+            && let Some((first, second, after)) = read_block(&text[line_end..])
+        {
+            let end = text.len() - after.len();
+            found.push(Block {
+                start: at,
+                end,
+                first: first.to_owned(),
+                second: second.to_owned(),
+            });
+            at = end;
+            continue;
+        }
+        at = line_end;
+    }
+    found
+}
+
+/// `text` with `block` replaced by `chosen`.
+pub fn replace_block(text: &str, block: &Block, chosen: &str) -> String {
+    let mut merged = String::with_capacity(text.len());
+    merged.push_str(&text[..block.start]);
+    merged.push_str(chosen);
+    // Typed or picked text often loses the last newline, which would join two lines.
+    if !chosen.is_empty() && !chosen.ends_with('\n') && block.first.ends_with('\n') {
+        merged.push('\n');
+    }
+    merged.push_str(&text[block.end..]);
+    merged
+}
+
+/// The lines of `text`, each with its newline, which is how they are picked and put back.
+pub fn lines_of(text: &str) -> Vec<&str> {
+    text.split_inclusive('\n').collect()
+}
+
+/// A file as it stands, markers and all: where its result starts.
+pub fn read_text(repo: &Path, path: &str) -> Result<String, String> {
+    let bytes = fs::read(repo.join(path)).map_err(|error| error.to_string())?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Saves a file's result and stages it, which is what takes the conflict off it.
+pub fn save_file(repo: &Path, path: &str, content: &str) -> Result<(), String> {
+    fs::write(repo.join(path), content).map_err(|error| error.to_string())?;
+    ops::run(repo, &["--literal-pathspecs", "add", "--", path]).map(drop)
+}
+
+/// Takes one side for every conflict in a file, and stages it.
+pub fn resolve_with_side(
+    repo: &Path,
+    progress: &Progress,
+    path: &str,
+    side: Side,
+) -> Result<(), String> {
+    let decisions: Vec<Decision> = progress
+        .decisions
+        .iter()
+        .filter(|decision| decision.path == path)
+        .cloned()
+        .collect();
+    let answers: Vec<String> = decisions
+        .iter()
+        .map(|decision| decision.side(side).to_owned())
+        .collect();
+    let only = Progress {
+        decisions,
+        ..progress.clone()
+    };
+    resolve(repo, &only, &answers)
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum Segment<'a> {
     Text(&'a str),
@@ -629,11 +777,85 @@ mod tests {
             (files[0].path.as_str(), &files[0].decisions[..]),
             ("b", &[0, 2][..])
         );
-        assert_eq!(files[0].note(1), "1 of 2 decided");
-        assert_eq!(files[0].note(2), "Decided");
-        assert_eq!(files[1].note(0), "Needs a decision");
+        assert_eq!(files[0].note(1), "1 conflict left");
+        assert_eq!(files[0].note(0), "Ready to save");
+        assert_eq!(files[1].note(3), "3 conflicts left");
+        assert_eq!(progress.list_heading(0), "Conflicts · 2 files");
+        assert_eq!(result_hint(0), "Ready to save");
+        assert_eq!(result_hint(2), "2 conflicts left in the result");
+        assert_eq!(picked_lines_label(1), "Use 1 selected line");
+        assert_eq!(picked_lines_label(3), "Use 3 selected lines");
     }
     use crate::testing::Repo;
+
+    fn two_conflicts() -> (Progress, String) {
+        let decision = |mine: &str, other: &str, line| Decision {
+            path: "f".to_owned(),
+            line,
+            mine: mine.to_owned(),
+            other: other.to_owned(),
+            whole_file: false,
+            mine_why: String::new(),
+            other_why: String::new(),
+        };
+        let progress = Progress {
+            kind: Kind::Merge,
+            mine: "main".to_owned(),
+            other: "feat".to_owned(),
+            steps: Vec::new(),
+            decisions: vec![decision("m1\n", "o1\n", 2), decision("m2\n", "o2\n", 8)],
+            mine_is_second: false,
+        };
+        let text = "a\n<<<<<<< HEAD\nm1\n=======\no1\n>>>>>>> feat\nb\n\
+                    <<<<<<< HEAD\nm2\n=======\no2\n>>>>>>> feat\nc\n";
+        (progress, text.to_owned())
+    }
+
+    #[test]
+    fn blocks_are_found_by_position_and_replaced_in_the_result() {
+        let (progress, text) = two_conflicts();
+        let found = blocks(&text);
+        assert_eq!(found.len(), 2);
+        assert_eq!(
+            (found[0].first.as_str(), found[0].second.as_str()),
+            ("m1\n", "o1\n")
+        );
+        assert!(text[found[0].start..].starts_with("<<<<<<< HEAD"));
+        assert!(text[..found[0].end].ends_with(">>>>>>> feat\n"));
+
+        let open = progress.open_chunks("f", &text);
+        assert!(open.iter().all(Option::is_some));
+        // Picking the first conflict's lines leaves the second one standing.
+        let picked = replace_block(&text, open[0].as_ref().unwrap(), "o1\n");
+        assert!(picked.starts_with("a\no1\nb\n<<<<<<< HEAD"));
+        let open = progress.open_chunks("f", &picked);
+        assert!(open[0].is_none() && open[1].is_some());
+        // Typing without the last newline doesn't join lines.
+        let typed = replace_block(&picked, open[1].as_ref().unwrap(), "both");
+        assert_eq!(typed, "a\no1\nb\nboth\nc\n");
+        assert!(
+            progress
+                .open_chunks("f", &typed)
+                .iter()
+                .all(Option::is_none)
+        );
+    }
+
+    #[test]
+    fn a_conflict_the_user_removed_by_hand_is_no_longer_open() {
+        let (progress, text) = two_conflicts();
+        let first = blocks(&text).remove(0);
+        let by_hand = replace_block(&text, &first, "written myself\n");
+        let open = progress.open_chunks("f", &by_hand);
+        assert!(open[0].is_none());
+        assert!(open[1].is_some());
+    }
+
+    #[test]
+    fn lines_keep_their_newlines() {
+        assert_eq!(lines_of("a\nb"), ["a\n", "b"]);
+        assert!(lines_of("").is_empty());
+    }
 
     /// `feature` and `main` both changed line 2 of `file`.
     fn diverged() -> Repo {
@@ -652,6 +874,46 @@ mod tests {
         repo.commit("change on main");
         repo.git(&["checkout", "-q", "feature"]);
         repo
+    }
+
+    #[test]
+    fn saving_a_result_takes_the_conflict_off_the_file_and_lets_the_rebase_go_on() {
+        let repo = diverged();
+        assert_eq!(rebase_onto(repo.path(), "main"), Ok(None));
+        let progress = detect(repo.path()).unwrap();
+
+        // The result starts as the file with its markers, and is edited from there.
+        let text = read_text(repo.path(), "file").unwrap();
+        let open = progress.open_chunks("file", &text);
+        assert_eq!(open.len(), 1);
+        let block = open[0].as_ref().unwrap();
+        let both = format!(
+            "{}{}",
+            progress.decisions[0].mine, progress.decisions[0].other
+        );
+        let result = replace_block(&text, block, &both);
+        assert!(blocks(&result).is_empty());
+
+        save_file(repo.path(), "file", &result).unwrap();
+        // Staged, so git no longer lists it as unmerged.
+        assert_eq!(repo.git(&["diff", "--name-only", "--diff-filter=U"]), "");
+        let after = detect(repo.path()).unwrap();
+        assert!(after.decisions.is_empty());
+        assert!(after.is_same_stop(&progress));
+
+        assert!(carry_on(repo.path(), progress.kind).is_ok());
+        assert_eq!(detect(repo.path()), None);
+        assert!(repo.read("file").contains("mine") && repo.read("file").contains("main's"));
+    }
+
+    #[test]
+    fn one_side_can_be_taken_for_a_whole_file() {
+        let repo = diverged();
+        assert_eq!(rebase_onto(repo.path(), "main"), Ok(None));
+        let progress = detect(repo.path()).unwrap();
+        resolve_with_side(repo.path(), &progress, "file", Side::Other).unwrap();
+        assert_eq!(repo.git(&["diff", "--name-only", "--diff-filter=U"]), "");
+        assert_eq!(repo.read("file"), "one\nmain's\nthree\n");
     }
 
     #[test]
