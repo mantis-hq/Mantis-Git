@@ -143,6 +143,9 @@ impl GraphView {
             .child(
                 div()
                     .h_flex()
+                    // A long result, such as a remote branch's whole name, wraps to its own
+                    // line instead of running out of the card.
+                    .flex_wrap()
                     .justify_end()
                     .gap_2()
                     .child(
@@ -154,7 +157,7 @@ impl GraphView {
                     )
                     .child(
                         Button::new("dialog-answer")
-                            .outline()
+                            .primary()
                             .small()
                             .label(frame.action)
                             // A question is asked while git is busy, waiting for the answer.
