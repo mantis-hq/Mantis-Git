@@ -320,8 +320,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   the file itself.
 - **File menus:** right-clicking a file in the inspector opens the usual menu: its path as
   the heading, "Show changes in <name>", for working changes "Stage <name>" or "Unstage
-  <name>", and "Copy path". A folder in the tree has "Stage 3 files in <name>/" (or
-  "Unstage"), and "Copy path".
+  <name>", for a commit's file "Apply changes in <name> to working changes", and "Copy
+  path". Applying puts what the commit changed in that file (over its first parent, for a
+  merge) into the working tree, unstaged, and leaves the branch alone. When the file has
+  moved on, the two changes are merged; where they clash, or the file already has the
+  change, nothing is written and the band says why. On success the band says how to undo
+  it. A folder in the tree has "Stage 3 files in <name>/" (or "Unstage"), and "Copy path".
 - **Merges in the inspector:** a merge lists and diffs what it brought in over its first
   parent, the branch it was made on, so its files match what reverting it with `-m 1` undoes.
 - **Inspector actions:** "Check out" names the branch when one is at the commit. Commands

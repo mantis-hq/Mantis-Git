@@ -9,7 +9,7 @@ use super::{GraphView, OpenWorktreeInTab, SwitchWorktree};
 use crate::theme::selected_row;
 use gitclient_core::history::refs::RefKind;
 use gitclient_core::menu::command::Command;
-use gitclient_core::menu::{self, Line};
+use gitclient_core::menu::{self, FileSource, Line};
 use gitclient_core::repo::branch::{self, Dragged, Relation};
 use gitclient_core::working::Side;
 use gpui_kit::component::*;
@@ -261,18 +261,23 @@ impl GraphView {
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) {
-        let Some(path) = self
-            .shown_details()
-            .and_then(|details| details.files.get(index))
-            .map(|file| file.path.to_string())
-        else {
+        let Some(details) = self.shown_details() else {
             return;
         };
-        let side = self
-            .working_row_is_selected()
-            .then(|| self.working_file(index).map(|(side, _)| side))
-            .flatten();
-        self.show_menu(position, menu::file_menu(&path, index, side), cx);
+        let Some(file) = details.files.get(index) else {
+            return;
+        };
+        let source = if self.working_row_is_selected() {
+            self.working_file(index)
+                .map(|(side, _)| FileSource::Working(side))
+        } else {
+            Some(FileSource::Commit {
+                oid: &details.oid,
+                old_path: file.old_path.as_deref(),
+            })
+        };
+        let lines = menu::file_menu(&file.path, index, source);
+        self.show_menu(position, lines, cx);
     }
 
     /// The menu for a conflicted file: show both sides, or take one for the whole file.
