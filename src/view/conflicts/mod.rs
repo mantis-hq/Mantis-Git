@@ -8,8 +8,8 @@ use resolver::FileView;
 
 use super::dialog::Confirm;
 use super::parts::{
-    TEXT_CHIP, TEXT_SMALL, checkbox, expand_tabs, file_path, panel_row, pill, scroll_marks,
-    section_label,
+    TEXT_CHIP, TEXT_SMALL, checkbox, expand_tabs, file_path, loading, panel_row, pill,
+    scroll_marks, section_label,
 };
 use super::{GraphView, Notice};
 use crate::theme::{lane_color, tokens};
