@@ -465,12 +465,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   the file itself.
 - **File menus:** right-clicking a file in the inspector opens the usual menu: its path as
   the heading, "Show changes in <name>", for working changes "Stage <name>" or "Unstage
-  <name>", for a commit's file "Apply changes in <name> to working changes", and "Copy
+  <name>", for a commit's file "Apply changes in <name> to working changes", "Show in folder" (the system file manager, at the file, or at the nearest folder
+  that still exists for a deleted one), and "Copy
   path". Applying puts what the commit changed in that file (over its first parent, for a
   merge) into the working tree, unstaged, and leaves the branch alone. When the file has
   moved on, the two changes are merged; where they clash, or the file already has the
   change, nothing is written and the band says why. On success the band says how to undo
-  it. A folder in the tree has "Stage 3 files in <name>/" (or "Unstage"), and "Copy path".
+  it. A folder in the tree has "Stage 3 files in <name>/" (or "Unstage"), "Show in folder" and "Copy path". A conflicted file has both too.
 - **Discarding:** a file in "Unstaged" has a red "Discard changes in <name>" line in its
   menu, and a folder in the tree has "Discard changes in 3 files in <name>/". The
   "Unstaged" header ends in a quiet "Discard all" button. Each asks in a popup first, which takes Enter twice (see

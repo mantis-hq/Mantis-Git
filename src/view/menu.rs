@@ -222,6 +222,13 @@ impl GraphView {
                 |this, cx| super::settings::open_repository_page(this.repo.clone(), cx),
             );
             self.ask(confirm, cx);
+        } else if let Some(path) = command.reveal_path() {
+            // A deleted file isn't there to show, so show the folder it was in.
+            if let Some(repo) = &self.repo {
+                let mut target = repo.join(path);
+                while !target.exists() && target.pop() {}
+                cx.reveal_path(&target);
+            }
         } else if let Some(url) = command.url() {
             cx.open_url(url);
             self.notice = command

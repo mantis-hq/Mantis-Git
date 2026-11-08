@@ -106,6 +106,15 @@ impl Line {
     }
 }
 
+fn show_in_folder(path: &str) -> Line {
+    Line::item(
+        "Show in folder",
+        Command::RevealPath {
+            path: path.trim_end_matches('/').to_owned(),
+        },
+    )
+}
+
 fn copy(text: &str, what: &'static str) -> Command {
     Command::Copy {
         text: text.to_owned(),
@@ -410,6 +419,7 @@ pub fn file_menu(path: &str, index: usize, source: Option<FileSource>) -> Vec<Li
         lines.push(discard_line(vec![path.to_owned()], name));
     }
     lines.push(Line::Separator);
+    lines.push(show_in_folder(path));
     lines.push(Line::item("Copy path", copy(path, "the path")));
     lines
 }
@@ -453,6 +463,7 @@ pub fn conflict_menu(progress: &conflict::Progress, path: &str) -> Vec<Line> {
         use_side(conflict::Side::Mine, &progress.mine),
         use_side(conflict::Side::Other, &progress.other),
         Line::Separator,
+        show_in_folder(path),
         Line::item("Copy path", copy(path, "the path")),
     ]
 }
@@ -479,6 +490,7 @@ pub fn folder_menu(path: &str, files: Vec<String>, side: Option<Side>) -> Vec<Li
         }
         lines.push(Line::Separator);
     }
+    lines.push(show_in_folder(path));
     lines.push(Line::item("Copy path", copy(path, "the path")));
     lines
 }
@@ -873,6 +885,7 @@ mod tests {
                 "Show changes in a.rs",
                 "Stage a.rs",
                 "Discard changes in a.rs",
+                "Show in folder",
                 "Copy path"
             ]
         );
@@ -904,6 +917,7 @@ mod tests {
                 "src/a.rs",
                 "Show changes in a.rs",
                 "Apply changes in a.rs to working changes",
+                "Show in folder",
                 "Copy path"
             ]
         );
@@ -946,7 +960,16 @@ mod tests {
         let lines = file_menu("a.rs", 0, None);
         assert_eq!(
             shown_lines(&lines),
-            ["a.rs", "Show changes in a.rs", "Copy path"]
+            [
+                "a.rs",
+                "Show changes in a.rs",
+                "Show in folder",
+                "Copy path"
+            ]
+        );
+        assert_eq!(
+            lines[3].command().and_then(Command::reveal_path),
+            Some("a.rs")
         );
     }
 
@@ -960,17 +983,28 @@ mod tests {
                 "crates/src/",
                 "Stage 2 files in src/",
                 "Discard changes in 2 files in src/",
+                "Show in folder",
                 "Copy path"
             ]
         );
         let lines = folder_menu("src", Vec::new(), Some(Side::Staged));
         assert_eq!(
             shown_lines(&lines),
-            ["src/", "Unstage 0 files in src/", "Copy path"],
+            [
+                "src/",
+                "Unstage 0 files in src/",
+                "Show in folder",
+                "Copy path"
+            ],
             "staged changes are not discarded from here"
         );
         let lines = folder_menu("src", Vec::new(), None);
-        assert_eq!(shown_lines(&lines), ["src/", "Copy path"]);
+        assert_eq!(shown_lines(&lines), ["src/", "Show in folder", "Copy path"]);
+        assert_eq!(
+            lines[1].command().and_then(Command::reveal_path),
+            Some("src"),
+            "a folder is shown without its trailing slash"
+        );
     }
     use crate::history::lanes::LaneColor;
     use crate::history::refs::{Branch, NamedRef};
