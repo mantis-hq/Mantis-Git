@@ -26,6 +26,8 @@ pub(super) struct State {
     subject: Option<Entity<InputState>>,
     details: Option<Entity<TextareaState>>,
     needs_clearing: bool,
+    /// Whether the form is folded down to its heading, to give the lists the room.
+    collapsed: bool,
     _inputs: Vec<Subscription>,
 }
 
@@ -137,8 +139,9 @@ impl GraphView {
         let length = line.chars().count();
         let staged = self.staged_count();
         let cannot = !working::can_commit(staged, &subject) || self.busy.is_some();
-        let field_label = |text: &'static str| section_label(muted).child(text);
+        let collapsed = self.commit.collapsed;
 
+        // The kinds of change in one line, wrapping only if the panel is dragged narrow.
         let types: Vec<_> = COMMIT_TYPES
             .iter()
             .enumerate()
@@ -147,8 +150,8 @@ impl GraphView {
                 div()
                     .id(("type", index))
                     .h_flex()
-                    .h(px(26.))
-                    .px_2()
+                    .h(px(24.))
+                    .px(px(6.))
                     .rounded(px(6.))
                     .cursor_pointer()
                     .text_size(TEXT_SMALL)
@@ -172,26 +175,80 @@ impl GraphView {
                 cx.notify();
             }));
 
-        let mut form = div().v_flex().flex_none().gap_3().child(
-            div()
-                .v_flex()
-                .gap_2()
-                .child(field_label("Type of change"))
-                .child(div().flex().flex_wrap().gap_1().children(types)),
-        );
+        // The heading holds the button, so that committing never needs a scroll. While the
+        // form is folded away there is no message to commit, so the button goes too.
+        let heading = div()
+            .h_flex()
+            .h(px(32.))
+            .gap_2()
+            .child(
+                div()
+                    .id("commit-form-toggle")
+                    .h_flex()
+                    .flex_1()
+                    .h_full()
+                    .gap_2()
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.commit.collapsed = !this.commit.collapsed;
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .w(px(12.))
+                            .flex_none()
+                            .text_size(TEXT_CHIP)
+                            .text_color(muted)
+                            .child(if collapsed { "▸" } else { "▾" }),
+                    )
+                    .child(section_label(muted).child("Commit"))
+                    .when(collapsed, |row| {
+                        row.child(
+                            div()
+                                .text_size(TEXT_CHIP)
+                                .text_color(muted)
+                                .child(format!("{staged} staged")),
+                        )
+                    }),
+            )
+            .when(!collapsed, |row| {
+                row.child(
+                    Button::new("commit")
+                        .primary()
+                        .label(working::commit_label(staged))
+                        .disabled(cannot)
+                        .on_click(cx.listener(|this, _, _, cx| this.write_commit(cx))),
+                )
+            });
+
+        let mut body = div()
+            .v_flex()
+            .flex_none()
+            .gap_2()
+            .child(div().flex().flex_wrap().gap(px(2.)).children(types));
         if let Some(input) = &self.commit.subject {
-            form = form.child(
+            body = body.child(
                 div()
                     .v_flex()
-                    .gap_1p5()
+                    .gap_1()
                     .child(
+                        // The line as it will be written, and how long it is.
                         div()
                             .h_flex()
                             .justify_between()
-                            .child(field_label("Summary"))
+                            .gap_2()
+                            .text_size(TEXT_CHIP)
                             .child(
                                 div()
-                                    .text_size(TEXT_CHIP)
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(subtext)
+                                    .child(line.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
                                     .text_color(if length > SUBJECT_LIMIT {
                                         danger
                                     } else {
@@ -204,46 +261,35 @@ impl GraphView {
             );
         }
         if let Some(input) = &self.commit.details {
-            form = form.child(
-                div()
-                    .v_flex()
-                    .gap_1p5()
-                    .child(field_label("Details (optional)"))
-                    .child(div().h(px(72.)).child(Textarea::new(input).h_full())),
-            );
+            body = body.child(div().h(px(52.)).child(Textarea::new(input).h_full()));
         }
-        form.when(working::can_break(kind), |form| {
-            form.child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .text_color(quiet)
-                    .child(breaking_box)
-                    .child("Breaking change"),
-            )
-        })
-        .when_some(bump, |form, (version, bump)| {
-            form.child(render_bump(version, bump, cx))
-        })
-        .child(
-            div()
-                .text_size(TEXT_SMALL)
-                .text_color(subtext)
-                .child(line.clone()),
-        )
-        .child(
-            Button::new("commit")
-                .primary()
-                .label(working::commit_label(staged))
-                .disabled(cannot)
-                .on_click(cx.listener(|this, _, _, cx| this.write_commit(cx))),
-        )
+        let body = body
+            .when(working::can_break(kind), |body| {
+                body.child(
+                    div()
+                        .h_flex()
+                        .gap_2()
+                        .text_color(quiet)
+                        .child(breaking_box)
+                        .child("Breaking change"),
+                )
+            })
+            .when_some(bump, |body, (version, bump)| {
+                body.child(render_bump(version, bump, cx))
+            });
+
+        div()
+            .v_flex()
+            .gap_2()
+            .child(heading)
+            .when(!collapsed, |root| root.child(body))
     }
 }
 
+/// What landing this commit on main would do to the version, in one line.
 fn render_bump(version: Version, bump: Bump, cx: &App) -> Div {
     let theme = cx.theme();
-    let (background, border, muted) = (theme.background, theme.border, theme.muted_foreground);
+    let (background, border) = (theme.background, theme.border);
     let (success, quiet) = (theme.success, theme.secondary_foreground);
     let (name, next) = match bump {
         Bump::None => ("No release", None),
@@ -257,20 +303,16 @@ fn render_bump(version: Version, bump: Bump, cx: &App) -> Div {
         None => (format!("stays {version}"), quiet),
     };
     div()
-        .v_flex()
-        .p_3()
-        .gap_1()
+        .h_flex()
+        .h(px(30.))
+        .px_3()
+        .justify_between()
+        .gap_2()
         .rounded(px(8.))
         .bg(background)
         .border_1()
         .border_color(border)
-        .child(section_label(muted).child("When this reaches main"))
-        .child(
-            div()
-                .h_flex()
-                .justify_between()
-                .gap_2()
-                .child(div().font_semibold().text_color(color).child(name))
-                .child(div().text_size(TEXT_SMALL).text_color(quiet).child(change)),
-        )
+        .text_size(TEXT_SMALL)
+        .child(div().font_semibold().text_color(color).child(name))
+        .child(div().text_color(quiet).child(change))
 }

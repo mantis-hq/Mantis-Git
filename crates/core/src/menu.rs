@@ -112,6 +112,17 @@ pub enum Command {
         paths: Vec<String>,
         unstage: bool,
     },
+    /// Handled by the interface, which owns the resolver: opens a conflicted file's two
+    /// sides next to each other.
+    ShowConflict {
+        path: String,
+    },
+    /// Handled by the interface, which owns the answers: takes one side for every decision
+    /// in a conflicted file.
+    UseSide {
+        path: String,
+        side: conflict::Side,
+    },
     /// Handled by the interface, which owns the clipboard.
     Copy {
         text: String,
@@ -190,7 +201,8 @@ impl Command {
             Self::EditRemote { .. } => "Editing",
             Self::RemoveRemote { .. } => "Removing the remote",
             Self::Copy { .. } => "Copying",
-            Self::ShowFile { .. } => "Opening",
+            Self::ShowFile { .. } | Self::ShowConflict { .. } => "Opening",
+            Self::UseSide { .. } => "Resolving",
             Self::StageFiles { unstage: false, .. } => "Staging",
             Self::StageFiles { unstage: true, .. } => "Unstaging",
         }
@@ -304,6 +316,8 @@ impl Command {
             | Self::NewBranch { .. }
             | Self::EditRemote { .. }
             | Self::ShowFile { .. }
+            | Self::ShowConflict { .. }
+            | Self::UseSide { .. }
             | Self::StageFiles { .. }
             | Self::Copy { .. } => Ok(None),
         }
@@ -547,6 +561,34 @@ pub fn file_menu(path: &str, index: usize, side: Option<Side>) -> Vec<Line> {
     lines.push(Line::Separator);
     lines.push(Line::item("Copy path", copy(path, "the path")));
     lines
+}
+
+/// The menu for a conflicted file in the inspector. The sides are named by branch, since
+/// "ours" and "theirs" swap meaning during a rebase.
+pub fn conflict_menu(progress: &conflict::Progress, path: &str) -> Vec<Line> {
+    let use_side = |side, branch: &str| {
+        Line::item(
+            format!("Use {branch}"),
+            Command::UseSide {
+                path: path.to_owned(),
+                side,
+            },
+        )
+    };
+    vec![
+        Line::Heading(path.to_owned()),
+        Line::item(
+            "Show both sides",
+            Command::ShowConflict {
+                path: path.to_owned(),
+            },
+        ),
+        Line::Separator,
+        use_side(conflict::Side::Mine, &progress.mine),
+        use_side(conflict::Side::Other, &progress.other),
+        Line::Separator,
+        Line::item("Copy path", copy(path, "the path")),
+    ]
 }
 
 /// The menu for a folder in the inspector's tree, which acts on every file under it.

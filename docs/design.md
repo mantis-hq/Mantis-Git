@@ -112,8 +112,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   and each hunk's header starts with one too (see "Staging").
 - The sidebar starts closed below 1500 px, because the two side panels would leave 520 px
   for the graph at the default window. A quiet button and `Ctrl B` open it at any width.
-- The conflict screen replaces the sidebar and links back to the graph. Committing has no
-  screen of its own: it is the foot of the inspector.
+- There are no task screens. Committing is the foot of the inspector, and so are conflicts
+  (see "Conflicts"): the graph window is the one window for everything about a repository.
 - Settings: a quiet "Settings" button at the end of the header, or `Ctrl ,`, opens a
   second window (1000×720) and brings it forward if it is already open. It has the 52 px
   header, a 220 px Mantle side panel of pages, and the page in a column up to 720 px wide.
@@ -162,8 +162,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   column headings or hash: the refs column, the graph, the subject, then author and a short time
   ("12m", "3h", "Tue", "Oct 30"). The full hash belongs to the inspector.
 - Resizing: every panel edge drags, so a panel can be made smaller or bigger. These are
-  the sidebar, inspector, dock and its log list, the conflict steps, and the settings
-  side panel. The pointer shows a resize cursor
+  the sidebar, inspector, dock and its log list, and the settings side panel. The pointer shows a resize cursor
   over a 4 px strip on the edge, which tints 50% Blue. A panel stops at a minimum, and at
   the point where the main area would be under 320 px. Sizes last until the window closes.
 - Radii: 4 px for chips and checkboxes, 6 px for buttons and inputs, 8 px for cards.
@@ -297,13 +296,16 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   row, so the list takes their place without a jump. It is one component (`loading` in
   `src/view/parts.rs`) for every list that loads. Picking another commit stops that read.
 - **Commit form:** the foot of the inspector for working changes, under the two lists and
-  a Surface 0 border: the type of change as chips, a summary with its length against 72, a
-  details box, "Breaking change" for `feat`, and the one blue button, named for its result
-  ("Commit 2 files", or "Stage a file to commit" while nothing is staged and nothing can
-  happen). It commits exactly what is staged. The bump card only shows when the repository
-  has `v1.2.3` style tags to count from. After a commit the form empties, and the band under
-  the header says how to undo it. If a hook refuses, the message stays. When the window is
-  short the form scrolls so the lists keep room.
+  a Surface 0 border. Its heading is a quiet "Commit" with an arrow, which folds the form away
+  to give the lists the room (folded, it says how many files are staged), and the one blue
+  button, named for its result ("Commit 2 files", or "Stage a file to commit" while nothing
+  is staged and nothing can happen), so it is never out of sight. Under it: the kinds of
+  change as chips in one line, the commit line as it will be written with its length against
+  72, the summary, a details box, "Breaking change" for `feat`, and a one-line card for what
+  landing it would do to the version, shown only when the repository has `v1.2.3` style tags.
+  It commits exactly what is staged. After a commit the form empties, and the band under the
+  header says how to undo it. If a hook refuses, the message stays. The form takes at most
+  42% of the inspector and scrolls past that, and each list keeps at least 110 px.
 - **File lists:** the inspector's lists of a commit's (or the working changes') files share
   one choice. Its header always holds two chips, "List" (every file by its path, the
   default) and "Tree" (files grouped by folder), the picked one with a tick. A folder row
@@ -311,11 +313,25 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   file count. A click opens or closes it. A chain of folders with one child each is one row
   (`crates/core/src/`), and folders come before files. The choice applies to every repository
   and is saved at once as `files_view` in the app's `state` file.
-- **Conflicts:** buttons name the branch ("Use feat/x"), never "mine", in line with
-  principle 5. A file with nothing to merge line by line, such as a binary file, is one
-  choice between the two sides.
+- **Conflicts:** a paused rebase, cherry-pick, revert or merge shows in the inspector, and
+  the working changes are selected when one appears. The inspector then holds a Peach pill
+  ("Rebase paused"), the sentence that says where it stopped, a "Conflicts" list of the files
+  that need a decision (a "!" and "Needs a decision", or a tick and "Decided"), and at the
+  foot "Cancel rebase" and the one blue "Continue rebase", which waits until everything is
+  decided. The two lists and the commit form wait while it is paused. Clicking a file opens
+  the resolver over the graph, as a diff does: the two branches' code next to each other as
+  cards, "Use feat/x" under each (the branch's name, never "mine" or "theirs", in line with
+  principle 5), and the result in an editor below for when both are needed. Previous and Next
+  walk the decisions, `Esc` or "Close" brings the graph back. Right-clicking a conflicted file
+  offers "Show both sides", "Use feat/x" and "Use main" for the whole file, and "Copy path".
+  A file with nothing to merge line by line, such as a binary file, is one choice between
+  the two sides. When it finishes, the band under the header says what is now true.
 - **Files:** a status letter, then the path with its folder muted, then `+n −n`.
-- **Diffs:** added and removed lines use a 10% green or red wash. Text stays Text.
+- **Diffs:** each hunk is a card on Mantle with a Surface 0 border and 8 px radius, over the
+  Base of the pane. Its header has the hunk's tick box (working changes), where it starts or
+  what git says it is inside, and "left out" or "in this commit". Its lines have one line
+  number, a sign and the text. Added and removed lines use a 10% green or red wash. Text
+  stays Text. The file's name is in the bar above, once.
 - **Dock tabs:** the bar holds tabs like the repository tabs, the same 28 px quiet button.
   The first is always the **Log**, then one per terminal, a `+` to open another, and
   `Clear` and `Hide` at the right. Terminals start in the repository's folder and keep

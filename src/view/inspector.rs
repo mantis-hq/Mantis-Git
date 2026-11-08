@@ -221,6 +221,13 @@ impl GraphView {
         );
     }
 
+    /// Selects the working changes row, if there is one.
+    pub fn select_working_changes(&mut self, cx: &mut Context<Self>) {
+        if let Some(index) = self.entries.iter().position(|entry| entry.working) {
+            self.select(index, cx);
+        }
+    }
+
     /// Selects HEAD after a load if nothing else is, so the panel starts out useful.
     pub(super) fn select_head_if_unselected(&mut self, cx: &mut Context<Self>) {
         if self.selected.is_some() {
@@ -249,6 +256,17 @@ impl GraphView {
             .bg(theme.title_bar)
             .border_l_1()
             .border_color(theme.border);
+        if let Some(progress) = self
+            .paused_operation()
+            .cloned()
+            .filter(|_| self.working_row_is_selected())
+        {
+            return Some(
+                panel
+                    .child(self.render_conflict_panel(&progress, cx))
+                    .into_any_element(),
+            );
+        }
         if self.working_row_is_selected() {
             let sentence = self.refs.working_sentence();
             let subtext = tokens(theme.is_dark()).subtext0;
@@ -284,12 +302,13 @@ impl GraphView {
                             .child(
                                 // Capped, so that a short window keeps some of its lists.
                                 div()
+                                    .id("commit-form")
                                     .flex_none()
-                                    .max_h(relative(0.55))
+                                    .max_h(relative(0.42))
                                     .pt_3()
                                     .border_t_1()
                                     .border_color(border)
-                                    .overflow_y_scrollbar()
+                                    .overflow_y_scroll()
                                     .child(self.render_commit_form(cx)),
                             ),
                     )
@@ -575,12 +594,7 @@ impl Pane {
 impl GraphView {
     /// Puts files into the index, or takes them out, then reads the changes again so the
     /// lists show where they stand.
-    pub(super) fn stage_paths(
-        &mut self,
-        paths: Vec<String>,
-        unstage: bool,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn stage_paths(&mut self, paths: Vec<String>, unstage: bool, cx: &mut Context<Self>) {
         let Some(repo) = self.workdir() else {
             return;
         };
@@ -719,7 +733,7 @@ impl GraphView {
             .gap(px(2.))
             .mx(px(-8.))
             .when(empty, |list| list.flex_none())
-            .when(!empty, |list| list.flex_1())
+            .when(!empty, |list| list.flex_1().min_h(px(110.)))
             .child(
                 section_label(muted)
                     .h_flex()
@@ -780,35 +794,37 @@ impl GraphView {
         let listed = details.clone();
         let scroll = self.scroll_of(pane);
 
-        div()
-            .relative()
-            .flex_1()
-            .min_h_0()
-            .child(
-                uniform_list(
-                    pane.list_id(),
-                    listed_rows,
-                    cx.processor(move |this, rows_in_view: Range<usize>, _, cx| {
-                        if tree_view {
-                            return rows_in_view
-                                .filter_map(|at| rows.get(at).map(|row| (at, row)))
-                                .map(|(at, row)| {
-                                    this.render_details_tree_row(pane, offset, at, row, &listed, cx)
-                                })
-                                .collect::<Vec<_>>();
-                        }
-                        rows_in_view
-                            .filter_map(|at| {
-                                let file = listed.files.get(offset + at)?;
-                                Some(this.render_file(pane, offset + at, file, cx))
+        let list = div().relative().flex_1().min_h_0().child(
+            uniform_list(
+                pane.list_id(),
+                listed_rows,
+                cx.processor(move |this, rows_in_view: Range<usize>, _, cx| {
+                    if tree_view {
+                        return rows_in_view
+                            .filter_map(|at| rows.get(at).map(|row| (at, row)))
+                            .map(|(at, row)| {
+                                this.render_details_tree_row(pane, offset, at, row, &listed, cx)
                             })
-                            .collect::<Vec<_>>()
-                    }),
-                )
-                .track_scroll(&scroll)
-                .size_full(),
+                            .collect::<Vec<_>>();
+                    }
+                    rows_in_view
+                        .filter_map(|at| {
+                            let file = listed.files.get(offset + at)?;
+                            Some(this.render_file(pane, offset + at, file, cx))
+                        })
+                        .collect::<Vec<_>>()
+                }),
             )
-            .scrollbar(&scroll, ScrollbarAxis::Vertical)
+            .track_scroll(&scroll)
+            .size_full(),
+        );
+        // A scrollbar takes its identity from the line that adds it, so each list adds its
+        // own here. One shared line would make all of them answer to the same bar.
+        match pane {
+            Pane::Commit => list.scrollbar(&scroll, ScrollbarAxis::Vertical),
+            Pane::Unstaged => list.scrollbar(&scroll, ScrollbarAxis::Vertical),
+            Pane::Staged => list.scrollbar(&scroll, ScrollbarAxis::Vertical),
+        }
     }
 
     /// The box at the start of a working row. Ticked means in the index, so an unticked
