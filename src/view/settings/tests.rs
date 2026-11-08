@@ -317,6 +317,32 @@ fn an_identity_gets_an_ssh_key_by_typing_or_picking_and_loses_it_by_picking_agai
 }
 
 #[gpui_kit::test]
+fn the_defaults_ssh_key_is_picked_or_typed_and_cleared_without_touching_its_name(
+    cx: &mut TestAppContext,
+) {
+    let (_dir, scope) = file_scope();
+    config::set(&scope, "user.name", "Pretext").unwrap();
+    let (view, mut cx) = open(None, scope.clone(), cx);
+    let key = |scope: &Scope| identity::book(scope).unwrap().default.ssh_key;
+
+    view.update_in(&mut cx, |view, window, cx| {
+        view.pick_key(&super::KeyTarget::Default, "~/.ssh/id_home", window, cx);
+    });
+    settle(&mut cx);
+    assert_eq!(key(&scope), "~/.ssh/id_home");
+    assert_eq!(
+        config::read(&scope).unwrap().get("user.name"),
+        Some("Pretext")
+    );
+
+    view.update_in(&mut cx, |view, window, cx| {
+        view.pick_key(&super::KeyTarget::Default, "~/.ssh/id_home", window, cx);
+    });
+    settle(&mut cx);
+    assert_eq!(key(&scope), "");
+}
+
+#[gpui_kit::test]
 fn identities_are_added_given_rules_and_removed_with_them(cx: &mut TestAppContext) {
     let (_dir, scope) = file_scope();
     let (view, mut cx) = open(None, scope.clone(), cx);

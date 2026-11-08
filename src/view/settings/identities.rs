@@ -23,8 +23,21 @@ impl Settings {
         };
         let label = row.label.read(cx).value().trim().to_owned();
         match id {
-            // The default is the global config, edited on the Git config page.
-            None => {}
+            // The default's name and email are the global config, edited on the Git
+            // config page. Its SSH key is only here.
+            None => {
+                let key = profile.ssh_key;
+                if key == self.book.default.ssh_key {
+                    return;
+                }
+                self.change(
+                    "Saved the default's SSH key.".to_owned(),
+                    move |_, base| identity::save_default_ssh_key(base, &key),
+                    None,
+                    window,
+                    cx,
+                );
+            }
             Some(id) => {
                 let unchanged = self
                     .book
@@ -113,6 +126,11 @@ impl Settings {
                 .iter()
                 .find(|row| row.id.as_deref() == Some(id))
                 .map(|row| row.ssh_key.clone()),
+            KeyTarget::Default => self
+                .identity_rows
+                .iter()
+                .find(|row| row.id.is_none())
+                .map(|row| row.ssh_key.clone()),
             KeyTarget::New => Some(self.new_identity_ssh.clone()),
         };
         let Some(input) = input else {
@@ -126,6 +144,7 @@ impl Settings {
         input.update(cx, |input, cx| input.set_value(next, window, cx));
         match target {
             KeyTarget::Identity(id) => self.commit_identity(Some(id.clone()), window, cx),
+            KeyTarget::Default => self.commit_identity(None, window, cx),
             KeyTarget::New => cx.notify(),
         }
     }
@@ -396,7 +415,7 @@ impl Settings {
                         .text_size(TEXT_SMALL)
                         .line_height(px(17.))
                         .text_color(muted)
-                        .child("Your global name and email, used when no rule or choice picks another. Change them on the Git config page."),
+                        .child("Your global name and email, used when no rule or choice picks another. Change them on the Git config page. Its SSH key is set here."),
                 ),
             Some(id) => {
                 let id = id.clone();
@@ -445,7 +464,6 @@ impl Settings {
                 .child(shown("Name", &profile.name))
                 .child(shown("Email", &profile.email))
                 .child(shown("Signing key", &profile.signing_key))
-                .child(shown("SSH key", &profile.ssh_key))
         } else {
             div()
                 .h_flex()
@@ -462,7 +480,9 @@ impl Settings {
             .child(div().h_flex().child(head))
             .child(fields);
         match id {
-            None => card.into_any_element(),
+            None => card
+                .child(self.render_ssh_key(KeyTarget::Default, index, &row.ssh_key, cx))
+                .into_any_element(),
             Some(id) => card
                 .child(self.render_ssh_key(
                     KeyTarget::Identity(id.clone()),

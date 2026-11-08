@@ -137,7 +137,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     wherever they are picked. The first card says who the open repository commits as and
     why, with one row of chips to change it: Automatic, then each identity. The picked chip
     has a tick, as in every choice. Below, the Default (the global name and email) is the
-    first identity, and "This repository's own" appears as a chip when the repository sets
+    first identity, its name and email shown and changed on the Git config page but its SSH
+    key set here like any other's, and "This repository's own" appears as a chip when the repository sets
     its own. Each identity lists the rules that pick it (an SSH host, a folder or a remote
     pattern), and one identity can have many. A repository's pick wins over rules, and a
     name set only in a repository is kept as an identity when another is picked. The SSH
