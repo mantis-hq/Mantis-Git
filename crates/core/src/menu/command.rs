@@ -138,6 +138,10 @@ pub enum Command {
     ApplyStashes {
         indexes: Vec<usize>,
     },
+    /// Applies stashes by their number and deletes each that applied.
+    PopStashes {
+        indexes: Vec<usize>,
+    },
     DeleteStashes {
         indexes: Vec<usize>,
         /// What deleting them does, worked out when the menu opened.
@@ -228,6 +232,7 @@ impl Command {
             Self::Copy { .. } => "Copying",
             Self::StashStaged { .. } => "Stashing",
             Self::ApplyStashes { .. } => "Applying",
+            Self::PopStashes { .. } => "Popping",
             Self::DeleteStashes { .. } => "Deleting",
             Self::ShowFile { .. } | Self::ShowConflict { .. } => "Opening",
             Self::UseSide { .. } => "Resolving",
@@ -358,6 +363,7 @@ impl Command {
                 stash::push_staged(repo, *staged, message.as_deref())
             }
             Self::ApplyStashes { indexes } => stash::apply_many(repo, indexes),
+            Self::PopStashes { indexes } => stash::pop_many(repo, indexes),
             Self::DeleteStashes { indexes, .. } => stash::drop_many(repo, indexes),
             Self::DiscardChanges { paths, .. } => {
                 working::discard_files(repo, paths).map(|()| None)
