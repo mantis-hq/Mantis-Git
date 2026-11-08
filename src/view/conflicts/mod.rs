@@ -6,7 +6,7 @@ mod resolver;
 
 use resolver::FileView;
 
-use super::notice::Confirm;
+use super::dialog::Confirm;
 use super::parts::{
     TEXT_CHIP, TEXT_SMALL, checkbox, expand_tabs, file_path, panel_row, pill, scroll_marks,
     section_label,
@@ -194,7 +194,7 @@ impl GraphView {
                 .disabled(self.busy.is_some())
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let target = target.clone();
-                    this.confirm = Some(Confirm::banner(
+                    let confirm = Confirm::banner(
                         conflict::rebase_warning(&target),
                         "Rebase",
                         move |this, cx| {
@@ -205,8 +205,8 @@ impl GraphView {
                                 cx,
                             );
                         },
-                    ));
-                    cx.notify();
+                    );
+                    this.ask(confirm, cx);
                 }))
                 .into_any_element(),
         )

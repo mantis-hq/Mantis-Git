@@ -1,6 +1,5 @@
 //! The branch sidebar. Clicking a branch spotlights its history in the graph.
 
-mod new_branch;
 pub(super) mod remotes;
 
 use super::menu::wire_ref;
@@ -11,6 +10,7 @@ use crate::theme::{lane_color, tokens};
 use gitclient_core::history::picks::{Click, Picks, tip_of};
 use gitclient_core::history::refs::RefKind;
 use gitclient_core::history::spotlight::Spotlight;
+use gitclient_core::menu::form::Form;
 use gitclient_core::repo::branch::Dragged;
 use gitclient_core::repo::submodule::State as SubmoduleState;
 use gitclient_core::tree::branches::{self, Folder};
@@ -19,7 +19,6 @@ use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use new_branch::NewBranch;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -107,7 +106,6 @@ struct RefRow {
 
 #[derive(Default)]
 pub(super) struct State {
-    pub(super) new_branch: Option<NewBranch>,
     pub(super) window_is_wide: bool,
     /// What the user chose, which outranks the window's width.
     open: Option<bool>,
@@ -558,7 +556,6 @@ impl GraphView {
         let theme = cx.theme();
         let (panel, border) = (theme.title_bar, theme.border);
         let items = self.sidebar_items();
-        let form = self.render_new_branch(cx);
 
         Some(
             div()
@@ -568,7 +565,6 @@ impl GraphView {
                 .bg(panel)
                 .border_r_1()
                 .border_color(border)
-                .child(div().v_flex().px_2().pt_3().children(form))
                 .child(
                     div()
                         .id("sidebar")
@@ -576,6 +572,7 @@ impl GraphView {
                         .min_h_0()
                         .w_full()
                         .px_2()
+                        .pt_3()
                         .pb_3()
                         .child(
                             div()
@@ -619,8 +616,7 @@ impl GraphView {
                     .text_color(link)
                     .child("New branch")
                     .on_click(cx.listener(|this, _, _, cx| {
-                        let label = this.refs.head_name().to_owned();
-                        this.begin_new_branch(None, label, cx)
+                        this.open_form(Form::new_branch_here(&this.refs), cx)
                     })),
             )
             .when(self.sidebar.spotlight.is_some(), |heading| {
@@ -876,7 +872,7 @@ impl GraphView {
                         .on_click(cx.listener(|this, _, _, cx| {
                             // The header under it would otherwise fold the section.
                             cx.stop_propagation();
-                            this.open_remote_form(None, cx);
+                            this.open_form(Form::Remote { original: None }, cx);
                         })),
                 )
             })

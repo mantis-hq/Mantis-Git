@@ -220,20 +220,18 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   `git -C <path> checkout <hash>` that goes back. The app never forces anything. With no
   submodules the section isn't drawn.
 - New branch: a quiet "New branch" link ends the Branches heading, and branch, tag and
-  commit menus have "New branch from <name or hash>". Either opens a form at the top of the
-  sidebar (the sidebar opens if closed): a section label saying where the branch starts
-  ("New branch, starting at main"), a name input with the cursor in it, and quiet "Cancel"
-  and "Create <name>" buttons, never blue. Enter creates it. The new branch is checked out,
-  and the band under the header says how to undo it. A name git would refuse, or one
-  already taken, is explained in that band and nothing changes.
-- Remotes: the "Remotes" header ends in a quiet blue "+ Add" that opens a form band under
-  the header (the notice band's look), with a name, an address, and quiet "Cancel" and
-  result-named buttons ("Add remote", "Save origin"). `Enter` saves and `Esc` closes. Each
-  remote's top folder in the list, or a row saying "no branches yet" for one nothing has
-  been fetched from, opens a menu on right-click: "Edit <name>" (the same form, filled in;
-  renaming also renames its remote branches), "Copy address", and in red "Remove remote
-  <name>", which asks first and gives the `git remote add` that brings it back. Names that
-  can't work are turned down in the form in Peach, before git runs.
+  commit menus have "New branch from <name or hash>". Either opens a form popup (see
+  "Popups") that says where the branch starts ("New branch, starting at main"), with a
+  "Name" input and "Create <name>" as its result. The new branch is checked out, and the
+  band under the header says how to undo it. A name git would refuse, or one already
+  taken, is explained in the popup, which stays open so the name can be put right.
+- Remotes: the "Remotes" header ends in a quiet blue "+ Add" that opens a form popup
+  ("Add a remote") with a "Name" and an "Address" input, and "Add remote" as its result.
+  Each remote's top folder in the list, or a row saying "no branches yet" for one nothing
+  has been fetched from, opens a menu on right-click: "Edit <name>" (the same form, filled
+  in, saved with "Save <name>"; renaming also renames its remote branches), "Copy address",
+  and in red "Remove remote <name>", which asks first and gives the `git remote add` that
+  brings it back. Names that can't work are turned down in the popup, before git runs.
 - A branch row ends with its count against the default branch (`+2 −1`), then against
   the remote branch it tracks (`↑1 ↓2`: to push, to pull). Level or untracked shows nothing.
 
@@ -252,16 +250,26 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   ("Merge feat/x into main", "Rebase main onto feat/x"). A line that can't be used stays,
   in Overlay 2, and says why. Only lines that remove something are red, and they ask
   first, saying how to undo. `Up`/`Down` move, `Enter` chooses, `Esc` closes.
-- **Delete confirmation:** deleting a branch, tag, worktree or remote asks in a small popup centred
-  over the window, never in the band under the header. A card on Mantle with a Surface 0
-  border and 8 px radius holds the sentence (which says how to undo it), a line naming the
-  keys, and "Cancel" and the result ("Delete") as quiet buttons. `Enter` confirms and `Esc`
-  cancels; clicking outside cancels too. A held-down key never answers. Deleting a branch
-  that is neither merged into the default branch nor pushed loses commits nothing else
-  keeps, so `Enter` has to be pressed twice within 600 ms: the first press turns the key
-  line Red and says "Press Enter again to delete." Rules for which is which live in core
-  (`Weight` in `crates/core/src/menu/command.rs`). Other risky steps (rebase, force push, hard
-  reset) still use the band.
+- **Popups:** a 420 px card centred over the window, on Mantle with a Surface 0 border
+  and 8 px radius. It holds a sentence, then any inputs, then a line naming the keys
+  ("Press Enter to create feat/x, or Esc to cancel.", in Overlay 2), and "Cancel" and the
+  result as quiet buttons, never blue. `Enter` answers and `Esc` cancels; clicking outside
+  cancels too. A held-down key never answers. The answering button is off while git runs.
+  Every popup is drawn by one frame (`src/view/dialog/mod.rs`), and there is at most one.
+  - **Delete confirmation:** deleting a branch, tag, worktree or remote asks in a popup,
+    never in the band under the header. The sentence says how to undo it and the result is
+    "Delete". Deleting a branch that is neither merged into the default branch nor pushed
+    loses commits nothing else keeps, so `Enter` has to be pressed twice within 600 ms: the
+    first press turns the key line Red and says "Press Enter again to delete." Rules for
+    which is which live in core (`Weight` in `crates/core/src/menu/command.rs`). Other risky
+    steps (rebase, force push, hard reset) still use the band.
+  - **Forms** ask for a few words: a new branch's name, or a remote's name and address. The
+    sentence says what the form makes or changes, and each input sits under its section
+    label, with the cursor in the first. `Tab` and `Shift Tab` move between inputs. The
+    result is named for what was typed ("Create feat/x"). What can't work is said in Peach
+    under the inputs, whether the form found it or git refused, and typing clears it. On
+    success the popup closes and the band says what happened. What each form asks lives in
+    core (`Form` in `crates/core/src/menu/form.rs`).
 - **Double-click:** double-clicking a branch, in the sidebar or on a chip, checks it out. A
   remote branch gets a local copy that follows it. The checked-out branch does nothing.
 - **Drag and drop:** branches and tags drag from the sidebar and from the refs column,

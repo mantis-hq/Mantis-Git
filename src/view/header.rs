@@ -1,6 +1,6 @@
 //! The header: where you are in a sentence, and the one thing to do next.
 
-use super::notice::Confirm;
+use super::dialog::Confirm;
 use super::parts::{TEXT_BODY, TEXT_STATUS};
 use super::parts::{header_bar, header_divider};
 use super::{GraphView, Status, repository_name};
@@ -117,12 +117,12 @@ impl GraphView {
     /// Runs the header's action, stopping to explain first if it can lose work.
     pub fn start_action(&mut self, action: NextAction, cx: &mut Context<Self>) {
         if let NextAction::ForcePush { replaced, .. } = action {
-            self.confirm = Some(Confirm::banner(
+            let confirm = Confirm::banner(
                 self.refs.status.force_push_warning(replaced),
                 "Force push",
                 move |this, cx| this.run_action(action.clone(), cx),
-            ));
-            cx.notify();
+            );
+            self.ask(confirm, cx);
             return;
         }
         self.run_action(action, cx);

@@ -331,6 +331,39 @@ mod render {
         capture(&mut cx, handle, "resolver-whole");
     }
 
+    /// The popups that ask for a name: the new-branch form with a name that git turns down,
+    /// and the remote form. Both are cards in the middle of the window, in Mantle.
+    fn assert_forms_draw() {
+        use gitclient_core::menu::form::Form;
+        let repo = fixture();
+        let mut cx = app(ThemeMode::Dark);
+        let (handle, view) = open(&mut cx, repo.path());
+        let mantle = image::Rgba([0x18, 0x18, 0x25, 0xff]);
+        let forms = [
+            (
+                "form-new-branch",
+                Form::NewBranch {
+                    start: Some("main".into()),
+                    label: "main".into(),
+                },
+            ),
+            ("form-remote", Form::Remote { original: None }),
+        ];
+        for (name, form) in forms {
+            cx.update_window(handle, |_, _, cx| {
+                view.update(cx, |view, cx| view.open_form(form, cx));
+            })
+            .unwrap();
+            let frame = capture(&mut cx, handle, name);
+            // The 420 px card is centred; 205 px left of the middle is its padding, in
+            // Mantle, beside the inputs. Opening the next form replaces this one.
+            let scale = frame.width() as f32 / 1200.;
+            let x = frame.width() / 2 - (205. * scale) as u32;
+            let y = frame.height() / 2;
+            assert_eq!(*frame.get_pixel(x, y), mantle, "{name}: the card is drawn");
+        }
+    }
+
     /// The dock over a loaded repository: the log with the commands that loaded it, then a
     /// terminal that has run something.
     fn assert_dock_shows_the_log_and_a_terminal() {
@@ -523,6 +556,7 @@ mod render {
         assert_draws_lanes(ThemeMode::Dark, "graph-dark");
         assert_draws_lanes(ThemeMode::Light, "graph-light");
         assert_dock_shows_the_log_and_a_terminal();
+        assert_forms_draw();
         println!("render: passed (real offscreen renderer)");
     }
 }

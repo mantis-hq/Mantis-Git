@@ -1,6 +1,7 @@
 //! What a menu line does when chosen: the command itself, what it says while it runs, how
 //! it asks first when it can lose something, and running it.
 
+use super::form::Form;
 use crate::commit::actions;
 use crate::history::refs::RefKind;
 use crate::repo::branch::{self, Doomed, DropAction};
@@ -67,13 +68,9 @@ pub enum Command {
     OpenWorktreeInTab {
         path: PathBuf,
     },
-    /// Handled by the interface, which asks for a name: makes a branch at `start`.
-    NewBranch {
-        /// A revision to start at, or the checked-out commit when `None`.
-        start: Option<String>,
-        /// What to call that place, such as `a1b2c3d` or `main`.
-        label: String,
-    },
+    /// Handled by the interface, which opens the form: asks for the words a command needs,
+    /// such as a new branch's name, then runs what the form says.
+    Form(Form),
     RemoveWorktree {
         path: PathBuf,
         /// What removing it does and how to bring it back, worked out when the menu opened.
@@ -90,10 +87,6 @@ pub enum Command {
         warning: Option<String>,
     },
     UpdateSubmodules,
-    /// Handled by the interface, which owns the form that edits a remote.
-    EditRemote {
-        name: String,
-    },
     RemoveRemote {
         name: String,
         /// What removing it does and how to bring it back, worked out when the menu opened.
@@ -152,7 +145,12 @@ impl Weight {
     /// The line under the question that says which keys answer it. `armed` is true once the
     /// first of two presses has landed.
     pub fn hint(self, action: &str, armed: bool) -> String {
-        let action = action.to_lowercase();
+        // Only the verb: what follows it is a name, which keeps its case.
+        let mut chars = action.chars();
+        let action = chars
+            .next()
+            .map(|first| first.to_lowercase().chain(chars).collect::<String>())
+            .unwrap_or_default();
         match (self, armed) {
             (Self::DoublePress, false) => {
                 format!("Press Enter twice to {action}, or Esc to cancel.")
@@ -192,11 +190,10 @@ impl Command {
             Self::Revert { .. } => "Reverting",
             Self::Reset { .. } => "Resetting",
             Self::SwitchWorktree { .. } | Self::OpenWorktreeInTab { .. } => "Switching",
-            Self::NewBranch { .. } => "Creating a branch",
+            Self::Form(form) => form.progress(),
             Self::RemoveWorktree { .. } => "Removing the worktree",
             Self::OpenSubmoduleInTab { .. } => "Switching",
             Self::UpdateSubmodule { .. } | Self::UpdateSubmodules => "Updating",
-            Self::EditRemote { .. } => "Editing",
             Self::RemoveRemote { .. } => "Removing the remote",
             Self::Copy { .. } => "Copying",
             Self::ShowFile { .. } | Self::ShowConflict { .. } => "Opening",
@@ -311,8 +308,7 @@ impl Command {
             Self::SwitchWorktree { .. }
             | Self::OpenWorktreeInTab { .. }
             | Self::OpenSubmoduleInTab { .. }
-            | Self::NewBranch { .. }
-            | Self::EditRemote { .. }
+            | Self::Form(_)
             | Self::ShowFile { .. }
             | Self::ShowConflict { .. }
             | Self::UseSide { .. }
@@ -339,6 +335,11 @@ mod tests {
         assert_eq!(
             Weight::DoublePress.hint("Delete", true),
             "Press Enter again to delete."
+        );
+        assert_eq!(
+            Weight::Popup.hint("Save Origin", false),
+            "Press Enter to save Origin, or Esc to cancel.",
+            "a name keeps its case"
         );
     }
 }
