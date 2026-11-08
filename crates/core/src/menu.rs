@@ -2,16 +2,16 @@
 //! branch on another, asks here for the lines of a menu. Each line carries the command it
 //! runs, so the interface only draws lines and hands the chosen command back to be run.
 
-use crate::branch::{self, Doomed, Dragged, DropAction, Relation};
 use crate::commit::actions;
-use crate::conflict;
 use crate::history::Commit;
 use crate::history::refs::{RefKind, Refs};
-use crate::remote;
-use crate::submodule;
+use crate::repo::branch::{self, Doomed, Dragged, DropAction, Relation};
+use crate::repo::conflict;
+use crate::repo::remote;
+use crate::repo::submodule;
+use crate::repo::worktree;
 use crate::text::{count, short_oid};
 use crate::working::Side;
-use crate::worktree;
 use std::path::{Path, PathBuf};
 
 /// What a menu line does when chosen.
@@ -989,7 +989,7 @@ mod tests {
     #[test]
     fn a_remote_menu_edits_copies_and_removes_with_a_way_back() {
         let mut refs = refs();
-        refs.remote_configs = vec![crate::remote::Remote {
+        refs.remote_configs = vec![crate::repo::remote::Remote {
             name: "origin".into(),
             url: "git@host:a.git".into(),
             push_url: None,
@@ -1017,7 +1017,7 @@ mod tests {
     #[test]
     fn a_worktree_menu_switches_copies_and_removes_only_what_may_go() {
         let mut refs = refs();
-        refs.worktrees = crate::worktree::parse(
+        refs.worktrees = crate::repo::worktree::parse(
             "worktree /code/app\nHEAD aaaaaaaa\nbranch refs/heads/main\n\n\
              worktree /code/app-x\nHEAD bbbbbbbb\nbranch refs/heads/feat/x\n\n\
              worktree /code/app-l\nHEAD bbbbbbbb\ndetached\nlocked\n",
@@ -1057,7 +1057,7 @@ mod tests {
 
     #[test]
     fn a_submodule_menu_opens_what_is_there_and_asks_before_moving_one() {
-        use crate::submodule::{State, Submodule};
+        use crate::repo::submodule::{State, Submodule};
         let module = |path: &str, state, head: Option<&str>| Submodule {
             name: path.into(),
             path: path.into(),

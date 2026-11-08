@@ -685,10 +685,10 @@ fn repository_name(path: &Path) -> String {
 mod tests {
     // Not `super::*`: that would bring in GPUI's `test` macro, which shadows Rust's.
     use super::{Entry, GraphView, LoadEvent, Status, bind_keys};
-    use gitclient_core::branch::Dragged;
     use gitclient_core::history::Commit;
     use gitclient_core::history::lanes::GraphBuilder;
     use gitclient_core::history::refs::RefKind;
+    use gitclient_core::repo::branch::Dragged;
     use gpui_kit::{Entity, Modifiers, TestAppContext, VisualTestContext, point, px};
     use std::sync::Arc;
 
@@ -870,7 +870,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn a_force_push_waits_for_confirmation_and_others_do_not(cx: &mut TestAppContext) {
-        use gitclient_core::status::NextAction;
+        use gitclient_core::repo::status::NextAction;
         let (view, mut cx) = open_view(cx);
         view.update(&mut cx, |view, cx| {
             let force = NextAction::ForcePush {
@@ -1262,14 +1262,14 @@ mod tests {
                 matches!(
                     line.command(),
                     Some(Command::UseSide {
-                        side: gitclient_core::conflict::Side::Other,
+                        side: gitclient_core::repo::conflict::Side::Other,
                         ..
                     })
                 )
             });
             assert!(taking_other);
             view.close_menu(cx);
-            view.use_side_for_file("a", gitclient_core::conflict::Side::Mine, cx);
+            view.use_side_for_file("a", gitclient_core::repo::conflict::Side::Mine, cx);
         });
         cx.run_until_parked();
         view.update(&mut cx, |view, cx| view.check_paused_operation(cx));
@@ -1295,7 +1295,7 @@ mod tests {
     #[gpui_kit::test]
     fn a_result_is_built_from_picked_lines_and_saved_with_one_button(cx: &mut TestAppContext) {
         use super::conflicts::Pick;
-        use gitclient_core::conflict::Side;
+        use gitclient_core::repo::conflict::Side;
         use gitclient_core::testing::Repo;
         let repo = Repo::new();
         repo.git(&["config", "user.name", "Ada"]);
@@ -1471,7 +1471,7 @@ mod tests {
         let (view, mut cx) = open_view(cx);
         view.update(&mut cx, |view, cx| {
             let mut refs = gitclient_core::history::refs::Refs::default();
-            refs.remote_configs = vec![gitclient_core::remote::Remote {
+            refs.remote_configs = vec![gitclient_core::repo::remote::Remote {
                 name: "origin".into(),
                 url: "git@host:a.git".into(),
                 push_url: None,

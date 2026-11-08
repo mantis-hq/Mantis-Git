@@ -1,12 +1,12 @@
 //! Adding and editing remotes. The sidebar's "+" and a remote's menu open one form under
 //! the header, with a name and an address. What a remote is and how it is saved lives in
-//! `gitclient_core::remote`.
+//! `gitclient_core::repo::remote`.
 
 use super::GraphView;
 use super::parts::{TEXT_BODY, TEXT_SMALL};
 use crate::theme::tokens;
 use gitclient_core::menu;
-use gitclient_core::remote;
+use gitclient_core::repo::remote;
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::*;

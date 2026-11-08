@@ -620,7 +620,7 @@ mod tests {
             linked.display()
         );
         let mut refs = gitclient_core::history::refs::Refs::default();
-        refs.worktrees = gitclient_core::worktree::parse(&listing);
+        refs.worktrees = gitclient_core::repo::worktree::parse(&listing);
         refs.worktrees[0].is_current = true;
         let main = main.to_owned();
         tab.update(cx, |tab, _| {
@@ -681,14 +681,14 @@ mod tests {
         let (view, mut cx) = open_workspace(cx);
         let (main, inner) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let tab = view.read_with(&cx, |view, _| view.active_view().clone());
-        let module = gitclient_core::submodule::Submodule {
+        let module = gitclient_core::repo::submodule::Submodule {
             name: "lib".into(),
             path: "lib".into(),
             folder: inner.path().to_owned(),
             url: None,
             recorded: "a".repeat(40),
             head: Some("a".repeat(40)),
-            state: gitclient_core::submodule::State::Current,
+            state: gitclient_core::repo::submodule::State::Current,
         };
         let mut refs = gitclient_core::history::refs::Refs::default();
         refs.submodules = vec![module];

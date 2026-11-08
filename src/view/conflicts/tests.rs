@@ -1,5 +1,5 @@
 use super::{FileView, Row, Visible};
-use gitclient_core::conflict::Piece;
+use gitclient_core::repo::conflict::Piece;
 
 fn lines(prefix: &str, count: usize) -> String {
     (1..=count).map(|n| format!("{prefix} {n}\n")).collect()

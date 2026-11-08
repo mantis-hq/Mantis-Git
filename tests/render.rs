@@ -289,9 +289,9 @@ mod render {
         write("fn parse(input: &str) {\n    input.trim_end();\n}\n");
         commit(path, "Keep leading spaces");
         git(path, &["checkout", "-q", "feat/parser"]);
-        assert!(gitclient_core::conflict::rebase_onto(path, "main").is_ok());
+        assert!(gitclient_core::repo::conflict::rebase_onto(path, "main").is_ok());
         assert!(
-            gitclient_core::conflict::detect(path).is_some(),
+            gitclient_core::repo::conflict::detect(path).is_some(),
             "fixture must conflict"
         );
 

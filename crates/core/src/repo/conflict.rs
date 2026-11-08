@@ -4,7 +4,7 @@
 //! Each conflict has a `mine` and an `other`, and every label names a branch.
 
 use crate::ops::{self, git};
-use crate::status;
+use crate::repo::status;
 use crate::text::{count, short_oid};
 use std::fs;
 use std::path::Path;

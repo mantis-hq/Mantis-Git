@@ -2,9 +2,9 @@
 //! one. The interface asks [`drop_choices`] what dropping one ref on another can mean, so
 //! that the menu only offers what makes sense for how the two histories relate.
 
-use crate::conflict;
 use crate::history::refs::RefKind;
 use crate::ops::{self, git};
+use crate::repo::conflict;
 use crate::text::short_oid;
 use std::path::Path;
 

@@ -9,7 +9,7 @@ use super::parts::{
 };
 use super::{GraphView, Notice};
 use crate::theme::{lane_color, tokens};
-use gitclient_core::conflict::{self, Decision, Piece, Progress, Side};
+use gitclient_core::repo::conflict::{self, Decision, Piece, Progress, Side};
 use gitclient_core::text::count;
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};

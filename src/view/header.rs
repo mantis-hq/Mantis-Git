@@ -4,7 +4,7 @@ use super::notice::Confirm;
 use super::parts::{TEXT_BODY, TEXT_STATUS};
 use super::parts::{header_bar, header_divider};
 use super::{GraphView, Status, repository_name};
-use gitclient_core::status::{self, NextAction, Span};
+use gitclient_core::repo::status::{self, NextAction, Span};
 use gpui_kit::component::button::*;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::*;

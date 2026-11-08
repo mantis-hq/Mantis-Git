@@ -4,12 +4,12 @@
 use super::lanes::{LaneColor, Plan};
 use super::{Commit, CommitActions};
 use crate::ops;
-use crate::remote::{self, Remote};
-use crate::status::{self, RepoStatus};
-use crate::submodule::{self, Submodule};
+use crate::repo::remote::{self, Remote};
+use crate::repo::status::{self, RepoStatus};
+use crate::repo::submodule::{self, Submodule};
+use crate::repo::worktree::{self, Worktree};
 use crate::text::count;
 use crate::working::version::{self, Version};
-use crate::worktree::{self, Worktree};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

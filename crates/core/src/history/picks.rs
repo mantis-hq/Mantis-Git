@@ -1,8 +1,8 @@
 //! Which branches, tags and remote branches are picked in the sidebar. The graph spotlights
 //! their histories, and the menu acts on all of them.
 
-use crate::branch::Dragged;
 use crate::history::refs::{RefKind, Refs};
+use crate::repo::branch::Dragged;
 use std::sync::Arc;
 
 /// How a click changes the picks.
