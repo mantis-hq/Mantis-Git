@@ -472,6 +472,16 @@ pub fn save_default(scope: &Scope, profile: &Profile) -> Result<(), String> {
     profile.write_to(scope)
 }
 
+/// Sets the default's SSH key and leaves its name, email and signing key as they are. An
+/// empty key takes out a key that gitclient set, and leaves a command written by hand.
+pub fn save_default_ssh_key(scope: &Scope, key: &str) -> Result<(), String> {
+    let profile = Profile {
+        ssh_key: key.to_owned(),
+        ..Profile::from_values(&config::read(scope)?)
+    };
+    profile.write_to(scope)
+}
+
 /// Picks identity `id` for everything `matcher` matches, replacing any other that did.
 pub fn add_rule(scope: &Scope, id: &str, matcher: &Match) -> Result<(), String> {
     let matcher = matcher.tidy();
@@ -982,6 +992,23 @@ mod tests {
         assert!(save_identity(&scope, &no_label).is_err());
         assert!(save_identity(&scope, &empty).is_err());
         assert!(book(&scope).unwrap().identities.is_empty());
+    }
+
+    #[test]
+    fn the_defaults_ssh_key_changes_alone_and_clears_again() {
+        let (_dir, scope) = scope();
+        save_default(&scope, &profile("Pretext", "p@example.com")).unwrap();
+        save_default_ssh_key(&scope, "~/.ssh/id_home").unwrap();
+        let default = book(&scope).unwrap().default;
+        assert_eq!(default.ssh_key, "~/.ssh/id_home");
+        assert_eq!(
+            (default.name.as_str(), default.email.as_str()),
+            ("Pretext", "p@example.com")
+        );
+        save_default_ssh_key(&scope, "").unwrap();
+        let default = book(&scope).unwrap().default;
+        assert_eq!(default.ssh_key, "");
+        assert_eq!(default.name, "Pretext");
     }
 
     #[test]

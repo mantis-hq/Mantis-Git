@@ -265,6 +265,7 @@ struct IdentityRow {
 /// Where a picked SSH key goes.
 #[derive(Clone)]
 enum KeyTarget {
+    Default,
     Identity(String),
     New,
 }
