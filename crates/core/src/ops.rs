@@ -4,7 +4,7 @@
 //! Everything here blocks, so call it off the UI thread.
 
 use crate::log::{self, Handle, Stream};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::Arc;
@@ -158,6 +158,19 @@ impl Process {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        #[cfg(unix)]
+        if std::env::var_os("SSH_ASKPASS").is_none() {
+            // ssh would otherwise ask for a passphrase on the terminal the app was started
+            // from, where nobody sees it and git waits forever. With the askpass program
+            // forced it asks in a window, or, with none installed, fails at once. git falls
+            // back to the same program for HTTPS logins.
+            command
+                .env(
+                    "SSH_ASKPASS",
+                    askpass_helper().unwrap_or("/bin/false".into()),
+                )
+                .env("SSH_ASKPASS_REQUIRE", "force");
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt as _;
@@ -237,21 +250,62 @@ impl Drop for Process {
     }
 }
 
-/// Copies a pipe into the log a line at a time as it arrives, and returns all of it.
+/// A graphical askpass program installed on this machine, if any.
+#[cfg(unix)]
+fn askpass_helper() -> Option<std::path::PathBuf> {
+    const NAMES: [&str; 5] = [
+        "ksshaskpass",
+        "ssh-askpass",
+        "lxqt-openssh-askpass",
+        "x11-ssh-askpass",
+        "ssh-askpass-fullscreen",
+    ];
+    const FIXED: [&str; 3] = [
+        "/usr/lib/seahorse/ssh-askpass",
+        "/usr/lib/ssh/gnome-ssh-askpass",
+        "/usr/libexec/openssh/gnome-ssh-askpass",
+    ];
+    // A helper draws a window, so there has to be a display for it.
+    std::env::var_os("DISPLAY").or_else(|| std::env::var_os("WAYLAND_DISPLAY"))?;
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path)
+        .flat_map(|dir| NAMES.iter().map(move |name| dir.join(name)))
+        .chain(FIXED.iter().map(std::path::PathBuf::from))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Whether `text` is a question git or ssh is waiting on: no newline, ending in a colon and
+/// a space, like "Enter passphrase for key '/home/me/.ssh/id_ed25519': ".
+fn is_prompt(text: &[u8]) -> bool {
+    text.len() < 300 && (text.ends_with(b": ") || text.ends_with(b"? "))
+}
+
+/// Copies a pipe into the log a line at a time as it arrives, and returns all of it. A
+/// prompt has no newline, so it is logged as soon as it arrives rather than never.
 fn pump(pipe: impl Read + Send + 'static, stream: Stream, record: Handle) -> JoinHandle<Vec<u8>> {
     thread::spawn(move || {
-        let mut reader = BufReader::new(pipe);
+        let mut pipe = pipe;
         let mut all = Vec::new();
-        let mut line = Vec::new();
+        let mut pending = Vec::new();
+        let mut chunk = [0u8; 4096];
         loop {
-            line.clear();
-            match reader.read_until(b'\n', &mut line) {
+            let read = match pipe.read(&mut chunk) {
                 Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    record.line(stream, &String::from_utf8_lossy(&line));
-                    all.extend_from_slice(&line);
-                }
+                Ok(read) => read,
+            };
+            all.extend_from_slice(&chunk[..read]);
+            pending.extend_from_slice(&chunk[..read]);
+            while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+                let line: Vec<u8> = pending.drain(..=end).collect();
+                record.line(stream, &String::from_utf8_lossy(&line));
             }
+            if is_prompt(&pending) {
+                record.line(stream, &String::from_utf8_lossy(&pending));
+                pending.clear();
+            }
+        }
+        if !pending.is_empty() {
+            record.line(stream, &String::from_utf8_lossy(&pending));
         }
         all
     })
@@ -279,6 +333,30 @@ pub(crate) fn stderr_message(stderr: &[u8]) -> String {
 mod tests {
     use super::*;
     use crate::testing::Repo;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_prompt_without_a_newline_is_logged_while_the_command_still_waits() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "printf 'Enter passphrase for key: ' >&2; sleep 5"]);
+        let mut process = Process::spawn(&mut command, false).unwrap();
+        let started = std::time::Instant::now();
+        let seen = loop {
+            let seen = log::read(|entries| {
+                entries.iter().any(|e| {
+                    e.lines
+                        .iter()
+                        .any(|l| l.text.starts_with("Enter passphrase"))
+                })
+            });
+            if seen || started.elapsed() > Duration::from_secs(3) {
+                break seen;
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+        process.stdout.take();
+        assert!(seen, "the prompt never reached the log");
+    }
 
     #[test]
     fn every_command_is_logged_with_its_output_and_how_it_ended() {
