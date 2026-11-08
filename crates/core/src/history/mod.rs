@@ -15,6 +15,7 @@ use crate::ops::{Process, git, stderr_message};
 use crate::text::count;
 use lanes::{GraphBuilder, Row};
 use refs::{Refs, read_refs};
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -91,17 +92,37 @@ pub enum LoadEvent {
 
 /// Where a load that stopped at its limit left off, so the history below can be read
 /// later and laid out in the same lanes.
+///
+/// History comes children first, so what is not read yet is exactly the history of the
+/// parents the open lanes wait for and of the tips not listed yet. The next read starts
+/// there, and git walks only the new commits.
 #[derive(Clone)]
 pub struct More {
-    tips: Arc<[Arc<str>]>,
     builder: GraphBuilder,
-    /// How many commits have been read so far, which the next read skips.
-    read: u32,
+    /// Branch, tag and HEAD commits that have not been listed yet.
+    unseen_tips: HashSet<Arc<str>>,
+}
+
+impl More {
+    /// Where the next read starts, in a stable order.
+    fn starts(&self) -> Vec<Arc<str>> {
+        let mut starts: Vec<Arc<str>> = self
+            .builder
+            .awaited()
+            .chain(&self.unseen_tips)
+            .cloned()
+            .collect();
+        starts.sort_unstable();
+        starts.dedup();
+        starts
+    }
 }
 
 impl std::fmt::Debug for More {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("More").field("read", &self.read).finish()
+        f.debug_struct("More")
+            .field("starts", &self.starts())
+            .finish()
     }
 }
 
@@ -162,29 +183,32 @@ pub fn load(repo: &Path, limit: u32, mut emit: impl FnMut(LoadEvent) -> bool) {
     }
     let working = working.filter(|_| !refs.tips.is_empty());
     let more = More {
-        tips: refs.tips.iter().cloned().collect(),
         builder,
-        read: 0,
+        unseen_tips: refs.tips.iter().cloned().collect(),
     };
-    read_more(repo, more, limit, working, &mut emit);
+    read_more(repo, &refs.tips, more, limit, working, &mut emit);
 }
 
 /// Reads up to `limit` commits after the ones `more` has read, passing each step to
 /// `emit` until it returns false, and ends with `More` again if there may be others.
 pub fn load_more(repo: &Path, more: More, limit: u32, mut emit: impl FnMut(LoadEvent) -> bool) {
-    read_more(repo, more, limit, None, &mut emit);
+    let starts = more.starts();
+    read_more(repo, &starts, more, limit, None, &mut emit);
 }
 
 fn read_more(
     repo: &Path,
+    starts: &[Arc<str>],
     mut more: More,
     limit: u32,
     mut working: Option<Entry>,
     emit: &mut impl FnMut(LoadEvent) -> bool,
 ) {
     let mut stopped = false;
-    let result = stream_commits(repo, &more.tips, more.read, limit, |commits| {
-        more.read += commits.len() as u32;
+    let result = stream_commits(repo, starts, limit, |commits| {
+        for commit in &commits {
+            more.unseen_tips.remove(&commit.oid);
+        }
         let batch = working
             .take()
             .into_iter()
@@ -224,11 +248,10 @@ fn working_entry(files: u32, builder: &mut GraphBuilder) -> Entry {
     }
 }
 
-/// Streams up to `limit` commits after the first `skip`, and says how many it read.
+/// Streams up to `limit` commits, and says how many it read.
 fn stream_commits(
     repo: &Path,
     tips: &[Arc<str>],
-    skip: u32,
     limit: u32,
     mut sink: impl FnMut(Vec<Commit>) -> bool,
 ) -> Result<u32, String> {
@@ -248,11 +271,6 @@ fn stream_commits(
         "--no-show-signature",
         "--format=%H%x00%P%x00%aN%x00%at%x00%s",
     ]);
-    if skip > 0 {
-        // The same tips in topological order list the same commits, so this picks up
-        // exactly where the last read stopped.
-        command.arg(format!("--skip={skip}"));
-    }
     // Dropping the process, as every early return below does, stops git.
     let mut process = Process::spawn(&mut command, true)?;
 
@@ -382,13 +400,36 @@ mod tests {
         repo.git(&["checkout", "-q", "main"]);
         std::fs::write(repo.path().join("loose"), "x").unwrap();
 
+        // A branch nothing else leads to, which a page can end before.
+        repo.git(&["branch", "old", "HEAD~3"]);
+        repo.git(&["checkout", "-q", "old"]);
+        repo.commit("old 1");
+        repo.git(&["checkout", "-q", "main"]);
+
+        // A page starts where the last stopped, so git may order what is left differently
+        // from one long read. What must hold: every commit once, children before parents,
+        // and every line joined as it is in one read.
         let (_, all, _) = load_all(repo.path());
+        let joins = |entries: &[Entry]| -> Vec<(Arc<str>, bool, usize)> {
+            let mut joins: Vec<_> = entries
+                .iter()
+                .map(|e| (e.commit.oid.clone(), e.working, e.row.incoming.len()))
+                .collect();
+            joins.sort();
+            joins
+        };
         for page in 1..=4 {
             let (paged, _) = load_in_pages(repo.path(), page);
-            assert_eq!(paged, all, "pages of {page}");
+            assert_eq!(joins(&paged), joins(&all), "pages of {page}");
+            for (at, entry) in paged.iter().enumerate() {
+                for parent in &entry.commit.parents {
+                    let below = paged[at..].iter().any(|e| e.commit.oid == *parent);
+                    assert!(below, "pages of {page}: a parent came before its child");
+                }
+            }
         }
-        // Seven commits in pages of two: three full pages, then one with the last.
-        assert_eq!(load_in_pages(repo.path(), 2).1, 4);
+        // Eight commits in pages of two: four full pages, then a read that finds no more.
+        assert_eq!(load_in_pages(repo.path(), 2).1, 5);
     }
 
     #[test]

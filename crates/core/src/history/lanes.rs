@@ -233,6 +233,12 @@ impl GraphBuilder {
         }
     }
 
+    /// The commits the open lanes wait for: parents of commits laid out so far that have
+    /// not come yet, and HEAD while it is held for.
+    pub fn awaited(&self) -> impl Iterator<Item = &Arc<str>> {
+        self.slots.iter().flatten().map(|slot| &slot.expects)
+    }
+
     fn lane_expecting(&self, oid: &str) -> Option<Lane> {
         self.slots.iter().enumerate().find_map(|(column, slot)| {
             let slot = slot
