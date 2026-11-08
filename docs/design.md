@@ -328,11 +328,18 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   commit form wait while it is paused.
   Clicking a file opens the resolver over the graph, as a diff does, and `Esc` or "Close"
   brings the graph back. It is one file at a time, in three parts that share the height:
-  - **Conflicts**, each a card with both branches' code next to each other (named by branch,
-    never "mine" or "theirs", in line with principle 5) and a tick box on every line. Its
-    header says "Conflict 2 of 3 · line 40" and has "Use feat/x", "Use main" and, once lines
-    are ticked, "Use 3 selected lines" (the ticked lines of the first side, then the
-    second's), which put that in the result. A conflict already settled shrinks to a line.
+  - **Conflicts**, shown in the context of the file, as a list of rows that draws only
+    those in view, so a file of any size costs the same. A bar over it names the two
+    branches. The lines both sides agree on are plain rows with their line numbers; each
+    conflict is a header row, "Conflict 2 of 3 · line 40" with "Use feat/x", "Use main" and,
+    once lines are ticked, "Use 3 selected lines" (the ticked lines of the first side, then
+    the second's), and under it the two sides' lines next to each other, each with a tick box
+    and a tint in its branch's colour. A conflict already settled in the result dims, says so
+    and loses its buttons. The branches are named, never "mine" or "theirs", in line with
+    principle 5. The header has the same "Changes" and "Whole file" chips as a diff, and they
+    are the same setting: "Changes" shows each conflict with three lines of context around it
+    and "⋯ 17 unchanged lines" for what was left out, "Whole file" shows every line and marks
+    each conflict beside the scrollbar in Peach.
   - **Result**, the whole file in an editor, which starts as the file as it stands with its
     conflict markers. The cards edit it, and so can the user, by hand, anywhere. A conflict
     counts as settled when its markers are gone from the result, however that happened. The

@@ -1,6 +1,6 @@
 //! The diff of one file, drawn over the whole graph pane while it is read.
 
-use super::parts::{LineStyle, checkbox, chip, expand_tabs, file_path, line_style};
+use super::parts::{LineStyle, checkbox, chip, expand_tabs, file_path, line_style, scroll_marks};
 use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
 use super::{GraphView, Notice};
 use crate::theme::tokens;
@@ -28,7 +28,7 @@ pub(super) struct State {
     patch: Option<Arc<Shown>>,
     /// Whole file or just the changes, and whether white space counts. It stays as it is
     /// set while other files and commits are picked.
-    view: DiffView,
+    pub(super) view: DiffView,
     scroll: UniformListScrollHandle,
 }
 
@@ -171,6 +171,28 @@ impl GraphView {
         if let Some(index) = self.shown_file() {
             self.load_file(index, cx);
         }
+        cx.notify();
+    }
+
+    /// The two chips that pick between only the changes and the whole file. The diff and the
+    /// conflict resolver both draw them, so that they share the one setting.
+    pub(super) fn render_view_modes(&self, cx: &mut Context<Self>) -> Div {
+        let whole = self.diff.view.whole_file;
+        div().h_flex().children([false, true].map(|whole_file| {
+            chip(
+                ("diff-whole-file", usize::from(whole_file)),
+                if whole_file { "Whole file" } else { "Changes" },
+                whole == whole_file,
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                let view = DiffView {
+                    whole_file,
+                    ..this.diff.view
+                };
+                this.set_diff_view(view, cx);
+            }))
+        }))
     }
 
     pub fn show_file(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -251,6 +273,8 @@ impl GraphView {
             return;
         };
         cx.notify();
+        // The patch is read and flattened into rows in the background, since a large one
+        // takes a while to do either.
         Self::spawn_blocking(
             move || {
                 let patch = working::file_diff(&repo, &file, side, view)?;
@@ -362,23 +386,7 @@ impl GraphView {
                                 .children(file_tick)
                                 .child(file_path(&shown.path, muted)),
                         )
-                        .child(div().h_flex().children([false, true].map(|whole_file| {
-                            chip(
-                                ("diff-whole-file", usize::from(whole_file)),
-                                if whole_file { "Whole file" } else { "Changes" },
-                                view.whole_file == whole_file,
-                                cx,
-                            )
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    let view = DiffView {
-                                        whole_file,
-                                        ..this.diff.view
-                                    };
-                                    this.set_diff_view(view, cx);
-                                },
-                            ))
-                        })))
+                        .child(self.render_view_modes(cx))
                         .child(
                             chip(
                                 "diff-ignore-whitespace",
@@ -423,30 +431,19 @@ impl GraphView {
         let theme = cx.theme();
         let (added, removed) = (theme.success, theme.danger);
         // In the whole file the changes can be screens apart, so where they are shows beside
-        // the scrollbar, in the same colours as the lines. Marks are drawn before the bar,
-        // which stays on top of them.
-        let total = shown.rows.len().max(1) as f32;
-        let marks: Vec<Div> = if self.diff.view.whole_file {
-            shown
-                .marks
-                .iter()
-                .map(|mark| {
+        // the scrollbar, in the same colours as the lines.
+        let marks = if self.diff.view.whole_file {
+            scroll_marks(
+                shown.marks.iter().map(|mark| {
                     let color = if mark.kind == LineKind::Added {
                         added
                     } else {
                         removed
                     };
-                    div()
-                        .absolute()
-                        .right(px(2.))
-                        .w(px(4.))
-                        .top(relative(mark.start as f32 / total))
-                        .h(relative(mark.len as f32 / total))
-                        .min_h(px(2.))
-                        .rounded(px(1.))
-                        .bg(color)
-                })
-                .collect()
+                    (mark.start, mark.len, color)
+                }),
+                shown.rows.len(),
+            )
         } else {
             Vec::new()
         };
@@ -480,6 +477,7 @@ fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut Context<GraphView>) 
     let ticks = shown.side.filter(|_| shown.ticks);
 
     range
+        .filter(|at| *at < shown.rows.len())
         .map(|at| {
             // Each hunk is a card on its own row of rows: a header, then its lines. The
             // margins are the row's padding, so the card has room around it.
