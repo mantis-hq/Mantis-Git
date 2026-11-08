@@ -1,23 +1,23 @@
-//! The resolver that opens over the graph: a conflicted file's conflicts side by side, to
-//! take whole or line by line, and the file's result in an editor, saved with one button.
+//! The resolver that opens over the graph: a conflicted file's two versions side by side,
+//! whose ticked lines make up the file's result in an editor, saved with one button.
 
 use super::*;
 
 impl GraphView {
-    /// Opens the resolver on a file, reading its result from the file as it stands and
-    /// laying the file out for the list, which is work for another thread.
+    /// Opens the resolver on a file at its first conflict, reading its result from the file
+    /// as it stands and laying the file out for the list, which is work for another thread.
     pub fn show_conflict(&mut self, path: &str, cx: &mut Context<Self>) {
         // The file that was in the editor keeps what was typed into it.
         self.catch_up_draft(cx);
         self.conflict.shown = Some(path.to_owned());
         self.conflict.open = true;
-        self.conflict.lines.clear();
         self.conflict.jumped = None;
         // The editor keeps a file it already holds, rather than loading it again.
         if self.conflict.editing.as_deref() != Some(path) {
             self.conflict.editing = None;
         }
         self.conflict.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.go_to_first_conflict(path);
         // Only one thing covers the graph at a time.
         self.close_diff(cx);
         cx.notify();
@@ -34,25 +34,30 @@ impl GraphView {
             move || {
                 let text: Arc<str> = conflict::read_text(&repo, &path)?.into();
                 let view = Arc::new(FileView::new(&progress.pieces(&text)));
+                let originals = Arc::new(conflict::marker_blocks(&text));
                 let check = Check {
                     progress,
                     path,
                     text: text.clone(),
                     view: Some(view.clone()),
-                    settled: Vec::new(),
+                    picked: Vec::new(),
                 };
-                Ok::<_, String>((text, view, check.run()))
+                Ok::<_, String>((text, view, originals, check.run()))
             },
             move |this, loaded, cx| {
                 match loaded {
-                    Ok((text, view, found)) => {
+                    Ok((text, view, originals, found)) => {
                         this.conflict.views.insert(wanted.clone(), view);
+                        (this.conflict.originals).insert(wanted.clone(), originals);
                         if this.conflict.drafts.contains_key(&wanted) {
                             // A result from earlier at this stop wins over the file.
                             this.refresh_open(&wanted);
                         } else {
                             this.conflict.drafts.insert(wanted.clone(), text);
                             this.apply_check(&wanted, found);
+                        }
+                        if this.conflict.shown.as_deref() == Some(wanted.as_str()) {
+                            this.go_to_first_conflict(&wanted);
                         }
                     }
                     Err(message) => this.notice = Some(Notice::Error(message.into())),
@@ -61,6 +66,25 @@ impl GraphView {
             },
             cx,
         );
+    }
+
+    /// Brings the first conflict still standing to the top of the list, or the first of all
+    /// when none stands, once the file is laid out.
+    fn go_to_first_conflict(&mut self, path: &str) {
+        let Some(view) = self.conflict.views.get(path) else {
+            return;
+        };
+        let standing = self.conflict.standing.get(path);
+        let first = standing
+            .and_then(|standing| standing.iter().position(|open| *open))
+            .unwrap_or(0);
+        if first < view.conflicts.len() {
+            let row = view.header_row(first);
+            self.conflict
+                .scroll
+                .scroll_to_item(row, ScrollStrategy::Top);
+            self.conflict.jumped = Some(first);
+        }
     }
 
     pub(in crate::view) fn close_resolver(&mut self, cx: &mut Context<Self>) {
@@ -87,23 +111,71 @@ impl GraphView {
         );
     }
 
-    pub(in crate::view) fn toggle_line(
-        &mut self,
-        key: (usize, Side, usize),
-        cx: &mut Context<Self>,
-    ) {
-        if !self.conflict.lines.remove(&key) {
-            self.conflict.lines.insert(key);
-        }
-        cx.notify();
+    /// The lines ticked in one conflict of the file on show.
+    pub(super) fn ticked(&self, ordinal: usize) -> Option<&HashSet<(Side, usize)>> {
+        let path = self.conflict.shown.as_deref()?;
+        self.conflict.picks.get(path)?.get(&ordinal)
     }
 
-    /// The lines picked in one conflict: those of the first side, then the second's.
-    fn picked_lines(&self, ordinal: usize, decision: &Decision) -> String {
+    /// Whether ticks still make up a conflict in the result: while it stands, or while what
+    /// they put there is as they put it. One edited by hand keeps what was typed.
+    pub(in crate::view) fn ticks_apply(&self, path: &str, ordinal: usize) -> bool {
+        let regions = self.conflict.regions.get(path);
+        regions.is_none_or(|regions| regions.get(ordinal).is_some_and(Option::is_some))
+    }
+
+    /// Ticks or clears one line of a conflict, and puts what is ticked in the result.
+    pub(in crate::view) fn toggle_line(
+        &mut self,
+        (ordinal, side, at): (usize, Side, usize),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self.conflict.shown.clone() else {
+            return;
+        };
+        let conflicts = self.conflict.picks.entry(path).or_default();
+        let ticked = conflicts.entry(ordinal).or_default();
+        if !ticked.remove(&(side, at)) {
+            ticked.insert((side, at));
+        }
+        // With nothing ticked the conflict goes back to its markers.
+        if ticked.is_empty() {
+            conflicts.remove(&ordinal);
+        }
+        self.apply_picks(ordinal, window, cx);
+    }
+
+    /// Ticks every line of one side of a conflict and none of the other, which takes that
+    /// side into the result, even when it has no lines.
+    pub(in crate::view) fn use_chunk(
+        &mut self,
+        ordinal: usize,
+        side: Side,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self.conflict.shown.clone() else {
+            return;
+        };
+        let Some(decision) = self.file_decisions(&path).nth(ordinal) else {
+            return;
+        };
+        let lines = conflict::lines_of(decision.side(side)).len();
+        let ticked = (0..lines).map(|at| (side, at)).collect();
+        let conflicts = self.conflict.picks.entry(path).or_default();
+        conflicts.insert(ordinal, ticked);
+        self.apply_picks(ordinal, window, cx);
+    }
+
+    /// What the ticks put in place of one conflict: the ticked lines of the first side,
+    /// then the second's. `None` with no entry, when the conflict keeps its markers.
+    fn picked_lines(&self, ordinal: usize, decision: &Decision) -> Option<String> {
+        let ticked = self.ticked(ordinal)?;
         let mut picked = String::new();
         for side in [Side::Mine, Side::Other] {
             for (at, line) in conflict::lines_of(decision.side(side)).iter().enumerate() {
-                if self.conflict.lines.contains(&(ordinal, side, at)) {
+                if ticked.contains(&(side, at)) {
                     picked.push_str(line);
                     if !line.ends_with('\n') {
                         picked.push('\n');
@@ -111,62 +183,57 @@ impl GraphView {
                 }
             }
         }
-        picked
+        Some(picked)
     }
 
-    /// Puts a side, or the picked lines, of one conflict in the result in place of its
-    /// markers.
-    pub(in crate::view) fn use_chunk(
-        &mut self,
-        ordinal: usize,
-        pick: Pick,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let (Some(progress), Some(path)) =
-            (self.conflict.progress.clone(), self.conflict.shown.clone())
-        else {
+    /// Puts what is ticked in one conflict in the result, in its place: the ticked lines,
+    /// or its markers when nothing is.
+    fn apply_picks(&mut self, ordinal: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.conflict.shown.clone() else {
             return;
         };
         self.catch_up_draft(cx);
-        let Some(draft) = self.conflict.drafts.get(&path).cloned() else {
+        // Where it is now, read here: typing may have moved it since the last check.
+        let Some(check) = self.check_of(&path) else {
             return;
         };
-        let open = progress.open_chunks(&path, &draft);
+        let found = check.run();
+        let draft = check.text;
+        let region = found.regions.get(ordinal).cloned().flatten();
         let decision = self.file_decisions(&path).nth(ordinal).cloned();
-        let (Some(decision), Some(Some(block))) = (decision, open.get(ordinal)) else {
+        let original =
+            (self.conflict.originals.get(&path)).and_then(|all| all.get(ordinal).cloned());
+        let (Some(region), Some(decision), Some(original)) = (region, decision, original) else {
+            // Edited by hand: what was typed stays.
+            cx.notify();
             return;
         };
-        let chosen = match pick {
-            Pick::Mine => decision.mine.clone(),
-            Pick::Other => decision.other.clone(),
-            Pick::Lines => self.picked_lines(ordinal, &decision),
-        };
-        let replacement = block.replacement(&draft, &chosen);
-        let text: Arc<str> = conflict::replace_block(&draft, block, &chosen).into();
-        self.conflict.drafts.insert(path.clone(), text);
-        // How long the conflict is in the result now, for lining the result up with the
-        // two versions above it.
+        let picked = self.picked_lines(ordinal, &decision);
+        let content = picked.clone().unwrap_or(original);
+
+        let mut text = String::with_capacity(draft.len() + content.len());
+        text.push_str(&draft[..region.start]);
+        text.push_str(&content);
+        text.push_str(&draft[region.end..]);
+        self.conflict.drafts.insert(path.clone(), text.into());
         let count = self.file_decisions(&path).count();
-        let settled = (self.conflict.settled)
+        let all = (self.conflict.picked)
             .entry(path.clone())
             .or_insert_with(|| vec![None; count]);
-        if let Some(lines) = settled.get_mut(ordinal) {
-            *lines = Some(conflict::lines_of(&replacement).len());
+        if let Some(slot) = all.get_mut(ordinal) {
+            *slot = picked.map(Arc::from);
         }
         self.refresh_open(&path);
-        self.conflict.lines.retain(|(at, ..)| *at != ordinal);
 
-        // The editor changes only where the conflict was, so it keeps its place and the
-        // pick can be undone there, and a large file isn't loaded into it again.
+        // The editor changes only where the conflict is, so it keeps its place and the pick
+        // can be undone there, and a large file isn't loaded into it again.
         let on_show = self.conflict.editing.as_deref() == Some(path.as_str());
         match self.conflict.editors.get_mut(&path) {
-            // The block was found in the draft, which holds what the editor does.
+            // The region was found in the draft, which holds what the editor does.
             Some(editor) if on_show && editor.state.read(cx).text().len() == draft.len() => {
-                let range = block.start..block.end;
                 editor.state.update(cx, |state, cx| {
-                    state.set_selected_range(range, cx);
-                    state.replace(replacement, window, cx);
+                    state.set_selected_range(region, cx);
+                    state.replace(content, window, cx);
                 });
             }
             // So that the editor reads the new result the next time it is drawn.
@@ -791,25 +858,20 @@ impl GraphView {
             }
             Row::Header { ordinal, line } => {
                 let ordinal = *ordinal;
-                let open = open_at(ordinal);
-                let picked = self
-                    .conflict
-                    .lines
-                    .iter()
-                    .filter(|(chosen, ..)| *chosen == ordinal)
-                    .count();
+                let applies = self.ticks_apply(path, ordinal);
+                let note = conflict::result_note(open_at(ordinal), applies);
                 let (mine, other) = self
                     .conflict
                     .progress
                     .as_ref()
                     .map_or_else(Default::default, |p| (p.mine.clone(), p.other.clone()));
-                let button = |id: &'static str, label: String, pick: Pick| {
+                let button = |id: &'static str, label: String, side: Side| {
                     Button::new((id, ordinal))
                         .ghost()
                         .xsmall()
                         .label(label)
                         .on_click(cx.listener(move |this, _, window, cx| {
-                            this.use_chunk(ordinal, pick, window, cx)
+                            this.use_chunk(ordinal, side, window, cx)
                         }))
                 };
                 row.px_3()
@@ -830,19 +892,10 @@ impl GraphView {
                                 view.conflicts.len()
                             )),
                     )
-                    .when(!open, |row| {
-                        row.child(div().text_color(muted).child("settled in the result"))
-                    })
-                    .when(open, |row| {
-                        row.child(button("use-mine", format!("Use {mine}"), Pick::Mine))
-                            .child(button("use-other", format!("Use {other}"), Pick::Other))
-                            .when(picked > 0, |row| {
-                                row.child(button(
-                                    "use-lines",
-                                    conflict::picked_lines_label(picked),
-                                    Pick::Lines,
-                                ))
-                            })
+                    .children(note.map(|note| div().text_color(muted).child(note)))
+                    .when(applies, |row| {
+                        row.child(button("use-mine", format!("Use {mine}"), Side::Mine))
+                            .child(button("use-other", format!("Use {other}"), Side::Other))
                     })
             }
             Row::Pair {
@@ -852,50 +905,51 @@ impl GraphView {
                 other,
             } => {
                 let ordinal = *ordinal;
-                let open = open_at(ordinal);
-                let half =
-                    |side: Side,
-                     text: &Option<(u32, Arc<str>)>,
-                     color: Hsla,
-                     cx: &mut Context<Self>| {
-                        let key = (ordinal, side, *line);
-                        let on = open && self.conflict.lines.contains(&key);
-                        let id = ordinal * 1_000_000 + line;
-                        let (row_id, box_id) = match side {
-                            Side::Mine => ("pick-mine-line", "pick-mine-box"),
-                            Side::Other => ("pick-other-line", "pick-other-box"),
-                        };
-                        let half = div()
-                            .id((row_id, id))
-                            .h_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .h_full()
-                            .pr_3()
-                            .gap_2()
-                            .bg(color.opacity(if on { 0.22 } else { 0.07 }))
-                            .child(number(text.as_ref().map(|(line, _)| *line)));
-                        match text {
-                            // A side with fewer lines leaves the rest of the row empty.
-                            None => half,
-                            Some((_, text)) => half
-                                .when(open, |half| {
-                                    half.cursor_pointer()
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.toggle_line(key, cx)
-                                        }))
-                                        .child(checkbox((box_id, id), on, false, cx))
-                                })
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_color(foreground)
-                                        .child(expand_tabs(text)),
-                                ),
-                        }
+                // Ticks change the result while they make it up; once typed over, they don't.
+                let open = self.ticks_apply(path, ordinal);
+                let ticked = self.ticked(ordinal);
+                let half = |side: Side,
+                            text: &Option<(u32, Arc<str>)>,
+                            color: Hsla,
+                            cx: &mut Context<Self>| {
+                    let key = (ordinal, side, *line);
+                    let on = open && ticked.is_some_and(|t| t.contains(&(side, *line)));
+                    let id = ordinal * 1_000_000 + line;
+                    let (row_id, box_id) = match side {
+                        Side::Mine => ("pick-mine-line", "pick-mine-box"),
+                        Side::Other => ("pick-other-line", "pick-other-box"),
                     };
+                    let half = div()
+                        .id((row_id, id))
+                        .h_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .pr_3()
+                        .gap_2()
+                        .bg(color.opacity(if on { 0.22 } else { 0.07 }))
+                        .child(number(text.as_ref().map(|(line, _)| *line)));
+                    match text {
+                        // A side with fewer lines leaves the rest of the row empty.
+                        None => half,
+                        Some((_, text)) => half
+                            .when(open, |half| {
+                                half.cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.toggle_line(key, window, cx)
+                                    }))
+                                    .child(checkbox((box_id, id), on, false, cx))
+                            })
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(foreground)
+                                    .child(expand_tabs(text)),
+                            ),
+                    }
+                };
                 row.when(!open, |row| row.opacity(0.45))
                     .child(half(Side::Mine, mine, colors.0, cx))
                     .child(div().w(px(1.)).h_full().flex_none().bg(border))

@@ -383,18 +383,23 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   saved, which stay listed until the operation goes on), and at the foot "Cancel rebase" and
   the one blue "Continue rebase", which waits until every file is saved. The two lists and the
   commit form wait while it is paused.
-  Clicking a file opens the resolver over the graph, as a diff does, and `Esc` or "Close"
-  brings the graph back. It is one file at a time, in three parts that share the height:
+  Clicking a file opens the resolver over the graph, as a diff does, at the file's first
+  conflict still standing, and `Esc` or "Close" brings the graph back. It is one file at a
+  time, in three parts that share the height:
   - **Both versions**, the whole file as each branch has it, next to each other, as a list of
     rows that draws only those in view, so a file of any size costs the same. There is no
     view of only the changes: resolving needs the whole file. A bar over it names the two
     branches, each over its own column. A line both versions have shows in both columns,
     each with its line number in that version. Each conflict is a header row across both,
-    "Conflict 2 of 3 · line 40" with "Use feat/x", "Use main" and, once lines are ticked,
-    "Use 3 selected lines" (the ticked lines of the first side, then the second's), and
-    under it each side's lines in its own column, with their line numbers, a tick box and a
-    tint in the branch's colour; the side with fewer lines leaves the rest of its column
-    empty. A conflict already settled in the result dims, says so and loses its buttons.
+    "Conflict 2 of 3 · line 40" with "Use feat/x" and "Use main", and under it each side's
+    lines in its own column, with their line numbers, a tick box and a tint in the
+    branch's colour; the side with fewer lines leaves the rest of its column empty. The
+    ticks make up the result: each tick shows in it at once, the conflict's place holding
+    the ticked lines of the first side, then the second's, and clearing every tick puts its
+    markers back. "Use feat/x" ticks every line of that side and none of the other, which
+    takes the side even when it has no lines, and the header then says "in the result".
+    A conflict typed over in the result keeps what was typed: it dims, says "edited in the
+    result", and its ticks and buttons go, so a tick never undoes typing.
     Each conflict is marked beside the scrollbar in Peach. The branches are named, never
     "mine" or "theirs", in line with principle 5. In the header, quiet "Previous" and "Next"
     buttons (`Alt ↑`, `Alt ↓`) bring the next conflict still left in the result to the top of
@@ -405,8 +410,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     conflict markers. Its lines don't wrap, as in a diff, so a file of any length opens
     quickly. The versions and the result scroll together: scrolling either brings the other
     to the same place in the file, line for line, with each conflict lined up with where it
-    is in the result. The cards edit it, and so can the user, by hand, anywhere. A conflict
-    counts as settled when its markers are gone from the result, however that happened. The
+    is in the result. The ticks above edit it, and so can the user, by hand, anywhere. A
+    conflict counts as settled when its markers are gone from the result, however that
+    happened. The
     top bar says how many are left ("2 conflicts left in the result", Peach) or "Ready to
     save" (Green).
   - **Save and mark as resolved**, a large blue button across the foot, enabled once no

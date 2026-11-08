@@ -84,7 +84,7 @@ fn the_list_and_the_result_are_lined_up_at_each_conflicts_edges() {
     ];
     let view = FileView::new(&pieces);
     // Three rows in the list; settled with one line in the result.
-    let settled_in_one_line = vec![10..11];
-    let anchors = view.anchors(&settled_in_one_line);
+    let settled_in_one_line = 10..11;
+    let anchors = view.anchors(std::slice::from_ref(&settled_in_one_line));
     assert_eq!(anchors, [(0., 0.), (10., 10.), (13., 11.)]);
 }

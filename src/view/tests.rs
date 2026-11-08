@@ -665,10 +665,14 @@ fn resolving_a_conflict_between(
 }
 
 #[gpui_kit::test]
-fn a_result_is_built_from_picked_lines_and_saved_with_one_button(cx: &mut TestAppContext) {
-    use super::conflicts::Pick;
+fn a_result_is_built_from_ticked_lines_and_saved_with_one_button(cx: &mut TestAppContext) {
     use gitclient_core::repo::conflict::Side;
     let (repo, view, mut cx) = resolving_a_conflict(cx);
+    let editor = view.read_with(&cx, |view, _| view.conflict_editor().unwrap());
+    let in_editor =
+        |cx: &mut VisualTestContext| editor.read_with(cx, |editor, _| editor.text().to_string());
+    let markers = "top\n<<<<<<< HEAD\nmain\n=======\nfeat one\nfeat two\n>>>>>>> feat\nbottom\n";
+    assert_eq!(in_editor(&mut cx), markers);
 
     // Saving waits for the conflict to be settled in the result.
     view.update(&mut cx, |view, cx| view.save_conflict(cx));
@@ -676,21 +680,34 @@ fn a_result_is_built_from_picked_lines_and_saved_with_one_button(cx: &mut TestAp
     assert!(view.read_with(&cx, |view, _| view.resolver_is_open()));
     assert!(repo.read("a").contains("<<<<<<<"), "nothing was saved");
 
-    // The second line of the other side, and the first of the first side's.
+    // Each tick shows in the result at once: the first side's ticked lines, then the
+    // second's, in place of the markers.
     view.update_in(&mut cx, |view, window, cx| {
-        view.toggle_line((0, Side::Other, 1), cx);
-        view.toggle_line((0, Side::Mine, 0), cx);
-        view.use_chunk(0, Pick::Lines, window, cx);
-        assert_eq!(
-            view.conflicts_left("a"),
-            0,
-            "known at once, without a check"
-        );
+        view.toggle_line((0, Side::Other, 1), window, cx);
     });
-    // The pick is made in the editor where the conflict was, so the editor has it too.
-    let editor = view.read_with(&cx, |view, _| view.conflict_editor().unwrap());
-    let in_editor = editor.read_with(&cx, |editor, _| editor.text().to_string());
-    assert_eq!(in_editor, "top\nmain\nfeat two\nbottom\n");
+    assert_eq!(in_editor(&mut cx), "top\nfeat two\nbottom\n");
+    view.update_in(&mut cx, |view, window, cx| {
+        view.toggle_line((0, Side::Mine, 0), window, cx);
+        assert_eq!(view.conflicts_left("a"), 0, "known at once");
+    });
+    assert_eq!(in_editor(&mut cx), "top\nmain\nfeat two\nbottom\n");
+
+    // Clearing every tick puts the markers back; "Use" ticks a whole side.
+    view.update_in(&mut cx, |view, window, cx| {
+        view.toggle_line((0, Side::Other, 1), window, cx);
+        view.toggle_line((0, Side::Mine, 0), window, cx);
+        assert_eq!(view.conflicts_left("a"), 1);
+    });
+    assert_eq!(in_editor(&mut cx), markers);
+    view.update_in(&mut cx, |view, window, cx| {
+        view.use_chunk(0, Side::Other, window, cx)
+    });
+    assert_eq!(in_editor(&mut cx), "top\nfeat one\nfeat two\nbottom\n");
+    view.update_in(&mut cx, |view, window, cx| {
+        view.toggle_line((0, Side::Other, 0), window, cx);
+        view.toggle_line((0, Side::Mine, 0), window, cx);
+    });
+    assert_eq!(in_editor(&mut cx), "top\nmain\nfeat two\nbottom\n");
     cx.simulate_click(point(px(2.), px(2.)), Modifiers::none());
     view.update(&mut cx, |view, cx| view.save_conflict(cx));
     cx.run_until_parked();
@@ -735,11 +752,12 @@ fn the_two_versions_and_the_result_scroll_together(cx: &mut TestAppContext) {
         });
         draw(cx);
     };
+    // A file opens at its first conflict, and the result is there too.
     draw(&mut cx);
-    near(at(&mut cx), (0., 0.));
+    near(at(&mut cx), (300., 300.));
 
     // Above the conflict, a row of the list is the same line of the result.
-    wheel(&mut cx, over_list, 100. * 24.);
+    wheel(&mut cx, over_list, -200. * 24.);
     near(at(&mut cx), (100., 100.));
 
     // The list has a header and two rows for the conflict; the result has its six lines
@@ -752,6 +770,35 @@ fn the_two_versions_and_the_result_scroll_together(cx: &mut TestAppContext) {
     let (list, result) = at(&mut cx);
     assert!(result < 300., "the result moved up, to line {result}");
     near((list, result), (result, result));
+}
+
+#[gpui_kit::test]
+fn typing_over_picked_lines_keeps_what_was_typed(cx: &mut TestAppContext) {
+    use gitclient_core::repo::conflict::Side;
+    let (_repo, view, mut cx) = resolving_a_conflict(cx);
+    let editor = view.read_with(&cx, |view, _| view.conflict_editor().unwrap());
+    view.update_in(&mut cx, |view, window, cx| {
+        view.use_chunk(0, Side::Mine, window, cx)
+    });
+
+    // Typing over the picked line, and a check once typing pauses.
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_selected_range(4..8, cx);
+            editor.replace("typed", window, cx);
+        })
+    });
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(200));
+    cx.run_until_parked();
+
+    // The ticks no longer make it up, so ticking leaves the typing alone.
+    view.update_in(&mut cx, |view, window, cx| {
+        assert!(!view.ticks_apply("a", 0));
+        view.toggle_line((0, Side::Other, 0), window, cx);
+    });
+    let text = editor.read_with(&cx, |editor, _| editor.text().to_string());
+    assert_eq!(text, "top\ntyped\nbottom\n");
 }
 
 #[gpui_kit::test]

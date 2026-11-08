@@ -150,20 +150,21 @@ impl Progress {
     }
 
     /// Reads a file's result once for which of its conflicts still stand, and where each
-    /// conflict is in it by line, so that the result can be lined up with the file's two
-    /// versions. `agreed[k]` is how many lines both sides agree on before conflict `k`, and
-    /// `settled[k]` how many lines a settled conflict was given, where that is known.
+    /// conflict is in it, so that picks can be put in its place and the result lined up
+    /// with the file's two versions. `agreed[k]` is how many lines both sides agree on
+    /// before conflict `k`, and `picked[k]` the text picks put in its place, if they did.
     ///
-    /// A conflict still standing is where its markers are. A settled one is reckoned from
-    /// the lines before it, taken to be unchanged, and from its length, or the length of
-    /// the branch's own side when that isn't known; the next one standing puts the count
-    /// right again.
-    pub fn check_result(
+    /// A conflict still standing is where its markers are. A picked one is found by its
+    /// text, where the lines before it end, or else further on before the next one
+    /// standing. One that is neither was edited by hand: where it is can only be guessed,
+    /// from the lines before it and the length of the branch's own side, and the next one
+    /// found puts the count right again.
+    pub fn check_result<S: AsRef<str>>(
         &self,
         path: &str,
         text: &str,
         agreed: &[usize],
-        settled: &[Option<usize>],
+        picked: &[Option<S>],
     ) -> ResultCheck {
         let open = self.open_chunks(path, text);
         let decisions: Vec<&Decision> = self
@@ -171,39 +172,56 @@ impl Progress {
             .iter()
             .filter(|decision| decision.path == path && !decision.whole_file)
             .collect();
+        let count = open.len();
+        // Where the next block standing starts, from each conflict on: a picked one is
+        // looked for no further than that.
+        let mut limits = vec![text.len(); count + 1];
+        for index in (0..count).rev() {
+            limits[index] = open[index].as_ref().map_or(limits[index + 1], |b| b.start);
+        }
 
-        // Line numbers of the blocks' edges, counted in one pass down the text.
+        let mut regions = Vec::with_capacity(count);
+        let mut at = 0;
+        for index in 0..count {
+            let expected = skip_lines(text, at, agreed.get(index).copied().unwrap_or(0));
+            let picks = picked.get(index).and_then(Option::as_ref);
+            let region = match (&open[index], picks) {
+                (Some(block), _) => Some(block.start..block.end),
+                (None, Some(picks)) => {
+                    let limit = limits[index + 1];
+                    let picks = picks.as_ref();
+                    find_line_start(text, picks, expected, limit)
+                        .or_else(|| find_line_start(text, picks, at, limit))
+                        .map(|start| start..start + picks.len())
+                }
+                (None, None) => None,
+            };
+            at = region.as_ref().map_or(expected, |region| region.end);
+            regions.push(region);
+        }
+
+        // The regions' lines, counted in one pass down the text, and a guess for the rest.
         let (mut line, mut counted) = (0, 0);
         let mut line_at = |byte: usize| {
             line += text[counted..byte].matches('\n').count();
             counted = byte;
             line
         };
-        let edges: Vec<Option<Range<usize>>> = open
-            .iter()
-            .map(|block| {
-                let block = block.as_ref()?;
-                let start = line_at(block.start);
-                Some(start..line_at(block.end))
-            })
-            .collect();
-
-        let mut places = Vec::with_capacity(open.len());
+        let mut places = Vec::with_capacity(count);
         let mut at = 0;
-        for (index, edge) in edges.iter().enumerate() {
+        for (index, region) in regions.iter().enumerate() {
             at += agreed.get(index).copied().unwrap_or(0);
-            let place = match edge {
-                Some(edge) => edge.clone(),
+            let place = match region {
+                Some(region) => line_at(region.start)..line_at(region.end),
                 None => {
-                    let guess = || decisions.get(index).map_or(0, |d| lines_of(&d.mine).len());
-                    let length = settled.get(index).copied().flatten().unwrap_or_else(guess);
-                    at..at + length
+                    let guess = decisions.get(index).map_or(0, |d| lines_of(&d.mine).len());
+                    at..at + guess
                 }
             };
             at = place.end;
             places.push(place);
         }
-        // A guess that ran past the next conflict standing is pulled back to it.
+        // A guess that ran past the next conflict found is pulled back to it.
         let mut limit = usize::MAX;
         for place in places.iter_mut().rev() {
             place.end = place.end.min(limit);
@@ -213,6 +231,7 @@ impl Progress {
         ResultCheck {
             standing: open.iter().map(Option::is_some).collect(),
             places,
+            regions,
         }
     }
 
@@ -547,6 +566,44 @@ pub struct ResultCheck {
     pub standing: Vec<bool>,
     /// For each conflict, the lines it takes in the result.
     pub places: Vec<Range<usize>>,
+    /// For each conflict, the bytes it takes in the result, where that is known: always
+    /// while it stands, and for a picked one while its picks are there as they were put.
+    /// `None` for one edited by hand.
+    pub regions: Vec<Option<Range<usize>>>,
+}
+
+/// Where the line `lines` lines on from the one starting at `at` starts.
+fn skip_lines(text: &str, mut at: usize, lines: usize) -> usize {
+    for _ in 0..lines {
+        match text[at..].find('\n') {
+            Some(newline) => at += newline + 1,
+            None => return text.len(),
+        }
+    }
+    at
+}
+
+/// Where `needle` first stands at the start of a line in `text`, from `from` and ending
+/// by `limit`.
+fn find_line_start(text: &str, needle: &str, from: usize, limit: usize) -> Option<usize> {
+    let haystack = text.get(from..limit)?;
+    if needle.is_empty() {
+        let line_start = from == 0 || text.as_bytes()[from - 1] == b'\n';
+        return line_start.then_some(from);
+    }
+    haystack
+        .match_indices(needle)
+        .map(|(at, _)| from + at)
+        .find(|&at| at == 0 || text.as_bytes()[at - 1] == b'\n')
+}
+
+/// The marker blocks of `text`, the file as git left it, in order: what a conflict goes
+/// back to when nothing is picked for it.
+pub fn marker_blocks(text: &str) -> Vec<String> {
+    blocks(text)
+        .iter()
+        .map(|block| text[block.start..block.end].to_owned())
+        .collect()
 }
 
 /// Where a position in one of two texts that are lined up falls in the other. `anchors`
@@ -584,9 +641,15 @@ pub fn result_hint(left: usize) -> String {
     }
 }
 
-/// The button that puts picked lines of a conflict into the result.
-pub fn picked_lines_label(picked: usize) -> String {
-    format!("Use {}", count(picked, "selected line"))
+/// What a conflict's header says of it besides its buttons: nothing while it stands, that
+/// it is in the result while its ticks make it up, and that it was edited in the result
+/// once typing has taken over from them.
+pub fn result_note(standing: bool, ticks_apply: bool) -> Option<&'static str> {
+    match (standing, ticks_apply) {
+        (true, _) => None,
+        (false, true) => Some("in the result"),
+        (false, false) => Some("edited in the result"),
+    }
 }
 
 /// The conflict to go to from a point between two, where `at` is how many conflicts come
@@ -953,8 +1016,9 @@ mod tests {
         assert_eq!(progress.list_heading(0), "Conflicts · 2 files");
         assert_eq!(result_hint(0), "Ready to save");
         assert_eq!(result_hint(2), "2 conflicts left in the result");
-        assert_eq!(picked_lines_label(1), "Use 1 selected line");
-        assert_eq!(picked_lines_label(3), "Use 3 selected lines");
+        assert_eq!(result_note(true, true), None);
+        assert_eq!(result_note(false, true), Some("in the result"));
+        assert_eq!(result_note(false, false), Some("edited in the result"));
     }
     use crate::testing::Repo;
 
@@ -1061,21 +1125,43 @@ mod tests {
         let (progress, text) = two_conflicts();
         // "a", the first block (5 lines), "b", the second, "c".
         let agreed = [1, 1];
-        let check = progress.check_result("f", &text, &agreed, &[None, None]);
+        let none: [Option<&str>; 2] = [None, None];
+        let check = progress.check_result("f", &text, &agreed, &none);
         assert_eq!(check.standing, [true, true]);
         assert_eq!(check.places, [1..6, 7..12]);
+        assert_eq!(check.regions, [Some(2..42), Some(44..84)]);
 
-        // The first taken with two lines: known, so the second is found where it is.
+        // The first picked with two lines: found by its text, so the second is found too.
         let block = blocks(&text).remove(0);
         let picked = replace_block(&text, &block, "x\ny\n");
-        let check = progress.check_result("f", &picked, &agreed, &[Some(2), None]);
+        let check = progress.check_result("f", &picked, &agreed, &[Some("x\ny\n"), None]);
         assert_eq!(check.standing, [false, true]);
         assert_eq!(check.places, [1..3, 4..9]);
+        assert_eq!(check.regions[0], Some(2..6));
+        assert_eq!(&picked[2..6], "x\ny\n");
 
-        // Not known, it is taken to be as long as the branch's own side, one line, and
-        // still ends where the next one standing starts.
-        let check = progress.check_result("f", &picked, &agreed, &[None, None]);
+        // Edited by hand, it can't be found: it is taken to be as long as the branch's own
+        // side, one line, and still ends where the next one standing starts.
+        let check = progress.check_result("f", &picked, &agreed, &none);
         assert_eq!(check.places, [1..2, 4..9]);
+        assert_eq!(check.regions[0], None);
+    }
+
+    #[test]
+    fn a_pick_is_found_where_typing_moved_it() {
+        let (progress, text) = two_conflicts();
+        let block = blocks(&text).remove(0);
+        let picked = replace_block(&text, &block, "x\n");
+        // A line typed above it moves it down one.
+        let typed = picked.replacen("a\n", "a\nnew\n", 1);
+        let check = progress.check_result("f", &typed, &[1, 1], &[Some("x\n"), None]);
+        assert_eq!(check.regions[0], Some(6..8));
+        assert_eq!(check.places[0], 2..3);
+        // An empty pick, as when the side taken has no lines, is where the lines before end.
+        let emptied = replace_block(&text, &block, "");
+        let check = progress.check_result("f", &emptied, &[1, 1], &[Some(""), None]);
+        assert_eq!(check.regions[0], Some(2..2));
+        assert_eq!(marker_blocks(&text)[0], &text[2..42]);
     }
 
     #[test]
