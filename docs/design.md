@@ -354,7 +354,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     scrolled past. They skip settled conflicts, go round at either end, and are dimmed when
     none is left.
   - **Result**, the whole file in an editor, which starts as the file as it stands with its
-    conflict markers. The cards edit it, and so can the user, by hand, anywhere. A conflict
+    conflict markers. Its lines don't wrap, as in a diff, so a file of any length opens
+    quickly. The cards edit it, and so can the user, by hand, anywhere. A conflict
     counts as settled when its markers are gone from the result, however that happened. The
     top bar says how many are left ("2 conflicts left in the result", Peach) or "Ready to
     save" (Green).

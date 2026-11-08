@@ -13,7 +13,10 @@ impl GraphView {
         self.conflict.open = true;
         self.conflict.lines.clear();
         self.conflict.jumped = None;
-        self.conflict.editing = None;
+        // The editor keeps a file it already holds, rather than loading it again.
+        if self.conflict.editing.as_deref() != Some(path) {
+            self.conflict.editing = None;
+        }
         self.conflict.scroll.scroll_to_item(0, ScrollStrategy::Top);
         // Only one thing covers the graph at a time.
         self.close_diff(cx);
@@ -243,7 +246,11 @@ impl GraphView {
             Some(editor) => editor.clone(),
             None => {
                 let editor = cx.new(|cx| {
-                    TextareaState::new(window, cx).placeholder("The file as it will be saved.")
+                    // Wrapping is worked out for every line of the file, which takes most
+                    // of a second for a large one and again at every change of width.
+                    TextareaState::new(window, cx)
+                        .soft_wrap(false)
+                        .placeholder("The file as it will be saved.")
                 });
                 let changes = cx.subscribe(&editor, |this, _, event, cx| {
                     if matches!(event, InputEvent::Change) {
@@ -518,16 +525,17 @@ impl GraphView {
         cx: &mut Context<Self>,
     ) -> Div {
         let theme = cx.theme();
-        let (panel, border, muted) = (theme.title_bar, theme.border, theme.muted_foreground);
+        let (panel, border) = (theme.title_bar, theme.border);
         let subtext = tokens(theme.is_dark()).subtext0;
         let draft = self.conflict.drafts.get(path);
         let shown = match self.conflict.views.get(path).cloned() {
             Some(view) => self.render_conflict_list(progress, path, &view, cx),
-            None => div()
-                .flex_1()
-                .p_4()
-                .text_color(muted)
-                .child("Reading the file…"),
+            None => div().flex_1().min_h_0().overflow_hidden().child(loading(
+                "conflict-list-loading",
+                "Reading the conflicts…",
+                12,
+                cx,
+            )),
         };
 
         let editor = match (&self.conflict.editor, draft) {
@@ -535,11 +543,12 @@ impl GraphView {
                 .flex_1()
                 .min_h_0()
                 .child(Textarea::new(editor).h_full()),
-            _ => div()
-                .flex_1()
-                .min_h_0()
-                .text_color(muted)
-                .child("Reading the file…"),
+            _ => div().flex_1().min_h_0().overflow_hidden().child(loading(
+                "conflict-result-loading",
+                "Reading the file…",
+                8,
+                cx,
+            )),
         };
 
         div()
