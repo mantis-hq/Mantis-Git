@@ -134,8 +134,6 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
             }),
         ));
     }
-    lines.push(Line::Separator);
-    lines.push(Line::item("Copy name", copy(&name, "the name")));
 
     let tip = match kind {
         RefKind::Branch => refs
@@ -277,7 +275,6 @@ pub fn stash_menu(refs: &Refs, indexes: &[usize]) -> Vec<Line> {
                 indexes: indexes.clone(),
             },
         ),
-        Line::item("Copy names", copy(&subjects.join("\n"), "the names")),
         Line::Separator,
         Line::item(
             stash::drop_label(indexes.len()),
@@ -494,20 +491,14 @@ pub fn remote_menu(refs: &Refs, name: &str) -> Vec<Line> {
     lines
 }
 
-/// The menu for several picked branches and tags. What it can do to many at once is
-/// copy their names and delete them.
+/// The menu for several picked branches and tags. The one thing it can do to many at
+/// once is delete them.
 pub fn refs_menu(refs: &Refs, targets: &[Dragged]) -> Vec<Line> {
     let mut lines = vec![Line::Heading(format!("{} selected", targets.len()))];
-    let names: Vec<&str> = targets.iter().map(|t| t.name.as_str()).collect();
-    lines.push(Line::item(
-        "Copy names",
-        copy(&names.join("\n"), "the names"),
-    ));
 
     let (deletable, kept): (Vec<&Dragged>, Vec<&Dragged>) = targets
         .iter()
         .partition(|target| why_not_deletable(refs, target).is_none());
-    lines.push(Line::Separator);
     for target in &kept {
         if let Some(reason) = why_not_deletable(refs, target) {
             lines.push(Line::unavailable(reason));
@@ -905,10 +896,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(
-            labels,
-            ["Apply stash", "Pop stash", "Copy names", "Delete stash"]
-        );
+        assert_eq!(labels, ["Apply stash", "Pop stash", "Delete stash"]);
         let both = stash_menu(&refs, &[0, 1, 9]);
         assert_eq!(both[0], Line::Heading("2 selected".into()));
         let Some(Command::DeleteStashes { indexes, .. }) = both.last().unwrap().command().cloned()
@@ -1043,7 +1031,6 @@ mod tests {
         assert_eq!(
             labels(&lines),
             [
-                "Copy names",
                 "main is checked out, so it stays",
                 "Delete 2 branches and tags"
             ]
@@ -1087,7 +1074,6 @@ mod tests {
                 "Rebase main onto feat/x",
                 "New branch from feat/x",
                 "Set upstream of feat/x",
-                "Copy name",
                 "Delete branch feat/x"
             ]
         );
@@ -1104,8 +1090,7 @@ mod tests {
             [
                 "main is already checked out",
                 "New branch from main",
-                "Set upstream of main",
-                "Copy name"
+                "Set upstream of main"
             ]
         );
         assert!(lines[1].command().is_none());
@@ -1120,7 +1105,6 @@ mod tests {
                 "Check out v1.0.0 without a branch",
                 "Merge v1.0.0 into main",
                 "New branch from v1.0.0",
-                "Copy name",
                 "Delete tag v1.0.0"
             ]
         );
