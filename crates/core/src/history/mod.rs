@@ -84,22 +84,61 @@ pub struct Entry {
 pub enum LoadEvent {
     Refs(Arc<Refs>),
     Batch(Vec<Entry>),
+    /// The load stopped at its limit, and history may go on past it.
+    More(More),
     Failed(String),
+}
+
+/// Where a load that stopped at its limit left off, so the history below can be read
+/// later and laid out in the same lanes.
+#[derive(Clone)]
+pub struct More {
+    tips: Arc<[Arc<str>]>,
+    builder: GraphBuilder,
+    /// How many commits have been read so far, which the next read skips.
+    read: u32,
+}
+
+impl std::fmt::Debug for More {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("More").field("read", &self.read).finish()
+    }
+}
+
+/// What the band under the header says when older history could not be read.
+pub fn more_failed_message(message: &str) -> String {
+    format!("Could not load older commits: {message}")
 }
 
 /// Loads a repository on its own thread. The channel closes when loading is done, and
 /// dropping the receiver cancels the load and stops `git`.
 pub fn spawn_load(repo: PathBuf, limit: u32) -> async_channel::Receiver<LoadEvent> {
+    spawn(move |emit| load(&repo, limit, emit))
+}
+
+/// Reads up to `limit` more commits where an earlier load stopped, on its own thread, as
+/// `spawn_load` does. It sends no refs.
+pub fn spawn_load_more(
+    repo: PathBuf,
+    more: More,
+    limit: u32,
+) -> async_channel::Receiver<LoadEvent> {
+    spawn(move |emit| load_more(&repo, more, limit, emit))
+}
+
+fn spawn(
+    work: impl FnOnce(&mut dyn FnMut(LoadEvent) -> bool) + Send + 'static,
+) -> async_channel::Receiver<LoadEvent> {
     let (sender, receiver) = async_channel::bounded(4);
     thread::Builder::new()
         .name("git-load".into())
-        .spawn(move || load(&repo, limit, |event| sender.send_blocking(event).is_ok()))
+        .spawn(move || work(&mut |event| sender.send_blocking(event).is_ok()))
         .expect("failed to spawn the git loader thread");
     receiver
 }
 
 /// Reads refs and history, passing each step to `emit` until it returns false.
-/// Reads at most `limit` commits.
+/// Reads at most `limit` commits, and ends with `More` if there may be others.
 pub fn load(repo: &Path, limit: u32, mut emit: impl FnMut(LoadEvent) -> bool) {
     let refs = match read_refs(repo) {
         Ok(refs) => Arc::new(refs),
@@ -121,21 +160,53 @@ pub fn load(repo: &Path, limit: u32, mut emit: impl FnMut(LoadEvent) -> bool) {
     {
         return;
     }
-    let mut working = working.filter(|_| !refs.tips.is_empty());
-    let result = stream_commits(repo, &refs.tips, limit, |commits| {
+    let working = working.filter(|_| !refs.tips.is_empty());
+    let more = More {
+        tips: refs.tips.iter().cloned().collect(),
+        builder,
+        read: 0,
+    };
+    read_more(repo, more, limit, working, &mut emit);
+}
+
+/// Reads up to `limit` commits after the ones `more` has read, passing each step to
+/// `emit` until it returns false, and ends with `More` again if there may be others.
+pub fn load_more(repo: &Path, more: More, limit: u32, mut emit: impl FnMut(LoadEvent) -> bool) {
+    read_more(repo, more, limit, None, &mut emit);
+}
+
+fn read_more(
+    repo: &Path,
+    mut more: More,
+    limit: u32,
+    mut working: Option<Entry>,
+    emit: &mut impl FnMut(LoadEvent) -> bool,
+) {
+    let mut stopped = false;
+    let result = stream_commits(repo, &more.tips, more.read, limit, |commits| {
+        more.read += commits.len() as u32;
         let batch = working
             .take()
             .into_iter()
             .chain(commits.into_iter().map(|commit| Entry {
-                row: builder.push(&commit.oid, &commit.parents),
+                row: more.builder.push(&commit.oid, &commit.parents),
                 commit,
                 working: false,
             }))
             .collect();
-        emit(LoadEvent::Batch(batch))
+        stopped = !emit(LoadEvent::Batch(batch));
+        !stopped
     });
-    if let Err(message) = result {
-        emit(LoadEvent::Failed(message));
+    match result {
+        Err(message) => {
+            emit(LoadEvent::Failed(message));
+        }
+        // A full page may have more under it. If it was exactly the last, the next read
+        // finds nothing and says no more.
+        Ok(read) if !stopped && limit > 0 && read == limit => {
+            emit(LoadEvent::More(more));
+        }
+        Ok(_) => {}
     }
 }
 
@@ -153,14 +224,16 @@ fn working_entry(files: u32, builder: &mut GraphBuilder) -> Entry {
     }
 }
 
+/// Streams up to `limit` commits after the first `skip`, and says how many it read.
 fn stream_commits(
     repo: &Path,
     tips: &[Arc<str>],
+    skip: u32,
     limit: u32,
     mut sink: impl FnMut(Vec<Commit>) -> bool,
-) -> Result<(), String> {
+) -> Result<u32, String> {
     if tips.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
 
     let mut command = git(repo);
@@ -175,6 +248,11 @@ fn stream_commits(
         "--no-show-signature",
         "--format=%H%x00%P%x00%aN%x00%at%x00%s",
     ]);
+    if skip > 0 {
+        // The same tips in topological order list the same commits, so this picks up
+        // exactly where the last read stopped.
+        command.arg(format!("--skip={skip}"));
+    }
     // Dropping the process, as every early return below does, stops git.
     let mut process = Process::spawn(&mut command, true)?;
 
@@ -207,18 +285,18 @@ fn stream_commits(
                 &mut batch,
                 Vec::with_capacity(BATCH_SIZE),
             )) {
-                return Ok(());
+                return Ok(total as u32);
             }
         }
     }
     total += batch.len();
     if !batch.is_empty() && !sink(batch) {
-        return Ok(());
+        return Ok(total as u32);
     }
     process.note(&format!("{} read", count(total as u32, "commit")));
 
     match process.finish()? {
-        (true, _) => Ok(()),
+        (true, _) => Ok(total as u32),
         (false, stderr) => Err(stderr_message(&stderr)),
     }
 }
@@ -265,6 +343,64 @@ mod tests {
         assert_eq!(subjects.len(), 2);
     }
 
+    /// Loads a page, then the rest a page at a time, as scrolling down does.
+    fn load_in_pages(repo: &Path, page: u32) -> (Vec<Entry>, usize) {
+        let (mut entries, mut reads) = (Vec::new(), 1);
+        let mut take = |more: &mut Option<More>, event| {
+            match event {
+                LoadEvent::Batch(batch) => entries.extend(batch),
+                LoadEvent::More(next) => *more = Some(next),
+                LoadEvent::Refs(_) => {}
+                LoadEvent::Failed(message) => panic!("{message}"),
+            }
+            true
+        };
+        let mut more = None;
+        load(repo, page, |event| take(&mut more, event));
+        while let Some(next) = more.take() {
+            reads += 1;
+            load_more(repo, next, page, |event| take(&mut more, event));
+        }
+        (entries, reads)
+    }
+
+    #[test]
+    fn history_past_the_limit_loads_a_page_at_a_time_in_the_same_lanes() {
+        let repo = Repo::new();
+        repo.commit("base");
+        repo.git(&["checkout", "-q", "-b", "side"]);
+        repo.commit("side 1");
+        repo.git(&["checkout", "-q", "main"]);
+        repo.commit("main 1");
+        repo.git(&["checkout", "-q", "side"]);
+        repo.commit("side 2");
+        repo.git(&["checkout", "-q", "main"]);
+        repo.git(&["merge", "-q", "--no-ff", "-m", "merge side", "side"]);
+        repo.commit("main 2");
+        repo.git(&["checkout", "-q", "-b", "later", "HEAD~1"]);
+        repo.commit("later 1");
+        repo.git(&["checkout", "-q", "main"]);
+        std::fs::write(repo.path().join("loose"), "x").unwrap();
+
+        let (_, all, _) = load_all(repo.path());
+        for page in 1..=4 {
+            let (paged, _) = load_in_pages(repo.path(), page);
+            assert_eq!(paged, all, "pages of {page}");
+        }
+        // Seven commits in pages of two: three full pages, then one with the last.
+        assert_eq!(load_in_pages(repo.path(), 2).1, 4);
+    }
+
+    #[test]
+    fn a_page_that_ends_history_exactly_finds_nothing_more() {
+        let repo = Repo::new();
+        repo.commit("a");
+        repo.commit("b");
+        let (entries, reads) = load_in_pages(repo.path(), 2);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(reads, 2);
+    }
+
     fn load_all(repo: &Path) -> (Option<Arc<Refs>>, Vec<Entry>, Option<String>) {
         let (mut refs, mut entries, mut error) = (None, Vec::new(), None);
         load(repo, i32::MAX as u32, |event| {
@@ -272,6 +408,7 @@ mod tests {
                 LoadEvent::Refs(loaded) => refs = Some(loaded),
                 LoadEvent::Batch(batch) => entries.extend(batch),
                 LoadEvent::Failed(message) => error = Some(message),
+                LoadEvent::More(_) => {}
             }
             true
         });

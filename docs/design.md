@@ -150,8 +150,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     page says so and the tick box is not drawn.
     Under "Graph", a row of chips picks how many commits the graph loads from a repository
     (100, 500 by default, 1000, 5000, 20000), kept as `commit_limit` in the same file. The
-    newest commits by history order come first, and a change applies the next time a
-    repository loads.
+    newest commits by history order come first. Scrolling to within 200 rows of the end
+    loads the next as many, in the same lanes, and a reload keeps what was already
+    scrolled into view. A change applies the next time a repository loads.
     Under "Cache", a tick box "Keep a cache on disk" (on by default) says that what git
     reports about commits and their file diffs is kept between runs, so a commit seen before
     opens at once. When it is on, a row of chips picks the size limit (64 MB, 256 MB by

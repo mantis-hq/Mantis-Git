@@ -212,8 +212,8 @@ impl AppState {
     /// The sentence under the commit limit, saying what it does now.
     pub fn commit_limit_sentence(&self) -> String {
         format!(
-            "The graph shows the newest {} of a repository. A change applies the next time a \
-             repository loads.",
+            "The graph loads the newest {} of a repository, and the next as many as you scroll \
+             down to them. A change applies the next time a repository loads.",
             count(self.commit_limit, "commit")
         )
     }
@@ -221,7 +221,7 @@ impl AppState {
     /// What the header says after the commit limit is changed.
     pub fn commit_limit_saved_message(&self) -> String {
         format!(
-            "Saved. The graph loads up to {} from now on.",
+            "Saved. The graph loads {} at a time from now on.",
             count(self.commit_limit, "commit")
         )
     }

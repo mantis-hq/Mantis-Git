@@ -115,6 +115,10 @@ pub struct GraphView {
     /// something to show, so that a refresh doesn't flash an empty window.
     pending_refs: Option<Arc<Refs>>,
     max_columns: u32,
+    /// Where history continues past what is loaded, while there may be more of it.
+    more: Option<history::More>,
+    /// Reads the next page of history, while it runs.
+    more_task: Option<Task<()>>,
     selected: Option<usize>,
     /// Keeps the selection on the same commit when a reload reorders history.
     selected_oid: Option<Arc<str>>,
@@ -179,6 +183,8 @@ impl GraphView {
             refs: Arc::default(),
             pending_refs: None,
             max_columns: 0,
+            more: None,
+            more_task: None,
             selected: None,
             selected_oid: None,
             selection: Selection::default(),
@@ -259,8 +265,12 @@ impl GraphView {
         };
         self.status = Status::Loading;
         self.pending_refs = None;
+        self.more = None;
+        self.more_task = None;
         self.refresh_fingerprint(cx);
-        let limit = self.commit_limit();
+        // Reloading keeps as much history as was scrolled into view, so the graph doesn't
+        // shrink back to the first page under the pointer.
+        let limit = self.commit_limit().max(self.commit_count() as u32);
         let events = history::spawn_load(repo, limit);
         self.load_task = Some(cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
@@ -343,6 +353,7 @@ impl GraphView {
                 self.max_columns = self.max_columns.max(width);
                 self.entries.extend(batch);
             }
+            LoadEvent::More(more) => self.more = Some(more),
             LoadEvent::Failed(message) => {
                 self.pending_refs = None;
                 self.entries.clear();
@@ -351,6 +362,45 @@ impl GraphView {
             }
         }
         cx.notify();
+    }
+
+    /// Starts reading the next page of history once the rows in view come within
+    /// `LOAD_AHEAD` of the end, so it is usually in before it is scrolled to.
+    fn load_more_if_near_the_end(&mut self, visible_end: usize, cx: &mut Context<Self>) {
+        const LOAD_AHEAD: usize = 200;
+        if self.more_task.is_some()
+            || self.load_task.is_some()
+            || visible_end + LOAD_AHEAD < self.entries.len()
+        {
+            return;
+        }
+        let (Some(repo), Some(more)) = (self.repo.clone(), self.more.take()) else {
+            return;
+        };
+        let events = history::spawn_load_more(repo, more, self.commit_limit());
+        self.more_task = Some(cx.spawn(async move |this, cx| {
+            while let Ok(event) = events.recv().await {
+                let applied = this.update(cx, |this, cx| match event {
+                    // What is already on screen stays, and the band says why no more came.
+                    LoadEvent::Failed(message) => {
+                        this.notice =
+                            Some(Notice::Error(history::more_failed_message(&message).into()));
+                        cx.notify();
+                    }
+                    event => this.apply(event, cx),
+                });
+                if applied.is_err() {
+                    return;
+                }
+            }
+            this.update(cx, |this, cx| {
+                this.more_task = None;
+                // Picked branches may reach into the commits that just arrived.
+                this.refresh_spotlight();
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     /// Marks the load complete, which an empty repository reaches without any batch.
@@ -559,6 +609,7 @@ impl GraphView {
                             "commits",
                             self.entries.len(),
                             cx.processor(|this, range: Range<usize>, _, cx| {
+                                this.load_more_if_near_the_end(range.end, cx);
                                 this.render_rows(range, cx)
                             }),
                         )

@@ -74,6 +74,7 @@ impl Row {
     }
 }
 
+#[derive(Clone)]
 struct Slot {
     expects: Arc<str>,
     color: LaneColor,
@@ -83,7 +84,7 @@ struct Slot {
     dashed: bool,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct GraphBuilder {
     slots: Vec<Option<Slot>>,
     next_color: u32,
