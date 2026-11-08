@@ -202,7 +202,7 @@ mod render {
         assert!(hues >= 3, "expected several lane colours, found {hues}");
     }
 
-    fn assert_working_changes_lead_to_the_commit_screen() {
+    fn assert_working_changes_show_in_the_inspector() {
         let repo = fixture();
         let lines: String = (0..30).map(|line| format!("line {line}\n")).collect();
         repo.write("notes.txt", &lines);
@@ -219,15 +219,30 @@ mod render {
         assert_eq!(cx.update(|cx| view.read(cx).commit_count()), 12);
         capture(&mut cx, handle, "working-row");
 
+        // The working changes, with one file staged: two lists and the commit form.
         cx.update_window(handle, |_, _, cx| {
-            view.update(cx, |view, cx| view.open_commit_screen(cx));
+            view.update(cx, |view, cx| {
+                view.select_working_changes(cx);
+                view.stage_paths(vec!["draft.txt".to_owned()], false, cx);
+            });
         })
         .unwrap();
         for _ in 0..50 {
             cx.run_until_parked();
             std::thread::sleep(Duration::from_millis(10));
         }
-        capture(&mut cx, handle, "commit");
+        capture(&mut cx, handle, "inspector");
+
+        // A file's diff over the graph, in cards.
+        cx.update_window(handle, |_, _, cx| {
+            view.update(cx, |view, cx| view.show_file(0, cx));
+        })
+        .unwrap();
+        for _ in 0..50 {
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        capture(&mut cx, handle, "diff");
     }
 
     fn wait_for(cx: &mut HeadlessAppContext, done: impl Fn(&mut HeadlessAppContext) -> bool) {
@@ -263,9 +278,20 @@ mod render {
         let mut cx = app(ThemeMode::Dark);
         let (handle, view) = open(&mut cx, path);
         wait_for(&mut cx, |cx| {
-            cx.update(|cx| view.read(cx).screen()) == view::Screen::Conflict
+            cx.update(|cx| view.read(cx).paused_operation().is_some())
         });
         capture(&mut cx, handle, "conflict");
+
+        // Both sides next to each other, over the graph.
+        cx.update_window(handle, |_, _, cx| {
+            view.update(cx, |view, cx| view.show_conflict("parser.rs", cx));
+        })
+        .unwrap();
+        for _ in 0..50 {
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        capture(&mut cx, handle, "resolver");
     }
 
     /// The dock over a loaded repository: the log with the commands that loaded it, then a
@@ -456,7 +482,7 @@ mod render {
         assert_settings_pages_draw(ThemeMode::Dark, "dark");
         assert_settings_pages_draw(ThemeMode::Light, "light");
         assert_conflict_screen_opens();
-        assert_working_changes_lead_to_the_commit_screen();
+        assert_working_changes_show_in_the_inspector();
         assert_draws_lanes(ThemeMode::Dark, "graph-dark");
         assert_draws_lanes(ThemeMode::Light, "graph-light");
         assert_dock_shows_the_log_and_a_terminal();

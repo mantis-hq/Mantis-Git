@@ -79,6 +79,25 @@ impl Decision {
     }
 }
 
+/// One file with conflicts, and which of the decisions belong to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConflictFile {
+    pub path: String,
+    /// Positions in [`Progress::decisions`], in order.
+    pub decisions: Vec<usize>,
+}
+
+impl ConflictFile {
+    /// How far along the file is, given how many of its decisions have an answer.
+    pub fn note(&self, answered: usize) -> String {
+        match (answered, self.decisions.len()) {
+            (answered, total) if answered >= total => "Decided".to_owned(),
+            (_, 1) => "Needs a decision".to_owned(),
+            (answered, total) => format!("{answered} of {total} decided"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Progress {
     pub kind: Kind,
@@ -99,6 +118,21 @@ impl Progress {
         } else {
             (first, second)
         }
+    }
+
+    /// The files with decisions to make, in the order their first decision comes.
+    pub fn files(&self) -> Vec<ConflictFile> {
+        let mut files: Vec<ConflictFile> = Vec::new();
+        for (index, decision) in self.decisions.iter().enumerate() {
+            match files.iter_mut().find(|file| file.path == decision.path) {
+                Some(file) => file.decisions.push(index),
+                None => files.push(ConflictFile {
+                    path: decision.path.clone(),
+                    decisions: vec![index],
+                }),
+            }
+        }
+        files
     }
 
     /// Says what happened in plain words.
@@ -569,6 +603,36 @@ pub fn rebase_target(repo: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decisions_are_grouped_by_file_in_the_order_they_come() {
+        let decision = |path: &str, line| Decision {
+            path: path.to_owned(),
+            line,
+            mine: String::new(),
+            other: String::new(),
+            whole_file: false,
+            mine_why: String::new(),
+            other_why: String::new(),
+        };
+        let progress = Progress {
+            kind: Kind::Merge,
+            mine: "main".to_owned(),
+            other: "feat".to_owned(),
+            steps: Vec::new(),
+            decisions: vec![decision("b", 1), decision("a", 1), decision("b", 9)],
+            mine_is_second: false,
+        };
+        let files = progress.files();
+        assert_eq!(files.len(), 2);
+        assert_eq!(
+            (files[0].path.as_str(), &files[0].decisions[..]),
+            ("b", &[0, 2][..])
+        );
+        assert_eq!(files[0].note(1), "1 of 2 decided");
+        assert_eq!(files[0].note(2), "Decided");
+        assert_eq!(files[1].note(0), "Needs a decision");
+    }
     use crate::testing::Repo;
 
     /// `feature` and `main` both changed line 2 of `file`.

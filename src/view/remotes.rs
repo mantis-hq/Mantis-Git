@@ -90,6 +90,8 @@ impl GraphView {
             cx.notify();
         } else if self.diff_is_open() {
             self.close_diff(cx);
+        } else if self.conflict.open {
+            self.close_resolver(cx);
         }
     }
 

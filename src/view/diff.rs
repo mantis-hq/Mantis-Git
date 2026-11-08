@@ -55,21 +55,26 @@ enum Row {
         index: usize,
     },
     Line(Line),
+    /// Space between two hunks, drawn as nothing. Rows share one height, so it is a row.
+    Gap,
 }
 
 impl Shown {
     fn new(oid: Arc<str>, file: &FileChange, patch: &FilePatch) -> Self {
         let mut rows = Vec::new();
         for (index, hunk) in patch.hunks.iter().enumerate() {
-            rows.push(Row::Hunk {
-                title: hunk.title.clone(),
-                index,
-            });
+            rows.push(Row::Gap);
+            let title = match (hunk.title.as_str(), hunk.lines.first()) {
+                ("", Some(first)) => format!("From line {}", first.new.or(first.old).unwrap_or(1)),
+                (title, _) => title.to_owned(),
+            };
+            rows.push(Row::Hunk { title, index });
             rows.extend(hunk.lines.iter().cloned().map(Row::Line));
         }
         let width = |row: &Row| match row {
             Row::Hunk { title, .. } => title.len(),
             Row::Line(line) => line.text.len(),
+            Row::Gap => 0,
         };
         let widest = (0..rows.len()).max_by_key(|&index| width(&rows[index]));
         Self {
@@ -140,7 +145,8 @@ impl GraphView {
         }
     }
 
-    pub(super) fn show_file(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub fn show_file(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.conflict.open = false;
         self.diff.closed = false;
         self.load_file(index, cx);
     }
@@ -288,6 +294,7 @@ impl GraphView {
         let shown = self.diff.patch.clone()?;
         let theme = cx.theme();
         let (border, panel, muted) = (theme.border, theme.title_bar, theme.muted_foreground);
+        let background = theme.background;
         let view = self.diff.view;
         let empty = shown.rows.is_empty();
         // A box for the whole file, ticked while it is in the index.
@@ -305,11 +312,12 @@ impl GraphView {
                 .v_flex()
                 .flex_1()
                 .min_h_0()
-                .bg(panel)
+                .bg(background)
                 .child(
                     div()
                         .h_flex()
                         .h(px(40.))
+                        .bg(panel)
                         .flex_none()
                         .pl_4()
                         .pr_2()
@@ -407,20 +415,25 @@ impl GraphView {
 
 fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut Context<GraphView>) -> Vec<Div> {
     let theme = cx.theme();
-    let muted = theme.muted_foreground;
+    let (muted, border, panel) = (theme.muted_foreground, theme.border, theme.title_bar);
     let colors = tokens(theme.is_dark());
     // Hunks have a box only where moving one on its own can work.
     let ticks = shown.side.filter(|_| shown.ticks);
 
     range
-        .map(|index| {
-            let row = div()
+        .map(|at| {
+            // Each hunk is a card on its own row of rows: a header, then its lines. The
+            // margins are the row's padding, so the card has room around it.
+            let outer = div()
                 .h_flex()
                 .h(ROW_HEIGHT)
                 .min_w_full()
+                .px_3()
                 .text_size(TEXT_SMALL)
                 .whitespace_nowrap();
-            let line = match &shown.rows[index] {
+            let has_lines = matches!(shown.rows.get(at + 1), Some(Row::Line(_)));
+            let line = match &shown.rows[at] {
+                Row::Gap => return outer,
                 Row::Line(line) => line,
                 Row::Hunk { title, index } => {
                     let hunk = *index;
@@ -428,26 +441,39 @@ fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut Context<GraphView>) 
                         checkbox(("diff-tick-hunk", hunk), side.unstages(), false, cx)
                             .on_click(cx.listener(move |this, _, _, cx| this.move_hunk(hunk, cx)))
                     });
-                    return row
-                        .child(
-                            div()
-                                .w(NUMBER_WIDTH * 2. + SIGN_WIDTH)
-                                .flex_none()
-                                .h_flex()
-                                .justify_end()
-                                .pr_2()
-                                .children(tick),
-                        )
-                        .child(div().pr_2().text_color(muted).child(expand_tabs(title)))
-                        .when_some(ticks, |row, side| {
-                            row.child(
+                    return outer.child(
+                        div()
+                            .h_flex()
+                            .flex_1()
+                            .h_full()
+                            .gap(px(10.))
+                            .px_3()
+                            .overflow_hidden()
+                            .bg(panel)
+                            .border_t_1()
+                            .border_l_1()
+                            .border_r_1()
+                            .border_b_1()
+                            .border_color(border)
+                            .rounded_t(px(8.))
+                            .when(!has_lines, |header| header.rounded_b(px(8.)))
+                            .children(tick)
+                            .child(
                                 div()
-                                    .pr_4()
-                                    .text_size(TEXT_CHIP)
-                                    .text_color(muted)
-                                    .child(side.hunk_note()),
+                                    .flex_1()
+                                    .text_color(colors.subtext0)
+                                    .child(expand_tabs(title)),
                             )
-                        });
+                            .when_some(ticks, |header, side| {
+                                header.child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(TEXT_CHIP)
+                                        .text_color(muted)
+                                        .child(side.hunk_note()),
+                                )
+                            }),
+                    );
                 }
             };
             let LineStyle {
@@ -456,26 +482,48 @@ fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut Context<GraphView>) 
                 sign_color,
                 text,
             } = line_style(line.kind, cx);
-            let number = |value: Option<u32>| {
+            let last = !matches!(shown.rows.get(at + 1), Some(Row::Line(_)));
+            outer.child(
                 div()
-                    .w(NUMBER_WIDTH)
-                    .flex_none()
-                    .text_right()
-                    .text_color(colors.overlay1)
-                    .child(value.map(|n| n.to_string()).unwrap_or_default())
-            };
-            row.when_some(wash, |row, wash| row.bg(wash))
-                .child(number(line.old))
-                .child(number(line.new))
-                .child(
-                    div()
-                        .w(SIGN_WIDTH)
-                        .flex_none()
-                        .text_center()
-                        .text_color(sign_color)
-                        .child(sign),
-                )
-                .child(div().pr_4().text_color(text).child(expand_tabs(&line.text)))
+                    .h_flex()
+                    .flex_1()
+                    .h_full()
+                    .overflow_hidden()
+                    .bg(panel)
+                    .border_l_1()
+                    .border_r_1()
+                    .border_color(border)
+                    .when(last, |row| row.border_b_1().rounded_b(px(8.)))
+                    .child(
+                        div()
+                            .h_flex()
+                            .flex_1()
+                            .h_full()
+                            .when_some(wash, |row, wash| row.bg(wash))
+                            .child(
+                                div()
+                                    .w(NUMBER_WIDTH)
+                                    .flex_none()
+                                    .text_right()
+                                    .text_color(colors.overlay1)
+                                    .child(
+                                        line.new
+                                            .or(line.old)
+                                            .map(|n| n.to_string())
+                                            .unwrap_or_default(),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .w(SIGN_WIDTH)
+                                    .flex_none()
+                                    .text_center()
+                                    .text_color(sign_color)
+                                    .child(sign),
+                            )
+                            .child(div().pr_4().text_color(text).child(expand_tabs(&line.text))),
+                    ),
+            )
         })
         .collect()
 }
@@ -505,10 +553,11 @@ diff --git a/x b/x
             ..FileChange::default()
         };
         let shown = Shown::new("oid".into(), &file, &patch::parse(diff)[0]);
-        assert_eq!(shown.rows.len(), 7);
-        assert!(matches!(&shown.rows[0], Row::Hunk { title, index: 0 } if title == "fn top() {"));
-        assert!(matches!(&shown.rows[4], Row::Hunk { index: 1, .. }));
-        assert_eq!(shown.widest, Some(2));
+        assert_eq!(shown.rows.len(), 9, "a gap before each of the two hunks");
+        assert!(matches!(&shown.rows[0], Row::Gap));
+        assert!(matches!(&shown.rows[1], Row::Hunk { title, index: 0 } if title == "fn top() {"));
+        assert!(matches!(&shown.rows[6], Row::Hunk { index: 1, .. }));
+        assert_eq!(shown.widest, Some(3));
     }
 
     #[test]

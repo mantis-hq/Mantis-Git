@@ -185,6 +185,10 @@ impl GraphView {
             self.begin_new_branch(start.clone(), label.clone(), cx);
         } else if let Command::EditRemote { name } = &command {
             self.open_remote_form(Some(name.clone()), cx);
+        } else if let Command::ShowConflict { path } = &command {
+            self.show_conflict(path, cx);
+        } else if let Command::UseSide { path, side } = &command {
+            self.use_side_for_file(path, *side, cx);
         } else if let Command::ShowFile { index } = &command {
             self.show_file(*index, cx);
         } else if let Command::StageFiles { paths, unstage } = &command {
@@ -271,6 +275,19 @@ impl GraphView {
             .then(|| self.working_file(index).map(|(side, _)| side))
             .flatten();
         self.show_menu(position, menu::file_menu(&path, index, side), cx);
+    }
+
+    /// The menu for a conflicted file: show both sides, or take one for the whole file.
+    pub(super) fn open_conflict_menu(
+        &mut self,
+        path: &str,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(progress) = self.paused_operation().cloned() else {
+            return;
+        };
+        self.show_menu(position, menu::conflict_menu(&progress, path), cx);
     }
 
     /// The menu for a folder of the inspector's tree, acting on the files under it.

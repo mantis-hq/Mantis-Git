@@ -11,6 +11,21 @@ use std::time::Duration;
 
 const TAB: &str = "    ";
 
+/// A small solid label such as "Rebase paused", in the colour that says what it means.
+pub(super) fn pill(label: &str, color: Hsla, cx: &App) -> Div {
+    div()
+        .h_flex()
+        .flex_none()
+        .h(px(22.))
+        .px_2()
+        .rounded(px(4.))
+        .text_size(TEXT_SMALL)
+        .font_semibold()
+        .bg(color)
+        .text_color(cx.theme().primary_foreground)
+        .child(label.to_owned())
+}
+
 /// The 52 px band across the top of a screen.
 pub(super) fn header_bar(cx: &App) -> Div {
     let theme = cx.theme();
@@ -261,7 +276,6 @@ pub(super) enum Edge {
     Inspector,
     Dock,
     Log,
-    Steps,
     Settings,
 }
 

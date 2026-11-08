@@ -2,7 +2,7 @@
 //! layout; each region and screen lives in its own module.
 
 mod commit_form;
-mod conflict_screen;
+mod conflicts;
 mod diff;
 mod dock;
 mod header;
@@ -84,14 +84,6 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
-/// What fills the window. Task screens replace the graph and link back to it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Screen {
-    #[default]
-    Graph,
-    Conflict,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
     NoRepository,
@@ -139,7 +131,6 @@ pub struct GraphView {
     scroll: UniformListScrollHandle,
     focus: FocusHandle,
     load_task: Option<Task<()>>,
-    screen: Screen,
     /// The running git operation, in words. Only one runs at a time.
     busy: Option<SharedString>,
     notice: Option<Notice>,
@@ -152,7 +143,7 @@ pub struct GraphView {
     inspector: inspector::State,
     diff: diff::State,
     commit: commit_form::State,
-    conflict: conflict_screen::State,
+    conflict: conflicts::State,
     /// Set while another tab is showing, so that only the visible tab reacts to the
     /// window coming back to the front.
     in_background: bool,
@@ -200,7 +191,6 @@ impl GraphView {
             scroll: UniformListScrollHandle::new(),
             focus,
             load_task: None,
-            screen: Screen::Graph,
             busy: None,
             notice: None,
             confirm: None,
@@ -255,7 +245,7 @@ impl GraphView {
         self.selection = Selection::default();
         self.menu = None;
         self.remote_form = None;
-        self.screen = Screen::Graph;
+        self.conflict.open = false;
         self.sidebar.picks.clear();
         self.sidebar.spotlight = None;
         self.stop_loading_details();
@@ -368,6 +358,7 @@ impl GraphView {
 
     /// Marks the load complete, which an empty repository reaches without any batch.
     pub fn finish_load(&mut self, cx: &mut Context<Self>) {
+        self.focus_conflicts(cx);
         self.commit_pending_refs();
         if self.selected.is_none() {
             self.selected_oid = None;
@@ -409,15 +400,6 @@ impl GraphView {
         self.notice.as_ref().map(|notice| match notice {
             Notice::Info(message) | Notice::Error(message) => message.clone(),
         })
-    }
-
-    pub fn screen(&self) -> Screen {
-        self.screen
-    }
-
-    pub fn show_screen(&mut self, screen: Screen, cx: &mut Context<Self>) {
-        self.screen = screen;
-        cx.notify();
     }
 
     /// The folder git commands should run in: the top of the working tree once known.
@@ -559,7 +541,8 @@ impl GraphView {
         }
         let sidebar = self.render_sidebar(cx);
         let inspector = self.render_inspector(cx);
-        let diff = self.render_diff(cx);
+        // One file's diff, or the two sides of a conflict, covers the graph.
+        let diff = self.render_diff(cx).or_else(|| self.render_resolver(cx));
         let (has_sidebar, has_inspector) = (sidebar.is_some(), inspector.is_some());
         // An open diff takes the place of the whole graph, and the inspector beside it stays
         // for picking another file.
@@ -636,13 +619,9 @@ impl Render for GraphView {
         let theme = cx.theme();
         let (background, foreground) = (theme.background, theme.foreground);
 
-        let (bar, content) = match self.screen {
-            Screen::Graph => (
-                Some(self.render_toolbar(cx).into_any_element()),
-                self.render_graph(cx),
-            ),
-            Screen::Conflict => (None, self.render_conflict_screen(window, cx)),
-        };
+        self.sync_conflict_editor(window, cx);
+        let bar = Some(self.render_toolbar(cx).into_any_element());
+        let content = self.render_graph(cx);
         self.ensure_remote_inputs(window, cx);
         let notice = self.render_notice(cx);
         let remote_form = self.render_remote_form(cx);
@@ -1226,6 +1205,80 @@ mod tests {
             // The file is in both lists now, and the diff stays on the unstaged one.
             assert_eq!(view.shown_file(), Some(0));
         });
+    }
+
+    #[gpui_kit::test]
+    fn a_conflict_is_listed_in_the_inspector_resolved_from_its_menu_and_continued(
+        cx: &mut TestAppContext,
+    ) {
+        use gitclient_core::menu::Command;
+        use gitclient_core::testing::Repo;
+        let repo = Repo::new();
+        repo.git(&["config", "user.name", "Ada"]);
+        repo.git(&["config", "user.email", "ada@example.com"]);
+        repo.write("a", "base\n");
+        repo.commit("base");
+        let main = repo.git(&["branch", "--show-current"]);
+        repo.git(&["checkout", "-q", "-b", "feat"]);
+        repo.write("a", "feat\n");
+        repo.commit("feat change");
+        repo.git(&["checkout", "-q", &main]);
+        repo.write("a", "main\n");
+        repo.commit("main change");
+        // The merge stops on the conflict, which git reports as a failure.
+        let merged = std::process::Command::new("git")
+            .current_dir(repo.path())
+            .args(["merge", "feat"])
+            .output()
+            .unwrap();
+        assert!(!merged.status.success());
+
+        let (view, mut cx) = open_view(cx);
+        load(&view, &["x"], &mut cx);
+        view.update(&mut cx, |view, cx| {
+            view.repo = Some(repo.path().to_owned());
+            view.entries[0].working = true;
+            view.check_paused_operation(cx);
+        });
+        cx.run_until_parked();
+        view.read_with(&cx, |view, _| {
+            let progress = view.paused_operation().expect("the merge is paused");
+            assert_eq!(progress.files().len(), 1);
+            assert!(view.working_row_is_selected(), "the conflicts are in sight");
+            assert!(!view.resolver_is_open());
+        });
+
+        // Both sides open next to each other, over the graph.
+        view.update(&mut cx, |view, cx| view.show_conflict("a", cx));
+        assert!(view.read_with(&cx, |view, _| view.resolver_is_open()));
+        cx.simulate_click(point(px(2.), px(2.)), Modifiers::none());
+
+        // The menu offers each branch by name and never "mine" or "theirs".
+        view.update(&mut cx, |view, cx| {
+            view.open_conflict_menu("a", point(px(10.), px(10.)), cx);
+            let lines = view.menu.as_ref().unwrap().lines();
+            let taking_other = lines.iter().any(|line| {
+                matches!(
+                    line.command(),
+                    Some(Command::UseSide {
+                        side: gitclient_core::conflict::Side::Other,
+                        ..
+                    })
+                )
+            });
+            assert!(taking_other);
+            view.close_menu(cx);
+            view.use_side_for_file("a", gitclient_core::conflict::Side::Mine, cx);
+            view.continue_operation(cx);
+        });
+        cx.run_until_parked();
+        view.update(&mut cx, |view, cx| view.check_paused_operation(cx));
+        cx.run_until_parked();
+        view.read_with(&cx, |view, _| {
+            assert!(view.paused_operation().is_none(), "the merge finished");
+            assert!(!view.resolver_is_open());
+        });
+        assert_eq!(repo.read("a"), "main\n");
     }
 
     #[gpui_kit::test]
