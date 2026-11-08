@@ -233,7 +233,7 @@ impl GraphView {
         );
     }
 
-    fn run_command(&mut self, command: Command, cx: &mut Context<Self>) {
+    pub(super) fn run_command(&mut self, command: Command, cx: &mut Context<Self>) {
         let label = command.progress();
         self.run_operation(label, move |repo| command.run(repo), cx);
     }

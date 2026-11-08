@@ -10,6 +10,7 @@ use crate::history::refs::{RefKind, Refs};
 use crate::repo::branch::{self, Doomed, Dragged, Relation};
 use crate::repo::conflict;
 use crate::repo::remote;
+use crate::repo::stash;
 use crate::repo::submodule;
 use crate::repo::worktree;
 use crate::text::{count, short_oid};
@@ -233,6 +234,46 @@ pub fn worktree_menu(refs: &Refs, path: &Path) -> Vec<Line> {
         .danger()
     });
     lines
+}
+
+/// The menu for the picked stashes in the sidebar, by their numbers. A stash is applied and
+/// kept, or deleted after asking.
+pub fn stash_menu(refs: &Refs, indexes: &[usize]) -> Vec<Line> {
+    let indexes: Vec<usize> = indexes
+        .iter()
+        .copied()
+        .filter(|&index| index < refs.stashes.len())
+        .collect();
+    let Some(&first) = indexes.first() else {
+        return Vec::new();
+    };
+    let heading = match indexes.as_slice() {
+        [_] => stash::title(&refs.stashes[first]).to_owned(),
+        many => format!("{} selected", many.len()),
+    };
+    let subjects: Vec<String> = indexes
+        .iter()
+        .map(|&index| stash::title(&refs.stashes[index]).to_owned())
+        .collect();
+    vec![
+        Line::Heading(heading),
+        Line::item(
+            stash::apply_label(indexes.len()),
+            Command::ApplyStashes {
+                indexes: indexes.clone(),
+            },
+        ),
+        Line::item("Copy names", copy(&subjects.join("\n"), "the names")),
+        Line::Separator,
+        Line::item(
+            stash::drop_label(indexes.len()),
+            Command::DeleteStashes {
+                warning: stash::drop_warning(&subjects),
+                indexes,
+            },
+        )
+        .danger(),
+    ]
 }
 
 /// Where a file in the inspector comes from: one of the two lists of working changes, or a
@@ -778,6 +819,30 @@ mod tests {
                 .contains("git remote add origin git@host:a.git")
         );
         assert!(remote_menu(&refs, "nowhere").is_empty());
+    }
+
+    #[test]
+    fn a_stash_menu_applies_copies_and_deletes_what_is_picked() {
+        let mut refs = Refs::default();
+        refs.stashes = vec!["On main: a".into(), "WIP on main: 1a2b3c4 b".into()];
+        let one = stash_menu(&refs, &[1]);
+        assert_eq!(one[0], Line::Heading("1a2b3c4 b".into()));
+        let labels: Vec<_> = one
+            .iter()
+            .filter_map(|line| match line {
+                Line::Item { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(labels, ["Apply stash", "Copy names", "Delete stash"]);
+        let both = stash_menu(&refs, &[0, 1, 9]);
+        assert_eq!(both[0], Line::Heading("2 selected".into()));
+        let Some(Command::DeleteStashes { indexes, .. }) = both.last().unwrap().command().cloned()
+        else {
+            panic!("the last line deletes");
+        };
+        assert_eq!(indexes, [0, 1], "numbers that don't exist are dropped");
+        assert!(stash_menu(&refs, &[7]).is_empty());
     }
 
     #[test]

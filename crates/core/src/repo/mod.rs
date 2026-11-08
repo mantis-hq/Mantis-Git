@@ -5,6 +5,7 @@ pub mod branch;
 pub mod commit_graph;
 pub mod conflict;
 pub mod remote;
+pub mod stash;
 pub mod status;
 pub mod submodule;
 pub mod worktree;
