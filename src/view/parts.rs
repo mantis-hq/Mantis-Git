@@ -64,6 +64,24 @@ pub(super) fn header_bar(cx: &App) -> Div {
         .border_color(theme.border)
 }
 
+/// A line across the window that says what happened or what is offered, with quiet buttons
+/// at its end: the band under the header, and the one over the window for an update.
+pub(super) fn band(id: &'static str, cx: &App) -> Stateful<Div> {
+    let theme = cx.theme();
+    div()
+        .id(id)
+        .h_flex()
+        .flex_none()
+        .min_h(px(36.))
+        .px_4()
+        .py_1()
+        .gap_3()
+        .text_size(TEXT_BODY)
+        .bg(theme.title_bar)
+        .border_b_1()
+        .border_color(theme.border)
+}
+
 // The type scale of docs/design.md. Size text with these, not with literal pixels.
 /// Commit title.
 pub(super) const TEXT_TITLE: Pixels = px(16.);

@@ -5,6 +5,7 @@ pub mod askpass;
 pub mod cache;
 pub mod commit;
 pub mod history;
+pub mod install;
 pub mod log;
 pub mod menu;
 pub mod ops;

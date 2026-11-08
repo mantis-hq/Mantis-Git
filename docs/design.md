@@ -165,6 +165,23 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     button. Changes apply at once to the running app. The cache lives in the system's cache
     folder (`$XDG_CACHE_HOME` or `~/.cache` on Linux), never in the config folder, and an
     entry that is damaged or out of date is simply read from git again.
+    Only a copy unpacked from a release archive looks after itself, which is called
+    portable. One a package manager installed (found by a build flag, `/usr`, Flatpak, an
+    AppImage, Homebrew, Nix, Scoop and the like) leaves its launcher and its updates to the
+    package manager, shows no "Launcher" card, and says in "Updates" who updates it.
+    Under "Launcher", a tick box "Add gitclient to the application menu" ("Start menu" on
+    Windows) is ticked when a launcher is on disk: on Linux a `gitclient.desktop` and an SVG
+    icon under `$XDG_DATA_HOME` (`~/.local/share` by default), on Windows one shortcut in the
+    user's Start menu folder, and nothing on a system with neither. The sentence says where
+    gitclient starts from. What is on disk is the truth, so a launcher added or removed by
+    hand shows as it is; a `gitclient.desktop` without gitclient's marker line is someone
+    else's, is never replaced or removed, and has no tick box. Ticking or clearing it applies
+    at once, and the header says how to undo it. Every start mends a launcher of gitclient's
+    own that points at a copy that has moved, and never adds one that was taken away.
+    Under "Updates", a tick box "Look for a newer version when gitclient starts" (on by
+    default, `check_updates` in the same file) and a row that says where an update stands
+    ("gitclient 0.2.0 is available. This is 0.1.0.") beside one quiet button named for its
+    result: "Check now", "Update to 0.2.0" or "Restart now".
   - **Repository** holds what belongs to the open repository alone, apart from its git
     config, and is only in the side panel while a repository is open. The header says which
     one. Under "History", a "Commit graph" row says whether git's commit graph lists every
@@ -312,6 +329,24 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     under the inputs, whether the form found it or git refused, and typing clears it. On
     success the popup closes and the band says what happened. What each form asks lives in
     core (`Form` in `crates/core/src/menu/form.rs`).
+- **Launcher question:** the first time a portable copy starts, with a place to remember
+  the answer, the front tab asks in the usual popup: "Add gitclient to your application
+  menu? That writes a launcher to `~/.local/share/applications` and an icon beside it, so
+  you can start gitclient without opening its folder. Settings → App takes them away
+  again." The result is "Add gitclient". It is asked once, whatever the answer, and never
+  when a launcher is already there; Settings → App adds or removes it from then on. The
+  band says what was written and how to take it away.
+- **Update band:** when a newer release is found, a band across the top of the window, above
+  the tabs, in the same style as the band under the header: a blue "Update" pill, "gitclient
+  0.2.0 is available.", and quiet buttons "Later" (hides it until a newer release) and
+  "Update to 0.2.0". Nothing is downloaded until the button is pressed. It then says
+  "Downloading gitclient 0.2.0…", and when the new program is in place "gitclient 0.2.0 is
+  installed and starts the next time you open it. To go back, download 0.1.0 from
+  github.com/…/releases/tag/v0.1.0." with "Restart now". A failure is said in Peach with
+  "Try again". Looking and finding nothing, or failing to look, is only said in Settings.
+  The release archive is checked against the release's `SHA256SUMS.txt` before anything is
+  replaced, and a mismatch installs nothing. What is said and decided lives in core
+  (`gitclient_core::install`).
 - **Questions from git** (a key's passphrase, an HTTPS login, whether to trust a new host)
   open the same popup in the front tab, because git or ssh is waiting on it. The sentence is
   the question as they word it, with one input under it, hidden while typing when it is a
