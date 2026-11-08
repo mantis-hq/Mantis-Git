@@ -348,7 +348,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     principle 5. The header has the same "Changes" and "Whole file" chips as a diff, and they
     are the same setting: "Changes" shows each conflict with three lines of context around it
     and "⋯ 17 unchanged lines" for what was left out, "Whole file" shows every line and marks
-    each conflict beside the scrollbar in Peach.
+    each conflict beside the scrollbar in Peach. Before the chips, quiet "Previous" and "Next"
+    buttons (`Alt ↑`, `Alt ↓`) bring the next conflict still left in the result to the top of
+    the list, going on from the last one gone to, or from the top of the view once it has been
+    scrolled past. They skip settled conflicts, go round at either end, and are dimmed when
+    none is left.
   - **Result**, the whole file in an editor, which starts as the file as it stands with its
     conflict markers. The cards edit it, and so can the user, by hand, anywhere. A conflict
     counts as settled when its markers are gone from the result, however that happened. The

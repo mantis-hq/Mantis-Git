@@ -12,6 +12,7 @@ impl GraphView {
         self.conflict.shown = Some(path.to_owned());
         self.conflict.open = true;
         self.conflict.lines.clear();
+        self.conflict.jumped = None;
         self.conflict.editing = None;
         self.conflict.scroll.scroll_to_item(0, ScrollStrategy::Top);
         // Only one thing covers the graph at a time.
@@ -165,6 +166,43 @@ impl GraphView {
         cx.notify();
     }
 
+    /// Scrolls the list to the next conflict that still stands in the result, or the
+    /// previous one, going round at either end. It goes on from the conflict last gone to
+    /// while that is still in view or below it, and otherwise from the top of the view.
+    pub(in crate::view) fn go_to_conflict(&mut self, forward: bool, cx: &mut Context<Self>) {
+        if !self.conflict.open {
+            return;
+        }
+        let Some(path) = self.conflict.shown.clone() else {
+            return;
+        };
+        let Some(view) = self.conflict.views.get(&path).cloned() else {
+            return;
+        };
+        let whole_file = self.diff.view.whole_file;
+        let count = view.conflicts.len();
+        let standing: Vec<bool> = match self.conflict.standing.get(&path) {
+            Some(standing) => standing.clone(),
+            None => vec![true; count],
+        };
+        let top = self.conflict.scroll.logical_scroll_top_index();
+        let from_last = (self.conflict.jumped)
+            .filter(|&last| last < count && view.header_row(whole_file, last) >= top);
+        let at = match from_last {
+            Some(last) => last + usize::from(forward),
+            None => view.conflicts_above(whole_file, top, forward),
+        };
+        let Some(target) = conflict::next_standing(&standing, at, forward) else {
+            return;
+        };
+        self.conflict.jumped = Some(target);
+        let row = view.header_row(whole_file, target);
+        self.conflict
+            .scroll
+            .scroll_to_item(row, ScrollStrategy::Top);
+        cx.notify();
+    }
+
     /// Typing only marks the result as changed. The text is read once typing pauses, so a
     /// key costs the same in a file of any size.
     fn editor_changed(&mut self, cx: &mut Context<Self>) {
@@ -315,7 +353,33 @@ impl GraphView {
                             .child(hint),
                     ),
             )
-            .when(!whole, |bar| bar.child(self.render_view_modes(cx)))
+            .when(!whole, |bar| {
+                let step = |id: &'static str, label: &'static str, tip: &'static str, forward| {
+                    Button::new(id)
+                        .ghost()
+                        .xsmall()
+                        .label(label)
+                        .tooltip(tip)
+                        .disabled(left == 0)
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.go_to_conflict(forward, cx)),
+                        )
+                };
+                bar.child(
+                    div()
+                        .h_flex()
+                        .flex_none()
+                        .gap_1()
+                        .child(step(
+                            "previous-conflict",
+                            "Previous",
+                            "Previous conflict (Alt ↑)",
+                            false,
+                        ))
+                        .child(step("next-conflict", "Next", "Next conflict (Alt ↓)", true)),
+                )
+                .child(self.render_view_modes(cx))
+            })
             .child(
                 Button::new("close-resolver")
                     .ghost()
@@ -795,6 +859,8 @@ pub(in crate::view) struct FileView {
     changes: Vec<Visible>,
     /// Where each conflict is in `whole`: its first row, and how many rows.
     conflicts: Vec<(usize, usize)>,
+    /// Where each conflict's header is in `changes`.
+    headers_in_changes: Vec<usize>,
 }
 
 enum Row {
@@ -869,12 +935,16 @@ impl FileView {
             keep[around].fill(true);
         }
         let mut changes = Vec::new();
+        let mut headers_in_changes = Vec::with_capacity(conflicts.len());
         let mut skipped = 0;
         for (index, keep) in keep.into_iter().enumerate() {
             if keep {
                 if skipped > 0 {
                     changes.push(Visible::Gap(skipped));
                     skipped = 0;
+                }
+                if matches!(whole[index], Row::Header { .. }) {
+                    headers_in_changes.push(changes.len());
                 }
                 changes.push(Visible::Row(index));
             } else {
@@ -888,6 +958,28 @@ impl FileView {
             whole,
             changes,
             conflicts,
+            headers_in_changes,
+        }
+    }
+
+    /// The row of a conflict's header in what is shown.
+    fn header_row(&self, whole_file: bool, ordinal: usize) -> usize {
+        if whole_file {
+            self.conflicts[ordinal].0
+        } else {
+            self.headers_in_changes[ordinal]
+        }
+    }
+
+    /// How many conflicts have their header above `row` in what is shown, or at it too when
+    /// `at_too`.
+    fn conflicts_above(&self, whole_file: bool, row: usize, at_too: bool) -> usize {
+        let above = |header: usize| header < row || (at_too && header == row);
+        if whole_file {
+            self.conflicts.partition_point(|&(start, _)| above(start))
+        } else {
+            self.headers_in_changes
+                .partition_point(|&header| above(header))
         }
     }
 
