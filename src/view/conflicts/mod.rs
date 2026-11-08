@@ -56,8 +56,15 @@ pub(super) struct State {
     /// For each file, the lines each of its conflicts takes in its result, worked out with
     /// `standing`, which lines the result up with the two versions above it.
     places: HashMap<String, Vec<Range<usize>>>,
-    /// For each file, how many lines each conflict settled with a button was given.
-    settled: HashMap<String, Vec<Option<usize>>>,
+    /// For each file, the text the ticks put in place of each conflict, if they did, which
+    /// is how a picked conflict is found in the result again.
+    picked: HashMap<String, Vec<Option<Arc<str>>>>,
+    /// For each file, where each conflict is in its result, in bytes, as of the last check:
+    /// `None` for one edited by hand, which ticks no longer change.
+    regions: HashMap<String, Vec<Option<Range<usize>>>>,
+    /// For each file, its conflicts' marker blocks as git wrote them, which a conflict goes
+    /// back to when nothing is ticked in it.
+    originals: HashMap<String, Arc<Vec<String>>>,
     /// Where the list and the result were last seen, in rows and lines, after one was moved
     /// to follow the other.
     synced: Option<(f32, f32)>,
@@ -70,8 +77,10 @@ pub(super) struct State {
     scroll: UniformListScrollHandle,
     /// The side picked for a file that can only go one way as a whole, such as a binary one.
     sides: HashMap<String, Side>,
-    /// The lines picked in the conflicts of the file on show: conflict, side, line.
-    lines: HashSet<(usize, Side, usize)>,
+    /// The lines ticked in each file's conflicts, by conflict: side and line. The result is
+    /// built from them: a conflict with an entry has its ticked lines in the result, even
+    /// none (a side with no lines taken), and one without keeps its markers.
+    picks: HashMap<String, HashMap<usize, HashSet<(Side, usize)>>>,
     /// Files saved at this stop. They stay listed until the operation goes on.
     resolved: Vec<String>,
     /// The file being saved, so that once it is, the next one opens.
@@ -107,11 +116,13 @@ impl State {
         self.views.clear();
         self.standing.clear();
         self.places.clear();
-        self.settled.clear();
+        self.picked.clear();
+        self.regions.clear();
+        self.originals.clear();
         self.synced = None;
         self.result_offset = None;
         self.sides.clear();
-        self.lines.clear();
+        self.picks.clear();
         self.resolved.clear();
         self.saving = None;
         self.editors.clear();
@@ -125,14 +136,6 @@ impl State {
         let editor = self.editors.get(self.editing.as_deref()?)?;
         editor.loaded.then_some(&editor.state)
     }
-}
-
-/// What a conflict's button puts in the result.
-#[derive(Clone, Copy)]
-pub(super) enum Pick {
-    Mine,
-    Other,
-    Lines,
 }
 
 impl GraphView {
@@ -222,6 +225,8 @@ impl GraphView {
         self.conflict.drafts.remove(&saved);
         self.conflict.sides.remove(&saved);
         self.conflict.editors.remove(&saved);
+        self.conflict.picks.remove(&saved);
+        self.conflict.picked.remove(&saved);
         if self.conflict.editing.as_deref() == Some(saved.as_str()) {
             self.conflict.editing = None;
             self.conflict.behind = false;
@@ -232,7 +237,6 @@ impl GraphView {
         if self.conflict.shown.as_deref() != Some(saved.as_str()) {
             return;
         }
-        self.conflict.lines.clear();
         match files.first() {
             Some(next) => self.show_conflict(&next.path.clone(), cx),
             None => {
@@ -325,7 +329,7 @@ impl GraphView {
             path: path.to_owned(),
             text: self.conflict.drafts.get(path).cloned()?,
             view: self.conflict.views.get(path).cloned(),
-            settled: self.conflict.settled.get(path).cloned().unwrap_or_default(),
+            picked: self.conflict.picked.get(path).cloned().unwrap_or_default(),
         })
     }
 
@@ -334,6 +338,7 @@ impl GraphView {
             .standing
             .insert(path.to_owned(), found.standing);
         self.conflict.places.insert(path.to_owned(), found.places);
+        self.conflict.regions.insert(path.to_owned(), found.regions);
     }
 
     /// Copies typing in the editor into its file's draft, if there is any it doesn't have.
@@ -648,13 +653,13 @@ struct Check {
     /// The file laid out for the list, which says how many lines come between conflicts.
     /// Without it the places are only a guess, which matters to nothing until it is drawn.
     view: Option<Arc<FileView>>,
-    settled: Vec<Option<usize>>,
+    picked: Vec<Option<Arc<str>>>,
 }
 
 impl Check {
     fn run(&self) -> ResultCheck {
         let agreed = self.view.as_ref().map_or(&[][..], |view| view.agreed());
-        (self.progress).check_result(&self.path, &self.text, agreed, &self.settled)
+        (self.progress).check_result(&self.path, &self.text, agreed, &self.picked)
     }
 }
 
