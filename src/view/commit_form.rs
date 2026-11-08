@@ -5,7 +5,9 @@ use super::{GraphView, Notice};
 use crate::theme::tokens;
 use gitclient_core::state::{self, AppState};
 use gitclient_core::tree::FileView;
-use gitclient_core::working::{self, Bump, COMMIT_TYPES, Version};
+use gitclient_core::working;
+use gitclient_core::working::message::{self, COMMIT_TYPES};
+use gitclient_core::working::version::{self, Bump, Version};
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::*;
@@ -96,7 +98,7 @@ impl GraphView {
 
     fn write_commit(&mut self, cx: &mut Context<Self>) {
         let subject = self.subject_text(cx);
-        if !working::can_commit(self.staged_count(), &subject) || self.busy.is_some() {
+        if !message::can_commit(self.staged_count(), &subject) || self.busy.is_some() {
             return;
         }
         let details = self
@@ -105,10 +107,10 @@ impl GraphView {
             .as_ref()
             .map_or_else(String::new, |input| input.read(cx).value().to_string());
         let kind = COMMIT_TYPES[self.commit.kind];
-        let message = working::message(kind, self.commit.breaking, &subject, &details);
-        let line = working::subject_line(kind, self.commit.breaking, &subject);
+        let message = message::message(kind, self.commit.breaking, &subject, &details);
+        let line = message::subject_line(kind, self.commit.breaking, &subject);
         self.commit.needs_clearing = true;
-        let notice = working::committed_notice(&line);
+        let notice = message::committed_notice(&line);
         self.run_operation(
             "Committing",
             move |repo| working::commit(repo, &message).map(|_| Some(notice)),
@@ -145,10 +147,10 @@ impl GraphView {
         let kind = COMMIT_TYPES[self.commit.kind];
         let breaking = self.commit.breaking;
         let subject = self.subject_text(cx);
-        let line = working::subject_line(kind, breaking, &subject);
+        let line = message::subject_line(kind, breaking, &subject);
         let length = line.chars().count();
         let staged = self.staged_count();
-        let cannot = !working::can_commit(staged, &subject) || self.busy.is_some();
+        let cannot = !message::can_commit(staged, &subject) || self.busy.is_some();
         let collapsed = self.commit.collapsed;
 
         // The kinds of change in one line, wrapping only if the panel is dragged narrow.
@@ -178,7 +180,7 @@ impl GraphView {
         let bump = self
             .refs
             .latest_version()
-            .map(|version| (version, working::bump(kind, breaking, version)));
+            .map(|version| (version, version::bump(kind, breaking, version)));
         let breaking_box =
             checkbox("breaking", breaking, false, cx).on_click(cx.listener(|this, _, _, cx| {
                 this.commit.breaking = !this.commit.breaking;
@@ -225,7 +227,7 @@ impl GraphView {
                 row.child(
                     Button::new("commit")
                         .primary()
-                        .label(working::commit_label(staged))
+                        .label(message::commit_label(staged))
                         .disabled(cannot)
                         .on_click(cx.listener(|this, _, _, cx| this.write_commit(cx))),
                 )
@@ -274,7 +276,7 @@ impl GraphView {
             body = body.child(div().h(px(52.)).child(Textarea::new(input).h_full()));
         }
         let body = body
-            .when(working::can_break(kind), |body| {
+            .when(message::can_break(kind), |body| {
                 body.child(
                     div()
                         .h_flex()

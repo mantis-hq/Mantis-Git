@@ -1,10 +1,12 @@
 //! Uncommitted changes: what is staged, what is not, and turning the staged part into a
 //! commit.
 
+pub mod message;
+pub mod version;
+
 use crate::commit::details::{self, FileChange};
 use crate::ops::{self, Cancel};
 use crate::patch::{self, DiffView, FilePatch};
-use crate::text::count;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -368,94 +370,6 @@ fn read_new_file(repo: &Path, path: &str) -> FilePatch {
     patch
 }
 
-/// The kinds of change the commit form offers, in its order.
-pub const COMMIT_TYPES: [&str; 7] = ["feat", "fix", "docs", "refactor", "test", "chore", "ci"];
-
-/// Whether a commit has what it needs to be written: something staged, and a subject.
-pub fn can_commit(staged: usize, subject: &str) -> bool {
-    staged > 0 && !subject.trim().is_empty()
-}
-
-/// What the commit button says it will do.
-pub fn commit_label(staged: usize) -> String {
-    match staged {
-        0 => "Stage a file to commit".to_owned(),
-        files => format!("Commit {}", count(files, "file")),
-    }
-}
-
-/// What to tell the user once a commit landed, with how to take it back.
-pub fn committed_notice(line: &str) -> String {
-    format!(
-        "Committed “{line}”. `git reset --soft HEAD~1` undoes it and keeps your changes staged."
-    )
-}
-
-/// Whether a kind of change can be marked as breaking.
-pub fn can_break(kind: &str) -> bool {
-    kind == "feat"
-}
-
-/// Builds a Conventional Commit message.
-pub fn message(kind: &str, breaking: bool, subject: &str, details: &str) -> String {
-    let mut message = format!("{}\n", subject_line(kind, breaking, subject));
-    let details = details.trim();
-    if !details.is_empty() {
-        message.push('\n');
-        message.push_str(details);
-        message.push('\n');
-    }
-    message
-}
-
-pub fn subject_line(kind: &str, breaking: bool, subject: &str) -> String {
-    let mark = if breaking && can_break(kind) { "!" } else { "" };
-    format!("{kind}{mark}: {}", subject.trim())
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Version(pub u32, pub u32, pub u32);
-
-impl std::fmt::Display for Version {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}.{}", self.0, self.1, self.2)
-    }
-}
-
-/// The highest `v1.2.3` style tag.
-pub fn latest_version<'a>(tags: impl IntoIterator<Item = &'a str>) -> Option<Version> {
-    tags.into_iter().filter_map(parse_version).max()
-}
-
-fn parse_version(tag: &str) -> Option<Version> {
-    let mut parts = tag.strip_prefix('v').unwrap_or(tag).split('.');
-    let mut next = || parts.next()?.parse().ok();
-    let version = Version(next()?, next()?, next()?);
-    parts.next().is_none().then_some(version)
-}
-
-/// What landing this commit would do to the version, following the README's table.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Bump {
-    None,
-    Patch(Version),
-    Minor(Version),
-    Major(Version),
-    /// Breaking, but versions before 1.0 only take a minor bump for it.
-    BreakingMinor(Version),
-}
-
-pub fn bump(kind: &str, breaking: bool, current: Version) -> Bump {
-    let Version(major, minor, patch) = current;
-    match (kind, breaking) {
-        ("feat", true) if major == 0 => Bump::BreakingMinor(Version(0, minor + 1, 0)),
-        ("feat", true) => Bump::Major(Version(major + 1, 0, 0)),
-        ("feat", false) => Bump::Minor(Version(major, minor + 1, 0)),
-        ("fix", _) => Bump::Patch(Version(major, minor, patch + 1)),
-        _ => Bump::None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -803,53 +717,9 @@ mod tests {
     }
 
     #[test]
-    fn words_name_the_side_and_the_result() {
+    fn words_name_the_side() {
         assert_eq!(Side::Unstaged.action("a.rs"), "Stage a.rs");
         assert_eq!(Side::Staged.action("a.rs"), "Unstage a.rs");
         assert_eq!(Side::Staged.hunk_note(), "in this commit");
-        assert_eq!(commit_label(0), "Stage a file to commit");
-        assert_eq!(commit_label(2), "Commit 2 files");
-        assert!(can_commit(1, "add it"));
-        assert!(!can_commit(1, "  "));
-        assert!(!can_commit(0, "add it"));
-        assert!(committed_notice("fix: x").contains("git reset --soft HEAD~1"));
-    }
-
-    #[test]
-    fn messages_follow_conventional_commits() {
-        assert_eq!(message("fix", false, " a bug ", ""), "fix: a bug\n");
-        assert_eq!(message("feat", true, "x", ""), "feat!: x\n");
-        assert_eq!(message("docs", true, "x", ""), "docs: x\n");
-        assert_eq!(message("feat", false, "x", " why\n"), "feat: x\n\nwhy\n");
-    }
-
-    #[test]
-    fn versions_are_read_from_tags_and_junk_is_skipped() {
-        let tags = [
-            "v0.1.0",
-            "nightly",
-            "v0.10.0",
-            "v0.9.0",
-            "1.2",
-            "v1.0.0-rc1",
-        ];
-        assert_eq!(latest_version(tags), Some(Version(0, 10, 0)));
-        assert_eq!(latest_version(["nope"]), None);
-    }
-
-    #[test]
-    fn bumps_follow_the_readme_table() {
-        let early = Version(0, 1, 0);
-        assert_eq!(bump("fix", false, early), Bump::Patch(Version(0, 1, 1)));
-        assert_eq!(bump("feat", false, early), Bump::Minor(Version(0, 2, 0)));
-        assert_eq!(
-            bump("feat", true, early),
-            Bump::BreakingMinor(Version(0, 2, 0))
-        );
-        assert_eq!(bump("docs", false, early), Bump::None);
-
-        let stable = Version(1, 2, 3);
-        assert_eq!(bump("feat", true, stable), Bump::Major(Version(2, 0, 0)));
-        assert_eq!(bump("feat", false, stable), Bump::Minor(Version(1, 3, 0)));
     }
 }

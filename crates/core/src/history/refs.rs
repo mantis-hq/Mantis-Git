@@ -8,7 +8,7 @@ use crate::remote::{self, Remote};
 use crate::status::{self, RepoStatus};
 use crate::submodule::{self, Submodule};
 use crate::text::count;
-use crate::working::{self, Version};
+use crate::working::version::{self, Version};
 use crate::worktree::{self, Worktree};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -194,7 +194,7 @@ impl Refs {
 
     /// The highest `v1.2.3` style tag.
     pub fn latest_version(&self) -> Option<Version> {
-        working::latest_version(self.tags.iter().map(|tag| tag.name.as_str()))
+        version::latest_version(self.tags.iter().map(|tag| tag.name.as_str()))
     }
 
     /// Says what the working changes are, in plain words.
