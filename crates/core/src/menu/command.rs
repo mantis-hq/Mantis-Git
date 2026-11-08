@@ -152,6 +152,12 @@ pub enum Command {
         text: String,
         what: &'static str,
     },
+    /// Handled by the interface, which opens the browser. `what` finishes the sentence
+    /// "Opened ... in your browser."
+    OpenUrl {
+        url: String,
+        what: String,
+    },
 }
 
 /// What to ask before running a command that can lose something.
@@ -230,6 +236,7 @@ impl Command {
             Self::UpdateSubmodule { .. } | Self::UpdateSubmodules => "Updating",
             Self::RemoveRemote { .. } => "Removing the remote",
             Self::Copy { .. } => "Copying",
+            Self::OpenUrl { .. } => "Opening",
             Self::StashStaged { .. } => "Stashing",
             Self::ApplyStashes { .. } => "Applying",
             Self::PopStashes { .. } => "Popping",
@@ -322,6 +329,22 @@ impl Command {
         }
     }
 
+    /// The address to open in the browser, for a command that does that.
+    pub fn url(&self) -> Option<&str> {
+        match self {
+            Self::OpenUrl { url, .. } => Some(url),
+            _ => None,
+        }
+    }
+
+    /// What to say after opening the browser.
+    pub fn opened_notice(&self) -> Option<String> {
+        match self {
+            Self::OpenUrl { what, .. } => Some(format!("Opened {what} in your browser.")),
+            _ => None,
+        }
+    }
+
     /// Runs the command. This blocks, so call it off the UI thread.
     pub fn run(&self, repo: &Path) -> Result<Option<String>, String> {
         match self {
@@ -376,6 +399,7 @@ impl Command {
             | Self::ShowConflict { .. }
             | Self::UseSide { .. }
             | Self::StageFiles { .. }
+            | Self::OpenUrl { .. }
             | Self::Copy { .. } => Ok(None),
         }
     }

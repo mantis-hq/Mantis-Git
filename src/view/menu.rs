@@ -113,22 +113,24 @@ pub(super) fn wire_ref(
             let name = SharedString::from(dragged.name.clone());
             cx.new(|_| DragGhost { name, color })
         });
-    if target.kind != RefKind::Branch {
+    // A branch takes anything. A remote branch takes another remote branch, since what is
+    // proposed is a request on the forge, which only two remote branches can make.
+    if !matches!(target.kind, RefKind::Branch | RefKind::Remote) {
         return element;
     }
-    let name = target.name;
     element
         .can_drop({
-            let name = name.clone();
+            let target = target.clone();
             move |dragged, _, _| {
-                dragged
-                    .downcast_ref::<Dragged>()
-                    .is_some_and(|source| source.name != name)
+                dragged.downcast_ref::<Dragged>().is_some_and(|source| {
+                    source.name != target.name
+                        && (target.kind == RefKind::Branch || source.kind == RefKind::Remote)
+                })
             }
         })
         .drag_over::<Dragged>(|style, _, _, cx| style.bg(cx.theme().primary.opacity(0.14)))
         .on_drop(cx.listener(move |this, source: &Dragged, window, cx| {
-            this.drop_ref(source.clone(), name.clone(), window.mouse_position(), cx);
+            this.drop_ref(source.clone(), target.clone(), window.mouse_position(), cx);
         }))
 }
 
@@ -192,6 +194,12 @@ impl GraphView {
             self.show_file(*index, cx);
         } else if let Command::StageFiles { paths, unstage } = &command {
             self.stage_paths(paths.clone(), *unstage, cx);
+        } else if let Some(url) = command.url() {
+            cx.open_url(url);
+            self.notice = command
+                .opened_notice()
+                .map(|text| Notice::Info(text.into()));
+            cx.notify();
         } else if let Some(text) = copied_text(&command) {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
             self.notice = command
@@ -325,22 +333,28 @@ impl GraphView {
         self.show_menu(position, lines, cx);
     }
 
-    /// Works out what dropping `source` on the branch `target` can mean, then asks.
+    /// Works out what dropping `source` on `target` can mean, then asks. A local branch
+    /// can take it in; a remote branch can only be the base of a request.
     pub(super) fn drop_ref(
         &mut self,
         source: Dragged,
-        target: String,
+        target: Dragged,
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) {
         let Some(workdir) = self.workdir() else {
             return;
         };
-        let (from, onto) = (source.name.clone(), target.clone());
+        let (from, onto) = (source.name.clone(), target.name.clone());
         Self::spawn_blocking(
             move || branch::relation(&workdir, &from, &onto),
             move |this, relation: Result<Relation, String>, cx| {
-                let lines = menu::drop_menu(&source, &target, relation);
+                let lines = match target.kind {
+                    RefKind::Remote => {
+                        menu::request_drop_menu(&this.refs, &source, &target, relation)
+                    }
+                    _ => menu::drop_menu(&source, &target.name, relation),
+                };
                 this.show_menu(position, lines, cx);
             },
             cx,

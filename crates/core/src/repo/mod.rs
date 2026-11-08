@@ -4,6 +4,7 @@
 pub mod branch;
 pub mod commit_graph;
 pub mod conflict;
+pub mod forge;
 pub mod remote;
 pub mod stash;
 pub mod status;

@@ -1371,3 +1371,172 @@ fn the_refs_card_stays_while_the_pointer_is_on_it_and_closes_once_it_leaves(
     cx.run_until_parked();
     assert_eq!(view.read_with(&cx, |v, _| v.hovered_refs), None);
 }
+
+/// A repository with `origin` at `url`, whose `origin/main` is behind `origin/feat/x`, and
+/// a view on it. Nothing is fetched: the remote branches are made by hand.
+fn open_repo_with_remote(
+    cx: &mut TestAppContext,
+    url: &str,
+) -> (
+    gitclient_core::testing::Repo,
+    Entity<GraphView>,
+    VisualTestContext,
+) {
+    let repo = gitclient_core::testing::Repo::new();
+    repo.write("a", "1\n");
+    repo.commit("base");
+    repo.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    repo.write("b", "2\n");
+    let tip = repo.commit("feat: x");
+    repo.git(&["update-ref", "refs/remotes/origin/feat/x", &tip]);
+    repo.git(&["remote", "add", "origin", url]);
+    let (view, mut cx) = open_view(cx);
+    view.update(&mut cx, |view, cx| view.open(repo.path().to_owned(), cx));
+    // Git runs on another thread, so give it a moment rather than parking on it.
+    cx.executor().allow_parking();
+    for _ in 0..500 {
+        cx.run_until_parked();
+        if view.read_with(&cx, |view, _| *view.status() == Status::Loaded) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(view.read_with(&cx, |view, _| *view.status() == Status::Loaded));
+    (repo, view, cx)
+}
+
+fn remote_branch(name: &str) -> Dragged {
+    Dragged {
+        kind: RefKind::Remote,
+        name: name.into(),
+    }
+}
+
+fn menu_labels(view: &GraphView) -> Vec<String> {
+    use gitclient_core::menu::Line;
+    view.menu
+        .as_ref()
+        .unwrap()
+        .lines()
+        .iter()
+        .filter_map(|line| match line {
+            Line::Item { label, .. } => Some(label.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[gpui_kit::test]
+fn dropping_a_remote_branch_on_another_offers_a_request_on_the_forge(cx: &mut TestAppContext) {
+    let (_repo, view, mut cx) = open_repo_with_remote(cx, "git@github.com:octo/cat.git");
+    view.update(&mut cx, |view, cx| {
+        view.drop_ref(
+            remote_branch("origin/feat/x"),
+            remote_branch("origin/main"),
+            point(px(10.), px(10.)),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    view.update(&mut cx, |view, _| {
+        assert_eq!(
+            menu_labels(view),
+            ["Open a pull request for feat/x into main", "Copy link"]
+        );
+    });
+
+    // The other way round, main has nothing feat/x lacks to ask for.
+    view.update(&mut cx, |view, cx| {
+        view.drop_ref(
+            remote_branch("origin/main"),
+            remote_branch("origin/feat/x"),
+            point(px(10.), px(10.)),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    view.update(&mut cx, |view, _| {
+        assert_eq!(
+            menu_labels(view),
+            ["feat/x already has everything in main, so there is nothing to propose."]
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn a_remote_that_is_not_on_a_forge_says_so_when_one_branch_is_dropped_on_another(
+    cx: &mut TestAppContext,
+) {
+    let (_repo, view, mut cx) = open_repo_with_remote(cx, "git@git.acme.com:octo/cat.git");
+    view.update(&mut cx, |view, cx| {
+        view.drop_ref(
+            remote_branch("origin/feat/x"),
+            remote_branch("origin/main"),
+            point(px(10.), px(10.)),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    view.update(&mut cx, |view, _| {
+        assert_eq!(
+            menu_labels(view),
+            ["gitclient can't tell whether origin is on GitHub, GitLab or Gitea."]
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn the_requests_of_a_forge_are_listed_under_its_own_word_for_them(cx: &mut TestAppContext) {
+    use super::sidebar::Load;
+    use gitclient_core::repo::forge::{Request, Requests};
+    let (_repo, view, mut cx) = open_repo_with_remote(cx, "git@gitlab.com:team/cat.git");
+    view.update(&mut cx, |view, _| {
+        assert_eq!(
+            view.request_rows_for_test(),
+            ["Merge requests"],
+            "closed until opened, so nothing has been asked yet"
+        );
+        view.set_requests_for_test(Load::Done(Requests {
+            newest: vec![
+                Request {
+                    number: 8,
+                    tip: "1a2b3c4d5e".into(),
+                    subject: Some("fix: the cat".into()),
+                },
+                Request {
+                    number: 5,
+                    tip: "9f8e7d6c5b".into(),
+                    subject: None,
+                },
+            ],
+            total: 80,
+        }));
+        assert_eq!(
+            view.request_rows_for_test(),
+            [
+                "Merge requests",
+                "!8 fix: the cat",
+                "!5 9f8e7d6",
+                "The newest 2 of 80 merge requests. Git can't say which are still open."
+            ]
+        );
+        view.set_requests_for_test(Load::Failed("Couldn't ask origin for its requests.".into()));
+        assert_eq!(
+            view.request_rows_for_test(),
+            ["Merge requests", "Couldn't ask origin for its requests."]
+        );
+        view.set_requests_for_test(Load::Loading);
+        assert_eq!(
+            view.request_rows_for_test(),
+            ["Merge requests", "Asking origin…"]
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn no_section_is_drawn_for_a_remote_on_no_known_forge(cx: &mut TestAppContext) {
+    let (_repo, view, cx) = open_repo_with_remote(cx, "git@git.acme.com:octo/cat.git");
+    view.read_with(&cx, |view, _| {
+        assert!(view.request_rows_for_test().is_empty());
+    });
+}

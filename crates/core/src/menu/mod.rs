@@ -9,6 +9,7 @@ use crate::history::Commit;
 use crate::history::refs::{RefKind, Refs};
 use crate::repo::branch::{self, Doomed, Dragged, Relation};
 use crate::repo::conflict;
+use crate::repo::forge::Site;
 use crate::repo::remote;
 use crate::repo::stash;
 use crate::repo::submodule;
@@ -694,6 +695,81 @@ pub fn drop_menu(source: &Dragged, target: &str, relation: Result<Relation, Stri
     lines
 }
 
+/// The menu a drop opens when both ends are remote branches: dragging `source` onto
+/// `target` proposes bringing the one into the other, which is a pull or merge request on
+/// the forge. Git can't make one, so the line opens the page that does. `relation` is how
+/// the two histories stand.
+pub fn request_drop_menu(
+    refs: &Refs,
+    source: &Dragged,
+    target: &Dragged,
+    relation: Result<Relation, String>,
+) -> Vec<Line> {
+    let heading = Line::Heading(format!("{} onto {}", source.name, target.name));
+    let said = |message: String| vec![heading.clone(), Line::unavailable(message)];
+
+    let remotes = &refs.remote_configs;
+    let (Some((from, head)), Some((onto, base))) = (
+        remote::split_branch(remotes, &source.name),
+        remote::split_branch(remotes, &target.name),
+    ) else {
+        return said("These branches aren't on a remote this repository knows.".to_owned());
+    };
+    if from.name != onto.name {
+        return said(format!(
+            "{} and {} are on different remotes, and a request between two repositories \
+             isn't supported yet.",
+            source.name, target.name
+        ));
+    }
+    let Some(site) = Site::of(onto) else {
+        return said(format!(
+            "gitclient can't tell whether {} is on GitHub, GitLab or Gitea.",
+            onto.name
+        ));
+    };
+    match relation {
+        Err(message) => return said(message),
+        Ok(Relation::Same | Relation::Contained) => {
+            return said(format!(
+                "{base} already has everything in {head}, so there is nothing to propose."
+            ));
+        }
+        Ok(Relation::FastForward | Relation::Diverged) => {}
+    }
+
+    let noun = site.forge.noun();
+    let url = site.new_request_url(base, head);
+    vec![
+        heading,
+        Line::item(
+            format!("Open a {noun} for {head} into {base}"),
+            Command::OpenUrl {
+                url: url.clone(),
+                what: format!("the page that starts a {noun} on {}", site.forge.name()),
+            },
+        ),
+        Line::item("Copy link", copy(&url, "the link")),
+    ]
+}
+
+/// The menu of one pull or merge request in the sidebar.
+pub fn request_menu(site: &Site, number: u64) -> Vec<Line> {
+    let label = site.label(number);
+    let url = site.request_url(number);
+    vec![
+        Line::Heading(format!("{} {label}", site.forge.noun())),
+        Line::item(
+            format!("Open {label} on {}", site.forge.name()),
+            Command::OpenUrl {
+                url: url.clone(),
+                what: format!("{} {label}", site.forge.noun()),
+            },
+        ),
+        Line::item("Copy link", copy(&url, "the link")),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::command::Weight;
@@ -1299,6 +1375,120 @@ mod tests {
         assert_eq!(
             labels(&drop_menu(&source, "main", Err("gone".into()))),
             ["gone"]
+        );
+    }
+
+    fn refs_on(remotes: &[(&str, &str)]) -> Refs {
+        let mut refs = Refs::default();
+        refs.remote_configs = remotes
+            .iter()
+            .map(|(name, url)| remote::Remote {
+                name: (*name).to_owned(),
+                url: (*url).to_owned(),
+                push_url: None,
+            })
+            .collect();
+        refs
+    }
+
+    #[test]
+    fn dropping_a_remote_branch_on_another_opens_the_page_that_starts_a_request() {
+        let refs = refs_on(&[("origin", "git@github.com:octo/cat.git")]);
+        let (from, onto) = (
+            target(RefKind::Remote, "origin/feat/x"),
+            target(RefKind::Remote, "origin/main"),
+        );
+        let lines = request_drop_menu(&refs, &from, &onto, Ok(Relation::Diverged));
+        assert_eq!(
+            labels(&lines),
+            ["Open a pull request for feat/x into main", "Copy link"]
+        );
+        let open = lines[1].command().unwrap();
+        assert_eq!(
+            open.url(),
+            Some("https://github.com/octo/cat/compare/main...feat/x?expand=1")
+        );
+        assert_eq!(
+            open.opened_notice().as_deref(),
+            Some("Opened the page that starts a pull request on GitHub in your browser.")
+        );
+        assert_eq!(open.run(Path::new(".")), Ok(None));
+        assert!(open.confirmation().is_none());
+
+        let gitlab = refs_on(&[("origin", "git@gitlab.com:team/cat.git")]);
+        let lines = request_drop_menu(&gitlab, &from, &onto, Ok(Relation::FastForward));
+        assert_eq!(
+            labels(&lines)[0],
+            "Open a merge request for feat/x into main"
+        );
+    }
+
+    #[test]
+    fn a_drop_that_cannot_make_a_request_says_why() {
+        let (from, onto) = (
+            target(RefKind::Remote, "origin/feat/x"),
+            target(RefKind::Remote, "origin/main"),
+        );
+        let said = |refs: &Refs, relation| {
+            let lines = request_drop_menu(refs, &from, &onto, relation);
+            assert_eq!(lines.len(), 2, "a heading and one line");
+            assert_eq!(lines[1].command(), None);
+            labels(&lines)[0].to_owned()
+        };
+        let github = refs_on(&[("origin", "git@github.com:o/r.git")]);
+
+        assert_eq!(
+            said(&github, Ok(Relation::Contained)),
+            "main already has everything in feat/x, so there is nothing to propose."
+        );
+        assert_eq!(said(&github, Err("gone".into())), "gone");
+        assert_eq!(
+            said(
+                &refs_on(&[("origin", "git@git.acme.com:o/r.git")]),
+                Ok(Relation::Diverged)
+            ),
+            "gitclient can't tell whether origin is on GitHub, GitLab or Gitea."
+        );
+        assert_eq!(
+            said(&refs_on(&[]), Ok(Relation::Diverged)),
+            "These branches aren't on a remote this repository knows."
+        );
+
+        let across = request_drop_menu(
+            &refs_on(&[
+                ("origin", "git@github.com:o/r.git"),
+                ("fork", "git@github.com:me/r.git"),
+            ]),
+            &target(RefKind::Remote, "fork/feat/x"),
+            &onto,
+            Ok(Relation::Diverged),
+        );
+        assert!(labels(&across)[0].contains("different remotes"));
+    }
+
+    #[test]
+    fn a_request_opens_on_its_forge_or_is_copied() {
+        let site = Site::of(&remote::Remote {
+            name: "origin".into(),
+            url: "https://gitlab.com/team/cat.git".into(),
+            push_url: None,
+        })
+        .unwrap();
+        let lines = request_menu(&site, 42);
+        assert_eq!(
+            shown_lines(&lines),
+            ["merge request !42", "Open !42 on GitLab", "Copy link"]
+        );
+        assert_eq!(
+            lines[1].command().and_then(Command::url),
+            Some("https://gitlab.com/team/cat/-/merge_requests/42")
+        );
+        assert_eq!(
+            lines[2]
+                .command()
+                .and_then(|c| c.copied_notice())
+                .as_deref(),
+            Some("Copied the link.")
         );
     }
 

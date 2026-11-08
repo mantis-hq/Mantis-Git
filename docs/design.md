@@ -287,6 +287,22 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   in, saved with "Save <name>"; renaming also renames its remote branches), "Copy address",
   and in red "Remove remote <name>", which asks first and gives the `git remote add` that
   brings it back. Names that can't work are turned down in the popup, before git runs.
+- Pull and merge requests: when a remote's address is on GitHub, GitLab or Gitea (told
+  apart by the host: `github.com` or `github.*`, `gitlab.com` or `gitlab.*`, `gitea.com`,
+  `codeberg.org`, `gitea.*` or `forgejo.*`), the sidebar has a section between Remotes and
+  Worktrees in that forge's own word, "Pull requests" or "Merge requests", for `origin` or
+  else the first such remote. It starts closed, because asking reaches over the network,
+  and opening it asks once. A quiet blue "Refresh" in its header asks again, and the count
+  after it is how many the remote has. There is no sign-in and no API: the section uses
+  git alone, `git ls-remote` on the refs hosts publish (`refs/pull/*/head`,
+  `refs/merge-requests/*/head`). So it lists the newest 30 by number, and a sentence under
+  them says so and that git can't say which are still open. A row is the number (`#42`, or
+  `!42` on GitLab) in Text, then what the newest commit says in Overlay 2 when that commit
+  is already in the repository, else its short hash. Clicking one opens it in the browser.
+  Right-clicking opens the usual menu: "Open #42 on GitHub" and "Copy link". While asking,
+  the section says "Asking origin…", and if git can't reach the remote it says why in Peach.
+  A remote on no known forge has no section. What each host's pages are called and where
+  they live is in core (`gitclient_core::repo::forge`).
 - A branch row ends with its count against the default branch (`+2 −1`), then against
   the remote branch it tracks (`↑1 ↓2`: to push, to pull). Level or untracked shows nothing.
 
@@ -383,6 +399,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Drag and drop:** branches and tags drag from the sidebar and from the refs column,
   and drop on local branches, which tint with 14% Blue. Dropping never acts: it opens a
   menu of what fits how the two histories relate (fast-forward, merge, rebase).
+  A remote branch also takes another remote branch of the same remote, tinted the same,
+  and the menu then proposes a pull or merge request bringing the dragged branch into the
+  one it was dropped on: "Open a pull request for feat/x into main", which opens the page
+  that starts one on the forge in the browser, and "Copy link". Git can't make a request,
+  so gitclient opens the page and the band says so. A line that can't be used says why:
+  the base already has everything, the two are on different remotes (a request between
+  repositories isn't supported), or the remote isn't on GitHub, GitLab or Gitea.
 - **Selecting commits:** a click selects one, `Ctrl`-click adds or removes one, and
   `Shift`-click adds the range. Selected rows take the selected-row fill, and the menu
   then acts on all of them.
