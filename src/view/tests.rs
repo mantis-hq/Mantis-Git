@@ -603,10 +603,14 @@ fn a_conflict_is_listed_in_the_inspector_resolved_from_its_menu_and_continued(
     assert_eq!(repo.read("a"), "main\n");
 }
 
-#[gpui_kit::test]
-fn a_result_is_built_from_picked_lines_and_saved_with_one_button(cx: &mut TestAppContext) {
-    use super::conflicts::Pick;
-    use gitclient_core::repo::conflict::Side;
+/// A merge paused on one conflict in `a`, open in the resolver with its result in the editor.
+fn resolving_a_conflict(
+    cx: &mut TestAppContext,
+) -> (
+    gitclient_core::testing::Repo,
+    Entity<GraphView>,
+    VisualTestContext,
+) {
     use gitclient_core::testing::Repo;
     let repo = Repo::new();
     repo.git(&["config", "user.name", "Ada"]);
@@ -639,6 +643,14 @@ fn a_result_is_built_from_picked_lines_and_saved_with_one_button(cx: &mut TestAp
     cx.run_until_parked();
     // Drawing reads the file's result into the editor.
     cx.simulate_click(point(px(2.), px(2.)), Modifiers::none());
+    (repo, view, cx)
+}
+
+#[gpui_kit::test]
+fn a_result_is_built_from_picked_lines_and_saved_with_one_button(cx: &mut TestAppContext) {
+    use super::conflicts::Pick;
+    use gitclient_core::repo::conflict::Side;
+    let (repo, view, mut cx) = resolving_a_conflict(cx);
 
     // Saving waits for the conflict to be settled in the result.
     view.update(&mut cx, |view, cx| view.save_conflict(cx));
@@ -647,11 +659,20 @@ fn a_result_is_built_from_picked_lines_and_saved_with_one_button(cx: &mut TestAp
     assert!(repo.read("a").contains("<<<<<<<"), "nothing was saved");
 
     // The second line of the other side, and the first of the first side's.
-    view.update(&mut cx, |view, cx| {
+    view.update_in(&mut cx, |view, window, cx| {
         view.toggle_line((0, Side::Other, 1), cx);
         view.toggle_line((0, Side::Mine, 0), cx);
-        view.use_chunk(0, Pick::Lines, cx);
+        view.use_chunk(0, Pick::Lines, window, cx);
+        assert_eq!(
+            view.conflicts_left("a"),
+            0,
+            "known at once, without a check"
+        );
     });
+    // The pick is made in the editor where the conflict was, so the editor has it too.
+    let editor = view.read_with(&cx, |view, _| view.conflict_editor().unwrap());
+    let in_editor = editor.read_with(&cx, |editor, _| editor.text().to_string());
+    assert_eq!(in_editor, "top\nmain\nfeat two\nbottom\n");
     cx.simulate_click(point(px(2.), px(2.)), Modifiers::none());
     view.update(&mut cx, |view, cx| view.save_conflict(cx));
     cx.run_until_parked();
@@ -664,6 +685,44 @@ fn a_result_is_built_from_picked_lines_and_saved_with_one_button(cx: &mut TestAp
         assert!(!view.resolver_is_open(), "the last file was saved");
         assert!(view.paused_operation().unwrap().decisions.is_empty());
     });
+}
+
+#[gpui_kit::test]
+fn typing_in_the_result_is_checked_once_it_pauses(cx: &mut TestAppContext) {
+    let (repo, view, mut cx) = resolving_a_conflict(cx);
+    let editor = view.read_with(&cx, |view, _| view.conflict_editor().unwrap());
+    let type_in = |text: &str, cx: &mut VisualTestContext| {
+        let text = text.to_owned();
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                let end = editor.text().len();
+                editor.set_selected_range(0..end, cx);
+                editor.replace(text, window, cx);
+            })
+        });
+    };
+
+    // A key only marks the result as changed; reading it waits for typing to pause.
+    type_in("top\nby hand\nbottom\n", &mut cx);
+    cx.run_until_parked();
+    assert_eq!(view.read_with(&cx, |view, _| view.conflicts_left("a")), 1);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(200));
+    cx.run_until_parked();
+    assert_eq!(view.read_with(&cx, |view, _| view.conflicts_left("a")), 0);
+
+    // Saving straight after typing reads the newest text, even before a check has run.
+    type_in(
+        "top\n<<<<<<< HEAD\nmain\n=======\nfeat\n>>>>>>> feat\n",
+        &mut cx,
+    );
+    view.update(&mut cx, |view, cx| view.save_conflict(cx));
+    cx.run_until_parked();
+    assert!(repo.read("a").contains("<<<<<<<"), "markers are not saved");
+    type_in("top\nfinal\nbottom\n", &mut cx);
+    view.update(&mut cx, |view, cx| view.save_conflict(cx));
+    cx.run_until_parked();
+    assert_eq!(repo.read("a"), "top\nfinal\nbottom\n");
 }
 
 #[gpui_kit::test]

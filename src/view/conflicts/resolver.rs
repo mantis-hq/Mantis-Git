@@ -7,6 +7,8 @@ impl GraphView {
     /// Opens the resolver on a file, reading its result from the file as it stands and
     /// laying the file out for the list, which is work for another thread.
     pub fn show_conflict(&mut self, path: &str, cx: &mut Context<Self>) {
+        // The file that was in the editor keeps what was typed into it.
+        self.catch_up_draft(cx);
         self.conflict.shown = Some(path.to_owned());
         self.conflict.open = true;
         self.conflict.lines.clear();
@@ -26,16 +28,22 @@ impl GraphView {
         let wanted = path.clone();
         Self::spawn_blocking(
             move || {
-                let text = conflict::read_text(&repo, &path)?;
+                let text: Arc<str> = conflict::read_text(&repo, &path)?.into();
                 let view = FileView::new(&progress.pieces(&text));
-                Ok::<_, String>((text, Arc::new(view)))
+                let open = standing_in(&progress, &path, &text);
+                Ok::<_, String>((text, Arc::new(view), open))
             },
             move |this, loaded, cx| {
                 match loaded {
-                    Ok((text, view)) => {
-                        this.conflict.drafts.entry(wanted.clone()).or_insert(text);
+                    Ok((text, view, open)) => {
                         this.conflict.views.insert(wanted.clone(), view);
-                        this.refresh_open(&wanted);
+                        if this.conflict.drafts.contains_key(&wanted) {
+                            // A result from earlier at this stop wins over the file.
+                            this.refresh_open(&wanted);
+                        } else {
+                            this.conflict.drafts.insert(wanted.clone(), text);
+                            this.conflict.standing.insert(wanted.clone(), open);
+                        }
                     }
                     Err(message) => this.notice = Some(Notice::Error(message.into())),
                 }
@@ -102,6 +110,7 @@ impl GraphView {
         &mut self,
         ordinal: usize,
         pick: Pick,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let (Some(progress), Some(path)) =
@@ -109,37 +118,61 @@ impl GraphView {
         else {
             return;
         };
+        self.catch_up_draft(cx);
         let Some(draft) = self.conflict.drafts.get(&path).cloned() else {
             return;
         };
-        let decisions = self.file_decisions(&path);
         let open = progress.open_chunks(&path, &draft);
-        let (Some(decision), Some(Some(block))) = (decisions.get(ordinal), open.get(ordinal))
-        else {
+        let decision = self.file_decisions(&path).nth(ordinal).cloned();
+        let (Some(decision), Some(Some(block))) = (decision, open.get(ordinal)) else {
             return;
         };
         let chosen = match pick {
             Pick::Mine => decision.mine.clone(),
             Pick::Other => decision.other.clone(),
-            Pick::Lines => self.picked_lines(ordinal, decision),
+            Pick::Lines => self.picked_lines(ordinal, &decision),
         };
-        let text = conflict::replace_block(&draft, block, &chosen);
+        let text: Arc<str> = conflict::replace_block(&draft, block, &chosen).into();
         self.conflict.drafts.insert(path.clone(), text);
-        self.refresh_open(&path);
-        // So that the editor reads the new result the next time it is drawn.
-        self.conflict.editing = None;
+        // The other blocks are untouched, so they stand as they did.
+        let standing = open
+            .iter()
+            .enumerate()
+            .map(|(at, block)| block.is_some() && at != ordinal)
+            .collect();
+        self.conflict.standing.insert(path.clone(), standing);
+        self.conflict.revision += 1;
         self.conflict.lines.retain(|(at, ..)| *at != ordinal);
+
+        // The editor changes only where the conflict was, so it keeps its place and the
+        // pick can be undone there, and a large file isn't loaded into it again.
+        match &self.conflict.editor {
+            // The block was found in the draft, which holds what the editor does.
+            Some(editor)
+                if self.conflict.editing.as_deref() == Some(path.as_str())
+                    && editor.read(cx).text().len() == draft.len() =>
+            {
+                let replacement = block.replacement(&draft, &chosen);
+                let range = block.start..block.end;
+                editor.update(cx, |editor, cx| {
+                    editor.set_selected_range(range, cx);
+                    editor.replace(replacement, window, cx);
+                });
+            }
+            // So that the editor reads the new result the next time it is drawn.
+            _ => self.conflict.editing = None,
+        }
         cx.notify();
     }
 
-    fn editor_changed(&mut self, editor: &Entity<TextareaState>, cx: &mut Context<Self>) {
-        let Some(path) = self.conflict.editing.clone() else {
+    /// Typing only marks the result as changed. The text is read once typing pauses, so a
+    /// key costs the same in a file of any size.
+    fn editor_changed(&mut self, cx: &mut Context<Self>) {
+        if self.conflict.editing.is_none() {
             return;
-        };
-        let value = editor.read(cx).value().to_string();
-        self.conflict.drafts.insert(path.clone(), value);
-        self.refresh_open(&path);
-        cx.notify();
+        }
+        self.conflict.behind = true;
+        self.check_later(cx);
     }
 
     /// Keeps the editor on the result of the file on show, making it the first time it is
@@ -167,9 +200,9 @@ impl GraphView {
                 let editor = cx.new(|cx| {
                     TextareaState::new(window, cx).placeholder("The file as it will be saved.")
                 });
-                let changes = cx.subscribe(&editor, |this, editor, event, cx| {
+                let changes = cx.subscribe(&editor, |this, _, event, cx| {
                     if matches!(event, InputEvent::Change) {
-                        this.editor_changed(&editor, cx);
+                        this.editor_changed(cx);
                     }
                 });
                 self.conflict._editor_changes = Some(changes);
@@ -178,7 +211,8 @@ impl GraphView {
             }
         };
         if self.conflict.editing.as_deref() != Some(path.as_str()) {
-            // Setting the text is a change too, which isn't the user's.
+            // The file that was in the editor keeps what was typed into it.
+            self.catch_up_draft(cx);
             self.conflict.editing = None;
             editor.update(cx, |editor, cx| editor.set_value(draft, window, cx));
             self.conflict.editing = Some(path);
@@ -192,6 +226,11 @@ impl GraphView {
         else {
             return;
         };
+        // What was typed last may not have been checked yet.
+        if self.conflict.behind {
+            self.catch_up_draft(cx);
+            self.refresh_open(&path);
+        }
         if self.conflicts_left(&path) > 0 {
             return;
         }
@@ -492,7 +531,7 @@ impl GraphView {
         );
         let whole_file = self.diff.view.whole_file;
         let len = view.len(whole_file);
-        let first = self.file_decisions(path).into_iter().next();
+        let first = self.file_decisions(path).next();
         let side = |color: Hsla, branch: &str, why: Option<&str>| {
             div()
                 .h_flex()
@@ -528,13 +567,13 @@ impl GraphView {
             .child(side(
                 colors.0,
                 &progress.mine,
-                first.as_ref().map(|d| d.mine_why.as_str()),
+                first.map(|d| d.mine_why.as_str()),
             ))
             .child(div().w(px(1.)).h_full().flex_none().bg(border))
             .child(side(
                 colors.1,
                 &progress.other,
-                first.as_ref().map(|d| d.other_why.as_str()),
+                first.map(|d| d.other_why.as_str()),
             ));
 
         let rows_view = view.clone();
@@ -653,9 +692,9 @@ impl GraphView {
                         .ghost()
                         .xsmall()
                         .label(label)
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.use_chunk(ordinal, pick, cx)),
-                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.use_chunk(ordinal, pick, window, cx)
+                        }))
                 };
                 row.px_3()
                     .gap_2()
