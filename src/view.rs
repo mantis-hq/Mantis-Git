@@ -673,6 +673,7 @@ impl Render for GraphView {
         let (background, foreground) = (theme.background, theme.foreground);
 
         self.sync_conflict_editor(window, cx);
+        self.sync_result_scroll(cx);
         let bar = Some(self.render_toolbar(cx).into_any_element());
         let content = self.render_graph(cx);
         let notice = self.render_notice(cx);

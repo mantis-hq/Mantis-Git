@@ -611,18 +611,31 @@ fn resolving_a_conflict(
     Entity<GraphView>,
     VisualTestContext,
 ) {
+    resolving_a_conflict_between(cx, "top\n", "bottom\n")
+}
+
+/// The same, with `above` and `below` around the conflict.
+fn resolving_a_conflict_between(
+    cx: &mut TestAppContext,
+    above: &str,
+    below: &str,
+) -> (
+    gitclient_core::testing::Repo,
+    Entity<GraphView>,
+    VisualTestContext,
+) {
     use gitclient_core::testing::Repo;
     let repo = Repo::new();
     repo.git(&["config", "user.name", "Ada"]);
     repo.git(&["config", "user.email", "ada@example.com"]);
-    repo.write("a", "top\nbase\nbottom\n");
+    repo.write("a", &format!("{above}base\n{below}"));
     repo.commit("base");
     let main = repo.git(&["branch", "--show-current"]);
     repo.git(&["checkout", "-q", "-b", "feat"]);
-    repo.write("a", "top\nfeat one\nfeat two\nbottom\n");
+    repo.write("a", &format!("{above}feat one\nfeat two\n{below}"));
     repo.commit("feat change");
     repo.git(&["checkout", "-q", &main]);
-    repo.write("a", "top\nmain\nbottom\n");
+    repo.write("a", &format!("{above}main\n{below}"));
     repo.commit("main change");
     let merged = std::process::Command::new("git")
         .current_dir(repo.path())
@@ -641,8 +654,13 @@ fn resolving_a_conflict(
     cx.run_until_parked();
     view.update(&mut cx, |view, cx| view.show_conflict("a", cx));
     cx.run_until_parked();
-    // Drawing reads the file's result into the editor.
+    // The first frame draws an empty editor, and the next puts the file's result in it.
     cx.simulate_click(point(px(2.), px(2.)), Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        view.read_with(&cx, |view, _| view.conflict_editor().is_some()),
+        "the result is in the editor"
+    );
     (repo, view, cx)
 }
 
@@ -685,6 +703,55 @@ fn a_result_is_built_from_picked_lines_and_saved_with_one_button(cx: &mut TestAp
         assert!(!view.resolver_is_open(), "the last file was saved");
         assert!(view.paused_operation().unwrap().decisions.is_empty());
     });
+}
+
+#[gpui_kit::test]
+fn the_two_versions_and_the_result_scroll_together(cx: &mut TestAppContext) {
+    let lines = |name: &str| -> String { (0..300).map(|n| format!("{name} {n}\n")).collect() };
+    let (_repo, view, mut cx) = resolving_a_conflict_between(cx, &lines("above"), &lines("below"));
+    let draw = |cx: &mut VisualTestContext| {
+        for _ in 0..3 {
+            cx.simulate_click(point(px(2.), px(2.)), Modifiers::none());
+            cx.run_until_parked();
+        }
+    };
+    let at = |cx: &mut VisualTestContext| view.update(cx, |view, cx| view.resolver_scroll(cx));
+    let near = |(list, result): (f32, f32), (want_list, want_result): (f32, f32)| {
+        assert!(
+            (list - want_list).abs() < 0.5 && (result - want_result).abs() < 0.5,
+            "list at row {list}, result at line {result}; wanted {want_list} and {want_result}"
+        );
+    };
+    // The list is the top half of the resolver, and the result the bottom half; the
+    // inspector takes the right.
+    let size = cx.update(|window, _| window.viewport_size());
+    let x = (size.width - px(380.)) / 2.;
+    let (over_list, over_result) = (point(x, px(260.)), point(x, size.height - px(160.)));
+    let wheel = |cx: &mut VisualTestContext, position, down: f32| {
+        cx.simulate_event(gpui_kit::ScrollEvent {
+            position,
+            delta: gpui_kit::ScrollDelta::Pixels(point(px(0.), px(-down))),
+            ..Default::default()
+        });
+        draw(cx);
+    };
+    draw(&mut cx);
+    near(at(&mut cx), (0., 0.));
+
+    // Above the conflict, a row of the list is the same line of the result.
+    wheel(&mut cx, over_list, 100. * 24.);
+    near(at(&mut cx), (100., 100.));
+
+    // The list has a header and two rows for the conflict; the result has its six lines
+    // of markers. Below it, each keeps to the same line of the file.
+    wheel(&mut cx, over_list, 250. * 24.);
+    near(at(&mut cx), (350., 353.));
+
+    // Scrolling the result back above the conflict moves the list with it.
+    wheel(&mut cx, over_result, -3000.);
+    let (list, result) = at(&mut cx);
+    assert!(result < 300., "the result moved up, to line {result}");
+    near((list, result), (result, result));
 }
 
 #[gpui_kit::test]
