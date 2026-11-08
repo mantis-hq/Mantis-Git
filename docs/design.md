@@ -107,7 +107,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   The inspector stays beside it for picking another file, `Esc` or "Close" brings the graph
   back, and the diff has a 40 px header: the path, two chips "Changes" and "Whole file"
   (the picked one ticked), and a "Hide white space" chip that ticks when on. The choices
-  last until the window closes and apply to every file. A file whose only changes were white
+  last until the window closes and apply to every file. In the whole file, where changes can
+  be screens apart, each run of added or removed lines is marked beside the scrollbar in Green
+  or Red, at its place in the file. A file whose only changes were white
   space says so. For working changes the header starts with a tick box for the whole file,
   and each hunk's header starts with one too (see "Staging").
 - The sidebar starts closed below 1500 px, because the two side panels would leave 520 px
