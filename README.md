@@ -148,5 +148,9 @@ specific version, add a `Release-As: 1.0.0` footer to a commit on `main`.
 
 ## License
 
-There isn't one yet, so for now all rights are reserved. Maple Mono is bundled under the
-SIL Open Font License; see `src/fonts/OFL.txt`.
+gitclient is free software, licensed under the GNU General Public License, version 3 or
+(at your option) any later version. See [LICENSE](LICENSE). You can use, modify and share
+it, including commercially, as long as anything you distribute stays under the same
+license with its source.
+
+Maple Mono is bundled under the SIL Open Font License; see `src/fonts/OFL.txt`.
