@@ -197,10 +197,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
   under the bar, so history stays in view. `Ctrl \`` shows and hides it, and
   `Ctrl Shift \`` opens a terminal. Closed, the bar still says which command is running
-  and for how long, so a slow command is never a silent wait. Whether the dock is open, how
-  many terminals it has and which of its tabs is in front are saved with the open tabs (see
-  "App") and come back on launch, the terminals as fresh shells in the front repository's
-  folder. The keyboard starts with the repository, not a terminal.
+  and for how long, so a slow command is never a silent wait. Terminals belong to the
+  repository tab they were opened in, and start in its folder. The dock shows the front
+  tab's terminals; switching tabs brings that tab's own back, and with the dock open a tab
+  that has none gets a clean one at once. Closing a tab ends its shells. Whether the dock is
+  open, how many terminals the front tab has and which of its tabs is in front are saved with
+  the open tabs (see "App") and come back on launch, the terminals as fresh shells in the
+  front repository's folder. The keyboard starts with the repository, not a terminal.
 - Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide. Rows have no
   column headings or hash: the refs column, the graph, the subject, then author and a short time
   ("12m", "3h", "Tue", "Oct 30"). The full hash belongs to the inspector.
