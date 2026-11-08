@@ -248,9 +248,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   that is on another one asks first, and gives the `git -C <path> checkout <hash>` that
   goes back. The app never forces anything.
 - Upstream: a local branch's menu has "Set upstream of <name>", which opens a form popup
-  with one "Remote branch" input, filled with the remote branch of the same name when
-  there is one, and "Follow origin/x" as its result. A remote branch that doesn't exist is
-  turned down in the popup, and the band says how to undo it.
+  with the remote and the branch on one row, as `origin / main` reads: a "Remote" dropdown
+  that starts on the remote holding a branch of the same name (or the first), a `/`, and a
+  searchable "Branch" dropdown of that remote's branches, filled with the same name when
+  there is one. Only a branch git already knows can be picked, so one that is new on the
+  remote needs a fetch first, which the popup says. "Follow origin/x" is its result, and the
+  band says how to undo it. A form can mix typed inputs and dropdowns, and fields that share a
+  row are joined by a separator (`Form::separator` in core).
 - New branch: a quiet "New branch" link ends the Branches heading, and branch, tag and
   commit menus have "New branch from <name or hash>". Either opens a form popup (see
   "Popups") that says where the branch starts ("New branch, starting at main"), with a
