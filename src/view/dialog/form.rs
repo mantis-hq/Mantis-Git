@@ -50,6 +50,15 @@ impl Control {
     }
 }
 
+/// Where the cursor starts: the first field you type in, since a dropdown that has the
+/// cursor takes Enter for itself and the form could not be answered from the keyboard.
+fn start_at(controls: &[Control]) -> Option<&Control> {
+    controls
+        .iter()
+        .find(|control| matches!(control, Control::Text(_)))
+        .or(controls.first())
+}
+
 /// An open form. Its inputs are made on the next draw, which is the first time there is a
 /// window to make them in.
 pub(in crate::view) struct FormDialog {
@@ -84,7 +93,7 @@ impl FormDialog {
     pub(super) fn keep_focus(&self, view: &FocusHandle, window: &mut Window, cx: &mut App) {
         if self.focused(window, cx).is_none()
             && !view.is_focused(window)
-            && let Some(first) = self.inputs.first()
+            && let Some(first) = start_at(&self.inputs)
         {
             window.focus(&first.focus_handle(cx), cx);
         }
@@ -293,7 +302,7 @@ impl GraphView {
                 inputs.push(Control::Text(input));
             }
         }
-        if let Some(first) = inputs.first() {
+        if let Some(first) = start_at(&inputs) {
             window.focus(&first.focus_handle(cx), cx);
         }
         if let Some(Dialog::Form(dialog)) = &mut self.dialog {
