@@ -1,7 +1,7 @@
 //! Assigns commits to lanes for the commit graph.
 //!
 //! The layout is incremental: commits are fed in one at a time, children before parents
-//! (which `git log --topo-order` guarantees), so a history of any size can be laid out
+//! (which `git log --date-order` guarantees), so a history of any size can be laid out
 //! while it streams in. Nothing here depends on the UI.
 
 use std::collections::HashMap;
@@ -592,7 +592,7 @@ mod tests {
             let mut expected_parents = Vec::new();
 
             for index in 0..count {
-                // Parents always come later, as with --topo-order.
+                // Parents always come later, as with --date-order.
                 let later = count - index - 1;
                 let parents: Vec<Arc<str>> = match (later, next(10)) {
                     (0, _) | (_, 0) => vec![],

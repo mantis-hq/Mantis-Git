@@ -154,11 +154,53 @@ pub struct Refs {
     pub(super) tips: Vec<Arc<str>>,
     /// Compares equal exactly when no ref moved.
     pub(super) fingerprint: String,
+    /// The default branch's full ref name and the commit it is at, which the counts in
+    /// `Branch::ahead_behind` are measured against.
+    default_base: Option<(String, Arc<str>)>,
 }
 
 impl Refs {
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
+    }
+
+    /// Whether some branch still lacks its count against the default branch. `read_refs`
+    /// leaves those out because git has to walk history to count them, which takes seconds
+    /// in a big repository without a commit-graph; `read_counts` fills them in.
+    pub fn needs_counts(&self) -> bool {
+        self.default_base.is_some() && self.branches.iter().any(|b| b.ahead_behind.is_none())
+    }
+
+    /// Takes counts from `old` for branches that haven't moved since, when the default
+    /// branch hasn't either, so a reload doesn't blank the sidebar while it counts again.
+    pub fn keep_counts_from(&mut self, old: &Refs) {
+        let same_base = match (&self.default_base, &old.default_base) {
+            (Some((name, tip)), Some((old_name, old_tip))) => name == old_name && tip == old_tip,
+            _ => false,
+        };
+        if !same_base {
+            return;
+        }
+        for branch in self
+            .branches
+            .iter_mut()
+            .filter(|b| b.ahead_behind.is_none())
+        {
+            branch.ahead_behind = old
+                .branches
+                .iter()
+                .find(|o| o.name == branch.name && o.tip == branch.tip)
+                .and_then(|o| o.ahead_behind);
+        }
+    }
+
+    /// Fills in the counts `read_counts` found.
+    pub fn set_counts(&mut self, counts: &HashMap<String, (u32, u32)>) {
+        for branch in &mut self.branches {
+            if let Some(&found) = counts.get(&branch.name) {
+                branch.ahead_behind = Some(found);
+            }
+        }
     }
 
     pub fn is_head(&self, oid: &Arc<str>) -> bool {
@@ -256,33 +298,59 @@ impl Refs {
 pub fn read_refs(repo: &Path) -> Result<Refs, String> {
     const FORMAT: &str =
         "%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)%00%(refname)%00%(symref)";
-    let listing = ops::run(
-        repo,
-        &[
-            "for-each-ref",
-            &format!("--format={FORMAT}"),
-            // Narrower than --all: stashes and notes are not history anyone wants drawn.
-            "refs/heads",
-            "refs/remotes",
-            "refs/tags",
-        ],
-    )?;
+    // These read different things and none needs another's answer, so they run together.
+    // Each starts its own process, which is what costs time, most of all under WSL. Only
+    // `worktrees` and `submodules` wait, for the folder `toplevel` finds.
+    fn gone<T>() -> T {
+        panic!("a read stopped")
+    }
+    let (listing, head_ref, head, status, remote_configs, forge, workdir, worktrees, submodules) =
+        std::thread::scope(|scope| {
+            let listing = scope.spawn(|| {
+                ops::run(
+                    repo,
+                    &[
+                        "for-each-ref",
+                        &format!("--format={FORMAT}"),
+                        // Narrower than --all: stashes and notes are not history anyone wants drawn.
+                        "refs/heads",
+                        "refs/remotes",
+                        "refs/tags",
+                    ],
+                )
+            });
+            // Both of these fail, as expected, in some states: HEAD can be detached or unborn.
+            let head_ref = scope.spawn(|| ops::run(repo, &["symbolic-ref", "-q", "HEAD"]).ok());
+            let head = scope
+                .spawn(|| ops::run(repo, &["rev-parse", "-q", "--verify", "HEAD^{commit}"]).ok());
+            let toplevel = scope.spawn(|| ops::run(repo, &["rev-parse", "--show-toplevel"]).ok());
+            let status = scope.spawn(|| status::read(repo));
+            let remote_configs = scope.spawn(|| remote::list(repo));
+            let forge = scope.spawn(|| forge::choice::chosen(repo));
 
-    // Both of these fail, as expected, in some states: HEAD can be detached or unborn.
-    let head_ref = ops::run(repo, &["symbolic-ref", "-q", "HEAD"]).ok();
+            let workdir = toplevel
+                .join()
+                .unwrap_or_else(|_| gone())
+                .map(|path| crate::repo::wsl::from_git(repo, path.trim_end()))
+                .unwrap_or_else(|| repo.to_owned());
+            let (for_worktrees, for_submodules) = (workdir.clone(), workdir.clone());
+            let worktrees = scope.spawn(move || worktree::list(repo, &for_worktrees));
+            let submodules = scope.spawn(move || submodule::list(&for_submodules));
+            (
+                listing.join().unwrap_or_else(|_| gone()),
+                head_ref.join().unwrap_or_else(|_| gone()),
+                head.join().unwrap_or_else(|_| gone()),
+                status.join().unwrap_or_else(|_| gone()),
+                remote_configs.join().unwrap_or_else(|_| gone()),
+                forge.join().unwrap_or_else(|_| gone()),
+                workdir,
+                worktrees.join().unwrap_or_else(|_| gone()),
+                submodules.join().unwrap_or_else(|_| gone()),
+            )
+        });
+    let listing = listing?;
     let head_ref = head_ref.map(|name| name.trim().to_owned());
-    let head = ops::run(repo, &["rev-parse", "-q", "--verify", "HEAD^{commit}"]).ok();
     let head: Option<Arc<str>> = head.map(|oid| oid.trim().into());
-
-    let toplevel = ops::run(repo, &["rev-parse", "--show-toplevel"]).ok();
-    let workdir = toplevel.map(|path| PathBuf::from(path.trim_end()));
-
-    let status = status::read(repo);
-    let workdir = workdir.unwrap_or_else(|| repo.to_owned());
-    let worktrees = worktree::list(repo, &workdir);
-    let submodules = submodule::list(&workdir);
-    let remote_configs = remote::list(repo);
-    let forge = forge::choice::chosen(repo);
 
     let mut refs = Refs {
         fingerprint: format!(
@@ -362,10 +430,13 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
         }
     }
 
-    let ahead_behind = default_branch
+    // A branch at the default branch's own commit is level with it, which needs no git. The
+    // others are counted later, by `read_counts`.
+    let base = default_branch
         .as_deref()
-        .map(|default| read_ahead_behind(repo, &found, default))
-        .unwrap_or_default();
+        .and_then(|default| shared_ref(&found, default))
+        .map(|base| (base.3.to_owned(), Arc::<str>::from(base.2)));
+    refs.default_base = base.clone();
     let upstream = read_upstream(repo);
     for &(kind, name, commit, _) in &found {
         let tip: Arc<str> = commit.into();
@@ -373,10 +444,13 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
         match kind {
             RefKind::Branch => refs.branches.push(Branch {
                 name: name.to_owned(),
-                tip,
+                tip: tip.clone(),
                 color,
                 is_head: head_branch == Some(name),
-                ahead_behind: ahead_behind.get(name).copied(),
+                ahead_behind: base
+                    .as_ref()
+                    .filter(|(_, base_tip)| **base_tip == *tip)
+                    .map(|_| (0, 0)),
                 upstream: upstream.get(name).and_then(|(_, counts)| *counts),
                 upstream_name: upstream.get(name).map(|(found, _)| found.clone()),
             }),
@@ -509,18 +583,28 @@ fn branch_colors(
     colors
 }
 
-/// How each local branch stands against the default branch, in one git call. Old versions
-/// of git don't know this format, which only costs the sidebar its counts.
-fn read_ahead_behind(
-    repo: &Path,
-    found: &[FoundRef],
-    default: &str,
-) -> HashMap<String, (u32, u32)> {
-    let Some(base) = shared_ref(found, default) else {
+/// How each local branch that `read_refs` left without a count stands against the default
+/// branch, in one git call. This is the slow part of reading refs, so it is a call of its
+/// own, to run once the refs are on screen. Old versions of git don't know this format,
+/// which only costs the sidebar its counts.
+pub fn read_counts(repo: &Path, refs: &Refs) -> HashMap<String, (u32, u32)> {
+    let Some((base, _)) = &refs.default_base else {
         return HashMap::new();
     };
-    let format = format!("--format=%(refname:short)%00%(ahead-behind:{})", base.3);
-    let listing = ops::run(repo, &["for-each-ref", &format, "refs/heads"]).unwrap_or_default();
+    let format = format!("--format=%(refname:short)%00%(ahead-behind:{base})");
+    let mut args = vec!["for-each-ref".to_owned(), format];
+    let first_pattern = args.len();
+    args.extend(
+        refs.branches
+            .iter()
+            .filter(|branch| branch.ahead_behind.is_none())
+            .map(|branch| format!("refs/heads/{}", branch.name)),
+    );
+    if args.len() == first_pattern {
+        return HashMap::new();
+    }
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let listing = ops::run(repo, &args).unwrap_or_default();
     listing
         .lines()
         .filter_map(|line| {
@@ -675,5 +759,73 @@ mod tests {
         assert_eq!(at_branch.check_out_label(), "Check out feat/x");
         let bare = refs.actions_for(&commit_with("b", &[]));
         assert_eq!(bare.check_out_label(), "Check out");
+    }
+
+    /// `main` with one commit, `level` at the same commit and `side` one commit ahead.
+    fn repo_with_side() -> crate::testing::Repo {
+        let repo = crate::testing::Repo::new();
+        repo.write("a", "1\n");
+        repo.commit("base");
+        repo.git(&["branch", "level"]);
+        repo.git(&["checkout", "-q", "-b", "side"]);
+        repo.write("b", "2\n");
+        repo.commit("add b");
+        repo.git(&["checkout", "-q", "main"]);
+        repo
+    }
+
+    fn counts_of(refs: &Refs, name: &str) -> Option<(u32, u32)> {
+        refs.branches.iter().find(|b| b.name == name)?.ahead_behind
+    }
+
+    #[test]
+    fn a_branch_level_with_the_default_is_counted_without_asking_git() {
+        let repo = repo_with_side();
+        let refs = read_refs(repo.path()).unwrap();
+        assert_eq!(counts_of(&refs, "main"), Some((0, 0)));
+        assert_eq!(counts_of(&refs, "level"), Some((0, 0)));
+        // The branch that differs waits for `read_counts`.
+        assert_eq!(counts_of(&refs, "side"), None);
+        assert!(refs.needs_counts());
+    }
+
+    #[test]
+    fn counts_read_later_fill_in_the_branches_left_out() {
+        let repo = repo_with_side();
+        let mut refs = read_refs(repo.path()).unwrap();
+        let counts = read_counts(repo.path(), &refs);
+        assert_eq!(counts.get("side"), Some(&(1, 0)));
+        assert!(!counts.contains_key("level"), "level was already known");
+        refs.set_counts(&counts);
+        assert_eq!(counts_of(&refs, "side"), Some((1, 0)));
+        assert!(!refs.needs_counts());
+    }
+
+    #[test]
+    fn nothing_is_asked_when_every_branch_is_level() {
+        let repo = crate::testing::Repo::new();
+        repo.write("a", "1\n");
+        repo.commit("base");
+        let refs = read_refs(repo.path()).unwrap();
+        assert!(!refs.needs_counts());
+        assert!(read_counts(repo.path(), &refs).is_empty());
+    }
+
+    #[test]
+    fn a_reload_keeps_the_counts_of_branches_that_did_not_move() {
+        let repo = repo_with_side();
+        let mut old = read_refs(repo.path()).unwrap();
+        old.set_counts(&read_counts(repo.path(), &old));
+        let mut fresh = read_refs(repo.path()).unwrap();
+        fresh.keep_counts_from(&old);
+        assert_eq!(counts_of(&fresh, "side"), Some((1, 0)));
+        assert!(!fresh.needs_counts());
+
+        // Once the default branch moves, every old count is out of date.
+        repo.write("c", "3\n");
+        repo.commit("main moves");
+        let mut moved = read_refs(repo.path()).unwrap();
+        moved.keep_counts_from(&old);
+        assert_eq!(counts_of(&moved, "side"), None);
     }
 }

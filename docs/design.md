@@ -95,15 +95,41 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 
 - Header: 52 px, Mantle, with a 1 px Surface 0 bottom border.
 - Tabs: one repository per tab, in a 36 px Mantle strip above the header with a 1 px
-  Surface 0 bottom border. The strip only shows from the second tab on, since a lone tab
-  is a control that does nothing. A tab is a 28 px quiet button with the folder name; the
+  Surface 0 bottom border. The strip always shows, even for one tab. On Windows it is also
+  the title bar: the window has no frame of its own, the empty part of the strip drags the
+  window, and minimise, maximise and close end the row (46 px wide, Surface 0 on hover,
+  Red for close). A tab is a 28 px quiet button with the folder name; the
   active one takes the selected-row fill (Surface 0) and Text colour, the rest are Overlay 2.
   Tabs have a `×` to close and the strip ends in a `+`. A new tab opens at the end of the
   strip. `Ctrl T` opens a tab, `Ctrl W` closes one, `Ctrl Tab` and `Ctrl Shift Tab` move between them, and `Ctrl Shift PageUp`
   and `Ctrl Shift PageDown` move the front tab along the strip. A tab also drags onto another
   to take its place, and the tab under it tints with 14% Blue; the order is saved with the
   open tabs (see "App"). `Ctrl O` opens a
-  repository in a new tab, or in the current one while it is empty. Opening a repository
+  repository in a new tab, or in the current one while it is empty. On Windows a folder
+  inside WSL2 (`\\wsl.localhost\Ubuntu\home\ada\repo`, or `\\wsl$\…`) opens like any other and
+  is told apart by its path alone: git, and the dock's terminals, run inside the
+  distribution through `wsl.exe`, started in the folder, and the paths git prints are turned
+  back into Windows ones (`gitclient_core::repo::wsl`). Nothing in the interface changes.
+  Questions from git (see "Questions from git") are asked in the same popup, with nothing
+  from Windows involved: a small script starts git in the distribution with its own
+  askpass program, which prints the question on stderr after a marker and reads the answer
+  from stdin. The app reads the marker, asks, and writes the answer back, so the ssh key
+  and agent are the distribution's own. The marker carries a token made up for each
+  command, so a remote can't print one of its own to make the app ask a question. Only
+  commands whose subcommand connects to a remote (`fetch`, `pull`, `push`, `clone`, …) keep
+  stdin open for this. A distribution that sets its own `SSH_ASKPASS` or `GIT_ASKPASS` keeps it.
+  `Ctrl Shift O`, or "Clone from an address" under "Open repository" on an empty tab,
+  opens a form popup ("Clone a repository") with an "Address" and a "Clone into" input and
+  "Clone <name>" as its result, the name being the address's last part without `.git`. The
+  address starts as what is on the clipboard when that is a link to a repository
+  (`https://`, `ssh://`, `git://` or `git@host:path`), so copying a link and pressing the
+  key is enough, and the folder starts as the one last cloned into (`clone_dir` in the
+  `state` file) or else the home folder; `~` works in it. The folder made is
+  `<Clone into>/<name>`, and an address or folder that can't work, or a folder that already
+  holds something, is said in Peach before git runs. The popup stays open with the header
+  spinner while git runs, and git's questions come in the same way as for a fetch. When it
+  is done the repository opens like any other, in the front tab if that is empty, else in a
+  new one. What it checks and runs lives in `gitclient_core::repo::clone`. Opening a repository
   that is already open switches to its tab. Closing the last tab leaves an empty one.
 - Graph window: 300 px branch sidebar, graph, 380 px inspector. A file's diff opens over
   the whole graph, between the sidebar and the inspector, so it has the room to be read.
@@ -180,9 +206,16 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     at once, and the header says how to undo it. Every start mends a launcher of gitclient's
     own that points at a copy that has moved, and never adds one that was taken away.
     Under "Updates", a tick box "Look for a newer version when gitclient starts" (on by
-    default, `check_updates` in the same file) and a row that says where an update stands
-    ("gitclient 0.2.0 is available. This is 0.1.0.") beside one quiet button named for its
-    result: "Check now", "Update to 0.2.0" or "Restart now".
+    default, `check_updates` in the same file), a row of chips "Which versions to update to"
+    ("Full releases", the default, or "Nightly builds", kept as `update_track`, the picked one
+    ticked and never blue) and a row that says where an update stands ("gitclient 0.2.0 is
+    available. This is 0.1.0.") beside one quiet button named for its result: "Check now",
+    "Update to 0.2.0" or "Restart now". Full releases are the newest tag that is a plain
+    version (`v1.2.3`). The nightly is the one pre-release every push to `main` replaces; all
+    nightlies share a version, so one is told from the next by the commit it was built from
+    (`GITCLIENT_COMMIT`, set at build time), and is named "nightly 1a2b3c4". Choosing a
+    track looks again at once. Releases are read from one host, Gitea for now, set in one place
+    (`HOST` in `gitclient_core::install::update`), and moving to GitHub is a one-line change.
   - **Repository** holds what belongs to the open repository alone, apart from its git
     config, and is only in the side panel while a repository is open. The header says which
     one. Under "Hosting", a "Forge" row says which forge the remote is on ("gitclient can tell
@@ -196,8 +229,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     names the result ("Add 431 commits to the commit graph", "Write the commit graph") and
     runs `git commit-graph write --reachable --split`, as `git maintenance` does. If
     `gc.writeCommitGraph` or `maintenance.commit-graph.enabled` is off, the row says that
-    git won't write it on its own. The page reads all this each time it opens. Nothing
-    about the commit graph shows in the main window.
+    git won't write it on its own. The page reads all this each time it opens. The main
+    window says nothing about the commit graph unless it is the reason for a wait (see
+    "Commit graph band"). Both sentences for a missing or behind graph add that in a large
+    repository it makes branch counts, search and loading history slow.
 - Dock: a 36 px Mantle bar along the bottom of the window with a 1 px Surface 0 top
   border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
   under the bar, so history stays in view. `Ctrl \`` shows and hides it, and
@@ -272,10 +307,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   that can't be used stays and says why. Checking out the recorded commit in a submodule
   that is on another one asks first, and gives the `git -C <path> checkout <hash>` that
   goes back. The app never forces anything.
-- Pull and push without checking out: the menu of a local branch that isn't checked out and
-  follows a remote branch has "Pull origin/x into x" and "Push 2 commits to origin/x". Pull
-  asks the remote and only fast-forwards, so nothing is merged and the working tree stays
-  as it is; it is always offered, since the counts come from the last fetch. Push is
+- Pull and push from the menu: the menu of a local branch that follows a remote branch, checked
+  out or not, has "Pull origin/x into x" and "Push 2 commits to origin/x". Pull
+  asks the remote and only fast-forwards, so nothing is merged; on a branch that isn't checked
+  out the working tree stays as it is. It is always offered, since the counts come from the last fetch. Push is
   offered when the branch is ahead, else it stays and says why. The band says how to undo
   each. A branch that follows nothing gets neither line.
 - Upstream: a local branch's menu has "Set upstream of <name>", which opens a form popup
@@ -400,6 +435,20 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   shown once, whatever the answer, and the band says what was written and how to take it
   away. Settings → App adds or removes the launcher from then on. On a window too short for
   it, the panel scrolls.
+- **Commit graph band:** a band under the header, below the band that says what happened,
+  drawn only when a step took 2 seconds or more (`SLOW_AFTER` in
+  `gitclient_core::repo::commit_graph`) and the repository has no commit graph that git
+  would use (`is_missing`: not a shallow clone, `core.commitGraph` not off, no replace
+  refs). The steps are loading the history, timed until its first commits arrive, which is
+  where git sorts everything, and counting the branches against the default branch, which is
+  read after the graph is on screen and fills in when it arrives. It says in Peach what took
+  how long and why ("Loading the history took 8 s because this repository has no commit
+  graph. Writing one takes about as long, once, and makes this quick."; "Counting the
+  branches took 7 s …"), with quiet buttons "Dismiss" (for that
+  repository, until the window closes) and "Write the commit graph", which runs the same
+  write as Settings → Repository and says what it did in the usual band. A quick count, a
+  graph that is only behind, or any other reason for being slow shows nothing. A branch level
+  with the default branch is counted without asking git at all.
 - **Update band:** when a newer release is found, a band across the top of the window, above
   the tabs, in the same style as the band under the header: a blue "Update" pill, "gitclient
   0.2.0 is available.", and quiet buttons "Later" (hides it until a newer release) and
@@ -408,6 +457,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   installed and starts the next time you open it. To go back, download 0.1.0 from
   github.com/…/releases/tag/v0.1.0." with "Restart now". A failure is said in Peach with
   "Try again". Looking and finding nothing, or failing to look, is only said in Settings.
+  The same band offers a nightly ("gitclient nightly 1a2b3c4 is available.") on that track.
   The release archive is checked against the release's `SHA256SUMS.txt` before anything is
   replaced, and a mismatch installs nothing. What is said and decided lives in core
   (`gitclient_core::install`).
@@ -440,6 +490,21 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   Repository page. A line that can't be used says why, briefly: the base already has all of
   the branch, or the two are on different remotes (a request between repositories isn't
   supported yet).
+- **Search:** a quiet "Search" button in the header, or `Ctrl F` (`Cmd F` on macOS), opens a
+  44 px bar on Mantle with a Surface 0 bottom border over the graph, with the cursor in its
+  input. Two chips choose what is matched, the picked one ticked and never blue: "Message,
+  author or hash" (the default; the start of a hash of 4 or more digits finds its commit) and
+  "File" (a commit that changed a file whose path holds what was typed, in any case, so
+  `main.rs` and `src/view` both work). Git looks over every branch and tag
+  (`gitclient_core::history::search`), 300 ms after typing pauses or at once on `Enter`,
+  and a search that is still running is stopped when another starts. The found commits take
+  the graph's place as a list of 32 px rows (short hash, subject with its prefix in Overlay 2,
+  author, time) under a sentence that counts them ("3 commits match “main.rs”."); more than
+  500 lists the newest 500 and says so, and a failure is said in Peach. Clicking a result
+  selects it for the inspector, and the list stays so the next can be picked. A result
+  older than what the graph has loaded is dimmed, and clicking it says so in the band.
+  `Esc` or "Close" brings the graph back, scrolled to the picked commit. An open diff or
+  resolver covers the bar like the rest of the graph.
 - **Selecting commits:** a click selects one, `Ctrl`-click adds or removes one, and
   `Shift`-click adds the range. Selected rows take the selected-row fill, and the menu
   then acts on all of them.
@@ -580,12 +645,26 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   Right-clicking a conflicted file offers "Show both sides", "Use feat/x" and "Use main" for
   the whole file, which save it at once, and "Copy path". When the operation finishes, the
   band under the header says what is now true.
-- **Files:** a status letter, then the path with its folder muted, then `+n −n`.
+- **Files:** a status letter, then the path with its folder muted, then `+n −n`. A commit's
+  files show at once, from their names alone; counting `+n −n` means diffing every file, so
+  it is read after and the counts, and the totals in the header, appear when it is done. A
+  file over 256 MB (`LARGE_FILE_BYTES` in `gitclient_core::commit::details`) is never counted
+  or diffed on its own: its row ends in its size, and opening it says how big it is and why
+  nothing is shown, with one blue button "Show changes in <name> (300 MB)" that reads the
+  diff for that file only. Git's diff takes time that grows faster than the file does when
+  the versions differ a lot, so a huge file would otherwise hold everything up. The limit is
+  high because Unity scenes of 35 MB diff in a fraction of a second. Output from git is read
+  in large pieces and the command log keeps only its first 1000 lines, since a 65 MB diff
+  read line by line made git wait ten times longer than it needed.
 - **Diffs:** each hunk is a card on Mantle with a Surface 0 border and 8 px radius, over the
   Base of the pane. Its header has the hunk's tick box (working changes), where it starts or
   what git says it is inside, and "left out" or "in this commit". Its lines have one line
   number, a sign and the text. Added and removed lines use a 10% green or red wash. Text
-  stays Text. The file's name is in the bar above, once.
+  stays Text. The file's name is in the bar above, once. A line longer than 1000 characters
+  is drawn as its first 1000 and "… 9 549 076 more characters", since one line of
+  megabytes, as terrain and baked data have in a Unity scene, takes the window a second or
+  more to lay out (`Line::clipped` in core). Staging works on git's own hunks, so it is
+  unaffected.
 - **Dock tabs:** the bar holds tabs like the repository tabs, the same 28 px quiet button.
   The first is always the **Log**, then one per terminal, a `+` to open another, and
   `Clear` and `Hide` at the right. Terminals start in the repository's folder and keep

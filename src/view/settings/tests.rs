@@ -800,6 +800,32 @@ fn the_update_check_switch_saves_at_once_and_keeps_the_tabs(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
+fn the_update_track_saves_at_once_and_defaults_to_full_releases(cx: &mut TestAppContext) {
+    use gitclient_core::install::update::Track;
+    let dir = tempfile::tempdir().unwrap();
+    let (_scope_dir, scope) = file_scope();
+    let (view, mut cx) = open(None, scope, cx);
+    let (file, _) = with_launcher(&view, dir.path(), &mut cx);
+    assert_eq!(AppState::load(&file).update_track, Track::Stable);
+
+    view.update(&mut cx, |settings, cx| {
+        settings.set_update_track(Track::Nightly, cx)
+    });
+
+    let saved = AppState::load(&file);
+    assert_eq!(saved.update_track, Track::Nightly);
+    assert_eq!(saved.tabs, [PathBuf::from("/work/a")]);
+    view.read_with(&cx, |settings, _| {
+        assert_eq!(settings.app.update_track, Track::Nightly);
+        assert!(matches!(
+            &settings.feedback,
+            Feedback::Saved(message) if message.contains("nightly")
+        ));
+    });
+    draw(&view, &mut cx);
+}
+
+#[gpui_kit::test]
 fn the_app_page_draws_for_a_portable_copy_and_for_one_a_package_manager_installed(
     cx: &mut TestAppContext,
 ) {

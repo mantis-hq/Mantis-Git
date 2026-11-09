@@ -4,15 +4,18 @@
 
 use super::{Dialog, Frame};
 use crate::theme::tokens;
-use crate::view::GraphView;
 use crate::view::parts::section_label;
+use crate::view::{GraphView, OpenWorktreeInTab};
 use gitclient_core::menu::form::Form;
+use gitclient_core::repo::clone;
+use gitclient_core::settings::state::AppState;
 use gpui_kit::component::IndexPath;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::path::PathBuf;
 
 type PickState = SelectState<SearchableVec<String>>;
 
@@ -358,10 +361,14 @@ impl GraphView {
         if self.busy.is_some() {
             return;
         }
-        let Some(workdir) = self.workdir() else {
+        let open = self.workdir();
+        let Some(Dialog::Form(dialog)) = &mut self.dialog else {
             return;
         };
-        let Some(Dialog::Form(dialog)) = &mut self.dialog else {
+        // A clone is the one form that needs no repository to be open.
+        let Some(workdir) =
+            open.or_else(|| matches!(dialog.form, Form::Clone { .. }).then(PathBuf::new))
+        else {
             return;
         };
         let values = dialog.values(cx);
@@ -374,14 +381,47 @@ impl GraphView {
         self.busy = Some(form.progress().into());
         self.notice = None;
         cx.notify();
+        let cloned_to = form.cloned_to(&values);
         Self::spawn_blocking(
             {
                 let form = form.clone();
                 move || form.submit(&workdir, &values)
             },
-            move |this, result, cx| this.finish_form(&form, result, cx),
+            move |this, result, cx| {
+                let cloned = cloned_to.filter(|_| result.is_ok());
+                this.finish_form(&form, result, cx);
+                if let Some(path) = cloned {
+                    this.cloned(path, cx);
+                }
+            },
             cx,
         );
+    }
+
+    /// Opens the form that clones a repository. The address starts as what is on the
+    /// clipboard when that looks like one, so copying a link and pressing the key is
+    /// enough, and the folder starts as the one last cloned into.
+    pub fn open_clone_form(&mut self, cx: &mut Context<Self>) {
+        let copied = cx.read_from_clipboard().and_then(|item| item.text());
+        let address = copied
+            .filter(|text| clone::looks_like_address(text))
+            .map(|text| text.trim().to_owned())
+            .unwrap_or_default();
+        let remembered = self
+            .state_file()
+            .and_then(|file| AppState::load(file).clone_dir);
+        let into = clone::default_parent(remembered.as_deref());
+        self.open_form(Form::Clone { address, into }, cx);
+    }
+
+    /// A clone finished: remembers the folder it went into and asks for the repository
+    /// to be shown, in this tab if it is empty and else in a new one.
+    fn cloned(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if let (Some(file), Some(parent)) = (self.state_file(), path.parent()) {
+            let parent = parent.to_owned();
+            AppState::change(file, |state| state.clone_dir = Some(parent)).ok();
+        }
+        cx.emit(OpenWorktreeInTab(path));
     }
 
     fn finish_form(

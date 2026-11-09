@@ -78,6 +78,8 @@ pub(super) struct State {
     /// not the cursor blinking, draws the window again.
     result_offset: Option<Pixels>,
     scroll: UniformListScrollHandle,
+    /// The inspector's list of files to decide and files saved.
+    panel_scroll: UniformListScrollHandle,
     /// The side picked for a file that can only go one way as a whole, such as a binary one.
     sides: HashMap<String, Side>,
     /// The lines ticked in each file's conflicts, by conflict: side and line. The result is
@@ -362,12 +364,30 @@ impl GraphView {
 
     /// How many conflicts a file still has in its result.
     pub(super) fn conflicts_left(&self, path: &str) -> usize {
-        if self.is_whole_file(path) {
+        self.conflicts_left_in(path, self.is_whole_file(path), || {
+            self.file_decisions(path).count()
+        })
+    }
+
+    /// The same for a file from [`Progress::files`], which already knows what the other
+    /// way has to search every decision for. The panel asks this for every row.
+    fn conflicts_left_of(&self, file: &conflict::ConflictFile) -> usize {
+        let count = || file.decisions.len();
+        self.conflicts_left_in(&file.path, file.whole_file, count)
+    }
+
+    fn conflicts_left_in(
+        &self,
+        path: &str,
+        whole_file: bool,
+        decided: impl FnOnce() -> usize,
+    ) -> usize {
+        if whole_file {
             return usize::from(!self.conflict.sides.contains_key(path));
         }
         match self.conflict.standing.get(path) {
             Some(open) => open.iter().filter(|open| **open).count(),
-            None => self.file_decisions(path).count(),
+            None => decided(),
         }
     }
 
@@ -555,84 +575,42 @@ impl GraphView {
     pub(super) fn render_conflict_panel(&self, progress: &Progress, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
         let colors = tokens(theme.is_dark());
-        let (border, muted, success) = (theme.border, theme.muted_foreground, theme.success);
+        let (border, muted) = (theme.border, theme.muted_foreground);
         let kind = progress.kind.title().to_lowercase();
         let files = self.files_to_decide(progress);
         let ready = files.is_empty();
         let busy = self.busy.is_some();
         let shown_path = self.conflict.shown.clone().filter(|_| self.conflict.open);
 
-        let mut rows: Vec<Stateful<Div>> = Vec::new();
-        for (index, file) in files.iter().enumerate() {
-            let left = self.conflicts_left(&file.path);
-            let (path, menu_path) = (file.path.clone(), file.path.clone());
-            rows.push(
-                panel_row(
-                    ("conflict-file", index),
-                    shown_path.as_deref() == Some(file.path.as_str()),
-                    cx,
-                )
-                .h(px(28.))
-                .on_click(cx.listener(move |this, _, _, cx| this.show_conflict(&path, cx)))
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                        cx.stop_propagation();
-                        this.open_conflict_menu(&menu_path, event.position, cx);
-                    }),
-                )
-                .child(
-                    div()
-                        .w(px(12.))
-                        .flex_none()
-                        .text_size(TEXT_CHIP)
-                        .font_semibold()
-                        .text_color(colors.peach)
-                        .child("!"),
-                )
-                .child(file_path(&file.path, muted))
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(TEXT_CHIP)
-                        .text_color(muted)
-                        .child(file.note(left)),
-                ),
-            );
-        }
         // Saved files stay in the list, ticked, until the operation goes on. One git hasn't
         // finished with has a spinner and says "Saving…", though it is resolved for sure.
-        for (index, path) in self.conflict.resolved.iter().enumerate() {
-            let settling = self.conflict.saving.as_ref() == Some(path)
-                || self.conflict.unconfirmed.contains(path);
-            rows.push(
-                panel_row(("resolved-file", index), false, cx)
-                    .h(px(28.))
-                    .cursor_default()
-                    .child(
-                        div()
-                            .w(px(12.))
-                            .flex_none()
-                            .h_flex()
-                            .text_size(TEXT_CHIP)
-                            .font_semibold()
-                            .text_color(success)
-                            .child(if settling {
-                                Spinner::new().xsmall().into_any_element()
-                            } else {
-                                "✓".into_any_element()
-                            }),
-                    )
-                    .child(file_path(path, muted))
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_size(TEXT_CHIP)
-                            .text_color(muted)
-                            .child(if settling { "Saving…" } else { "Resolved" }),
-                    ),
-            );
-        }
+        let resolved: Vec<(String, bool)> = (self.conflict.resolved.iter())
+            .map(|path| {
+                let settling = self.conflict.saving.as_ref() == Some(path)
+                    || self.conflict.unconfirmed.contains(path);
+                (path.clone(), settling)
+            })
+            .collect();
+        let total = files.len() + resolved.len();
+        let scroll = self.conflict.panel_scroll.clone();
+        let list = uniform_list(
+            "conflict-files",
+            total,
+            cx.processor(move |this, range: Range<usize>, _, cx| {
+                let shown = shown_path.as_deref();
+                range
+                    .map(|at| match files.get(at) {
+                        Some(file) => this.conflict_file_row(at, file, shown, cx),
+                        None => {
+                            let (path, settling) = &resolved[at - files.len()];
+                            resolved_file_row(at - files.len(), path, *settling, cx)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            }),
+        )
+        .track_scroll(&scroll)
+        .size_full();
 
         div()
             .v_flex()
@@ -673,12 +651,11 @@ impl GraphView {
                     )
                     .child(
                         div()
-                            .id("conflict-files")
-                            .v_flex()
+                            .relative()
                             .flex_1()
                             .min_h_0()
-                            .overflow_y_scroll()
-                            .children(rows),
+                            .child(list)
+                            .scrollbar(&scroll, ScrollbarAxis::Vertical),
                     ),
             )
             // What the next commit holds, listed as it is in the working changes.
@@ -746,6 +723,89 @@ impl Check {
 
 /// Asks for one more frame, from inside drawing one, where a notify asks for none: the
 /// task runs once this frame is done.
+/// A saved file in the inspector's list: ticked, or spinning while git takes it.
+fn resolved_file_row(
+    index: usize,
+    path: &str,
+    settling: bool,
+    cx: &mut Context<GraphView>,
+) -> Stateful<Div> {
+    let theme = cx.theme();
+    let (muted, success) = (theme.muted_foreground, theme.success);
+    panel_row(("resolved-file", index), false, cx)
+        .h(px(28.))
+        .cursor_default()
+        .child(
+            div()
+                .w(px(12.))
+                .flex_none()
+                .h_flex()
+                .text_size(TEXT_CHIP)
+                .font_semibold()
+                .text_color(success)
+                .child(if settling {
+                    Spinner::new().xsmall().into_any_element()
+                } else {
+                    "✓".into_any_element()
+                }),
+        )
+        .child(file_path(path, muted))
+        .child(
+            div()
+                .flex_none()
+                .text_size(TEXT_CHIP)
+                .text_color(muted)
+                .child(if settling { "Saving…" } else { "Resolved" }),
+        )
+}
+
+impl GraphView {
+    /// A file with a decision to make in the inspector's list.
+    fn conflict_file_row(
+        &self,
+        index: usize,
+        file: &conflict::ConflictFile,
+        shown_path: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let muted = cx.theme().muted_foreground;
+        let colors = tokens(cx.theme().is_dark());
+        let left = self.conflicts_left_of(file);
+        let (path, menu_path) = (file.path.clone(), file.path.clone());
+        panel_row(
+            ("conflict-file", index),
+            shown_path == Some(file.path.as_str()),
+            cx,
+        )
+        .h(px(28.))
+        .on_click(cx.listener(move |this, _, _, cx| this.show_conflict(&path, cx)))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+                this.open_conflict_menu(&menu_path, event.position, cx);
+            }),
+        )
+        .child(
+            div()
+                .w(px(12.))
+                .flex_none()
+                .text_size(TEXT_CHIP)
+                .font_semibold()
+                .text_color(colors.peach)
+                .child("!"),
+        )
+        .child(file_path(&file.path, muted))
+        .child(
+            div()
+                .flex_none()
+                .text_size(TEXT_CHIP)
+                .text_color(muted)
+                .child(file.note(left)),
+        )
+    }
+}
+
 fn draw_again(cx: &mut Context<GraphView>) {
     cx.spawn(async move |this, cx| this.update(cx, |_, cx| cx.notify()).ok())
         .detach();

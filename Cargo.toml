@@ -11,12 +11,15 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 gitclient-core = { path = "crates/core" }
-gpui-kit = "0.9.0"
+gpui-kit = "0.9.1"
 chrono = "0.4"
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
 
 [dev-dependencies]
 gitclient-core = { path = "crates/core", features = ["testing"] }
-gpui-kit = { version = "0.9.0", features = ["test-support"] }
+gpui-kit = { version = "0.9.1", features = ["test-support"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 tempfile = "3"
 
@@ -31,3 +34,11 @@ test = false
 # is far too slow unoptimised. Our own crates stay at opt-level 0 for fast rebuilds.
 [profile.dev.package."*"]
 opt-level = 3
+
+# Release binaries are shipped as downloads, so size matters more than build time. Without
+# this the binary keeps its symbols and gets no cross-crate inlining across gpui.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -5,6 +5,7 @@
 //! The log is shared by the whole process. Writers are any thread; readers call
 //! [`read`] and ask to be woken with [`subscribe`].
 
+use crate::repo::wsl;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -16,7 +17,7 @@ const MAX_ENTRIES: usize = 50;
 /// Trimming is tested on a log of its own, with the real limit.
 const KEPT: usize = if cfg!(test) { 1_000_000 } else { MAX_ENTRIES };
 /// Lines kept per command, so that a huge diff can't fill memory.
-const MAX_LINES: usize = 1000;
+pub const MAX_LINES: usize = 1000;
 /// Characters kept per line.
 const MAX_LINE: usize = 2000;
 
@@ -231,6 +232,14 @@ impl Handle {
         });
     }
 
+    /// Counts `count` lines that were not kept, for output past [`MAX_LINES`] that
+    /// nobody will read line by line. Much cheaper than a [`Handle::line`] for each.
+    pub fn dropped(self, count: usize) {
+        if count > 0 {
+            self.update(|entry| entry.dropped += count);
+        }
+    }
+
     pub fn note(self, text: &str) {
         self.line(Stream::Note, text);
     }
@@ -252,6 +261,9 @@ impl Handle {
 
 /// The repository a git command runs in, which `ops::git` puts after `-C`.
 fn repository_of(command: &Command) -> PathBuf {
+    if let Some(invocation) = wsl::Invocation::of(command) {
+        return invocation.repo;
+    }
     let mut args = command.get_args();
     match (args.next(), args.next()) {
         (Some(flag), Some(path)) if flag == "-C" => PathBuf::from(path),
@@ -262,23 +274,44 @@ fn repository_of(command: &Command) -> PathBuf {
     }
 }
 
+/// The program and its arguments as the person would know them. Git in WSL starts through
+/// a script, which is not what they ran, so it is shown as plain `git -C <repo> …`.
+fn words_of(command: &Command) -> Vec<String> {
+    let lossy = |arg: &std::ffi::OsStr| arg.to_string_lossy().into_owned();
+    match wsl::Invocation::of(command) {
+        Some(invocation) => ["git".to_owned(), "-C".to_owned()]
+            .into_iter()
+            .chain([invocation.repo.to_string_lossy().into_owned()])
+            .chain(invocation.args.iter().map(|arg| lossy(arg)))
+            .collect(),
+        None => std::iter::once(command.get_program())
+            .chain(command.get_args())
+            .map(lossy)
+            .collect(),
+    }
+}
+
 /// The command as a shell would take it: arguments with spaces or other special
 /// characters are quoted, everything else is as given.
 pub fn format_command(command: &Command) -> String {
-    std::iter::once(command.get_program())
-        .chain(command.get_args())
-        .map(|arg| quote(&arg.to_string_lossy()))
-        .collect::<Vec<_>>()
-        .join(" ")
+    quoted(&words_of(command))
 }
 
 /// The command without `git -C <repo>`, which every command in the log shares.
 fn title_of(command: &Command) -> String {
-    let mut args = command.get_args().peekable();
-    if args.peek().is_some_and(|flag| *flag == "-C") {
-        args.nth(1);
-    }
-    args.map(|arg| quote(&arg.to_string_lossy()))
+    let words = words_of(command);
+    let rest = match words.as_slice() {
+        [_, flag, _, rest @ ..] if flag == "-C" => rest,
+        [_, rest @ ..] => rest,
+        [] => &[],
+    };
+    quoted(rest)
+}
+
+fn quoted(words: &[String]) -> String {
+    words
+        .iter()
+        .map(|word| quote(word))
         .collect::<Vec<_>>()
         .join(" ")
 }

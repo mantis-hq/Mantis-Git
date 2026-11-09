@@ -182,14 +182,16 @@ impl GraphView {
                             .truncate()
                             .child(format!("{} changed", count(total, "file"))),
                     )
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_1()
-                            .text_size(TEXT_CHIP)
-                            .child(div().text_color(added).child(format!("+{additions}")))
-                            .child(div().text_color(removed).child(format!("−{deletions}"))),
-                    )
+                    .when(details.counted, |header| {
+                        header.child(
+                            div()
+                                .h_flex()
+                                .gap_1()
+                                .text_size(TEXT_CHIP)
+                                .child(div().text_color(added).child(format!("+{additions}")))
+                                .child(div().text_color(removed).child(format!("−{deletions}"))),
+                        )
+                    })
                     .child(self.render_view_chips(cx)),
             )
             .child(self.render_file_pane(Pane::Commit, details, cx))
@@ -453,11 +455,7 @@ impl GraphView {
                     return panel_row((pane.tree_id(), at), false, cx);
                 };
                 let shown = self.shown_file() == Some(index);
-                let count = if file.binary {
-                    "binary".to_owned()
-                } else {
-                    format!("+{} −{}", file.additions, file.deletions)
-                };
+                let count = file.count_label(details.counted);
                 let paths = vec![file.path.to_string()];
                 panel_row((pane.tree_id(), at), shown, cx)
                     .h(px(28.))
@@ -502,11 +500,8 @@ impl GraphView {
     ) -> Stateful<Div> {
         let muted = cx.theme().muted_foreground;
         let shown = self.shown_file() == Some(index);
-        let count = if file.binary {
-            "binary".to_owned()
-        } else {
-            format!("+{} −{}", file.additions, file.deletions)
-        };
+        let counted = self.shown_details().is_none_or(|details| details.counted);
+        let count = file.count_label(counted);
         panel_row((pane.row_id(), index), shown, cx)
             .h(px(28.))
             .on_click(cx.listener(move |this, _, _, cx| this.show_file(index, cx)))

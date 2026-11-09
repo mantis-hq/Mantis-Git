@@ -12,10 +12,56 @@ use crate::text::count;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// The command that brings the commit graph up to date. With `--split` it adds a layer for
 /// what is missing instead of rewriting everything, as `git maintenance` does.
 const WRITE: [&str; 4] = ["commit-graph", "write", "--reachable", "--split"];
+
+/// What a commit graph that is missing or behind costs, said where its state is shown.
+const SLOW: &str =
+    "In a large repository this makes branch counts, search and loading history slow.";
+
+/// The button that writes it, named for its result.
+pub const WRITE_ACTION: &str = "Write the commit graph";
+
+/// How long counting the branches may take before the main window says why. Quicker than
+/// this isn't worth a word, and a repository that is quick without a commit graph is small.
+pub const SLOW_AFTER: Duration = Duration::from_secs(2);
+
+/// What the main window says when `what` ("Loading the history", "Counting the branches")
+/// took `took` and the repository has no commit graph, which is the one thing it can do
+/// something about.
+pub fn slow_sentence(what: &str, took: Duration) -> String {
+    format!(
+        "{what} took {} s because this repository has no commit graph. Writing one takes about \
+         as long, once, and makes this quick.",
+        took.as_secs().max(1)
+    )
+}
+
+/// Whether the repository has no commit graph that git would use if there were one. This
+/// reads a few settings and a folder, so it is quick where `check` is not. A shallow clone,
+/// `core.commitGraph` off and replace refs are left out, since writing one wouldn't help.
+pub fn is_missing(repo: &Path) -> bool {
+    let settings = Settings::read(repo);
+    if !settings.reads_graph {
+        return false;
+    }
+    let shallow = run(repo, &["rev-parse", "--is-shallow-repository"]).unwrap_or_default();
+    if shallow.trim() == "true" {
+        return false;
+    }
+    if settings.uses_replace_refs
+        && run(repo, &["for-each-ref", "--count=1", "refs/replace"])
+            .is_ok_and(|found| !found.trim().is_empty())
+    {
+        return false;
+    }
+    objects_info(repo)
+        .and_then(|info| read_layers(&info))
+        .is_ok_and(|layers| layers.is_empty())
+}
 
 /// Why git won't use a commit graph in this repository, whatever the file holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,11 +117,11 @@ impl Report {
             }
             Health::Missing => format!(
                 "There is no commit graph, so git reads each of the {reachable} one by one \
-                 when it walks history."
+                 when it walks history. {SLOW}"
             ),
             Health::Behind { missing } => format!(
                 "The commit graph lists {} of the {reachable} your branches and tags reach. \
-                 Git reads the other {} one by one.",
+                 Git reads the other {} one by one. {SLOW}",
                 self.reachable.saturating_sub(*missing),
                 missing
             ),
@@ -97,7 +143,7 @@ impl Report {
     /// The button that writes it, named for its result, when writing would help.
     pub fn action(&self) -> Option<String> {
         match self.health {
-            Health::Missing => Some("Write the commit graph".to_owned()),
+            Health::Missing => Some(WRITE_ACTION.to_owned()),
             Health::Behind { missing } => Some(format!(
                 "Add {} to the commit graph",
                 count(missing, "commit")
@@ -385,6 +431,30 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_commit_graph_is_told_quickly_and_only_when_writing_one_would_help() {
+        let repo = Repo::new();
+        repo.commit("a");
+        assert!(is_missing(repo.path()));
+
+        repo.git(&["config", "core.commitGraph", "false"]);
+        assert!(!is_missing(repo.path()), "git wouldn't read one");
+        repo.git(&["config", "--unset", "core.commitGraph"]);
+        assert!(is_missing(repo.path()));
+
+        write(repo.path()).unwrap();
+        assert!(!is_missing(repo.path()));
+    }
+
+    #[test]
+    fn the_slow_sentence_names_the_seconds_and_the_cause() {
+        let sentence = slow_sentence("Counting the branches", Duration::from_millis(7400));
+        assert!(sentence.starts_with("Counting the branches took 7 s because"));
+        assert!(sentence.contains("no commit graph"));
+        let history = slow_sentence("Loading the history", Duration::from_millis(8200));
+        assert!(history.starts_with("Loading the history took 8 s because"));
+    }
+
+    #[test]
     fn writing_lists_every_commit_and_new_ones_show_as_missing() {
         let repo = Repo::new();
         repo.commit("a");
@@ -415,7 +485,8 @@ mod tests {
         assert_eq!(
             report.sentence(),
             "The commit graph lists 2 of the 3 commits your branches and tags reach. Git \
-             reads the other 1 one by one."
+             reads the other 1 one by one. In a large repository this makes branch counts, \
+             search and loading history slow."
         );
 
         // The second write adds a layer, and the layers are read together.

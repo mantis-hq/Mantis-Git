@@ -28,21 +28,23 @@ actions!(
         PreviousTab,
         MoveTabLeft,
         MoveTabRight,
-        OpenRepositoryInTab
+        OpenRepositoryInTab,
+        CloneRepository
     ]
 );
 
 pub(super) fn bind_workspace_keys(cx: &mut App) {
-    let (new, close, open) = if cfg!(target_os = "macos") {
-        ("cmd-t", "cmd-w", "cmd-o")
+    let (new, close, open, clone) = if cfg!(target_os = "macos") {
+        ("cmd-t", "cmd-w", "cmd-o", "cmd-shift-o")
     } else {
-        ("ctrl-t", "ctrl-w", "ctrl-o")
+        ("ctrl-t", "ctrl-w", "ctrl-o", "ctrl-shift-o")
     };
     let context = Some(WORKSPACE_CONTEXT);
     cx.bind_keys([
         KeyBinding::new(new, NewTab, context),
         KeyBinding::new(close, CloseTab, context),
         KeyBinding::new(open, OpenRepositoryInTab, context),
+        KeyBinding::new(clone, CloneRepository, context),
         KeyBinding::new("ctrl-tab", NextTab, context),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, context),
         KeyBinding::new("ctrl-pagedown", NextTab, context),
@@ -423,6 +425,19 @@ impl Workspace {
                     .tooltip("Open another repository in a new tab")
                     .on_click(cx.listener(|this, _, window, cx| this.new_tab(window, cx))),
             )
+            .when(cfg!(windows), |strip| {
+                // Windows has no frame of its own here (see `main.rs`), so the strip is the
+                // title bar: the empty part drags the window, and the controls end the row.
+                strip
+                    .pr_0()
+                    .child(
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .window_control_area(WindowControlArea::Drag),
+                    )
+                    .child(window_controls(cx))
+            })
             .into_any_element()
     }
 
@@ -478,7 +493,7 @@ impl Workspace {
 impl Render for Workspace {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let background = cx.theme().background;
-        let strip = (self.tabs.len() > 1).then(|| self.render_strip(cx));
+        let strip = self.render_strip(cx);
         let update = self
             .updates
             .as_ref()
@@ -520,8 +535,12 @@ impl Render for Workspace {
                     .on_action(cx.listener(|this, _: &OpenRepositoryInTab, window, cx| {
                         this.prompt(window, cx)
                     }))
+                    .on_action(cx.listener(|this, _: &CloneRepository, _, cx| {
+                        this.active_view()
+                            .update(cx, |view, cx| view.open_clone_form(cx))
+                    }))
                     .children(update)
-                    .children(strip)
+                    .child(strip)
                     .child(
                         div()
                             .flex_1()
@@ -531,6 +550,49 @@ impl Render for Workspace {
             )
             .child(self.dock.clone())
     }
+}
+
+/// Minimise, maximise and close, drawn in the tab strip. Windows reads the click from the
+/// control area, so the buttons need no handlers of their own.
+fn window_controls(cx: &mut Context<Workspace>) -> impl IntoElement {
+    let theme = cx.theme();
+    let (hover, danger, text) = (theme.list_active, theme.danger, theme.foreground);
+    let control = |id: &'static str, icon: IconName, area: WindowControlArea, close: bool| {
+        div()
+            .id(id)
+            .h_full()
+            .w(px(46.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(text)
+            .window_control_area(area)
+            .hover(move |style| style.bg(if close { danger } else { hover }))
+            .child(Icon::new(icon).small())
+    };
+    div()
+        .h_flex()
+        .h_full()
+        .flex_none()
+        .child(control(
+            "minimize",
+            IconName::WindowMinimize,
+            WindowControlArea::Min,
+            false,
+        ))
+        .child(control(
+            "maximize",
+            IconName::WindowMaximize,
+            WindowControlArea::Max,
+            false,
+        ))
+        .child(control(
+            "close-window",
+            IconName::WindowClose,
+            WindowControlArea::Close,
+            true,
+        ))
 }
 
 fn canonical(path: &Path) -> PathBuf {

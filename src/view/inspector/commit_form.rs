@@ -41,6 +41,11 @@ impl GraphView {
         self.commit.state_file = file;
     }
 
+    /// The file where the app's own settings are remembered, if there is one.
+    pub(in crate::view) fn state_file(&self) -> Option<&std::path::Path> {
+        self.commit.state_file.as_deref()
+    }
+
     /// How many commits the graph loads, as the app settings say.
     pub(in crate::view) fn commit_limit(&self) -> u32 {
         self.commit

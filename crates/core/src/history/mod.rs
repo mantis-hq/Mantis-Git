@@ -9,6 +9,7 @@ pub mod lanes;
 pub mod picks;
 pub mod refs;
 pub mod reload;
+pub mod search;
 pub mod selection;
 pub mod spotlight;
 
@@ -278,7 +279,7 @@ fn stream_commits(
         "log",
         "--stdin",
         &format!("--max-count={}", limit.min(i32::MAX as u32)),
-        "--topo-order",
+        "--date-order",
         "--encoding=UTF-8",
         "--no-color",
         // log.showSignature would otherwise mix gpg output into the records.
@@ -824,7 +825,9 @@ mod tests {
         repo.git(&["checkout", "-q", "-b", "alpha"]);
         repo.commit("a1");
 
-        let refs = read_refs(repo.path()).unwrap();
+        let mut refs = read_refs(repo.path()).unwrap();
+        // The counts come in a second step, so the refs needn't wait for them.
+        refs.set_counts(&refs::read_counts(repo.path(), &refs));
         let names: Vec<_> = refs.branches.iter().map(|b| b.name.as_str()).collect();
         assert_eq!(names, ["alpha", "main", "merged-one", "zebra"]);
 

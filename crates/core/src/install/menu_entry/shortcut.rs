@@ -52,16 +52,18 @@ fn write_link(_: &Path, _: &Path) -> Result<(), String> {
 #[cfg(windows)]
 fn write_link(exe: &Path, to: &Path) -> Result<(), String> {
     use mslnk::ShellLink;
-    let fail = |error: std::io::Error| format!("Couldn't write {}: {error}", to.display());
-    let mut link = ShellLink::new(exe).map_err(fail)?;
+    fn failed(to: &Path, error: impl std::fmt::Display) -> String {
+        format!("Couldn't write {}: {error}", to.display())
+    }
+    let mut link = ShellLink::new(exe).map_err(|error| failed(to, error))?;
     link.set_name(Some("gitclient".to_owned()));
     if let Some(folder) = exe.parent() {
         link.set_working_dir(Some(folder.to_string_lossy().into_owned()));
     }
     if let Some(folder) = to.parent() {
-        std::fs::create_dir_all(folder).map_err(fail)?;
+        std::fs::create_dir_all(folder).map_err(|error| failed(to, error))?;
     }
-    link.create_lnk(to).map_err(fail)
+    link.create_lnk(to).map_err(|error| failed(to, error))
 }
 
 /// What a shortcut to `exe` would hold, to compare with the one on disk. Windows can't be

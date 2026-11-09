@@ -94,6 +94,19 @@ impl Caches {
             })
     }
 
+    /// A commit's details from the cache alone, if they are there, in memory or on disk.
+    /// Blocks.
+    pub fn cached_details(&self, fingerprint: &str, oid: &str) -> Option<Arc<CommitDetails>> {
+        self.details.get(&details_key(fingerprint, oid))
+    }
+
+    /// Remembers a commit's details once they are counted, which is the only way they are
+    /// worth keeping. Doesn't wait on the disk.
+    pub fn store_details(&self, fingerprint: &str, details: CommitDetails) -> Arc<CommitDetails> {
+        self.details
+            .insert(&details_key(fingerprint, &details.oid), details)
+    }
+
     /// One file's diff in a commit, if it is in memory. Safe on the UI thread.
     pub fn peek_diff(
         &self,
@@ -109,12 +122,16 @@ impl Caches {
         &self,
         repo: &Path,
         fingerprint: &str,
-        oid: &str,
+        commit: &CommitDetails,
         file: &FileChange,
     ) -> Result<Arc<FilePatch>, String> {
+        // A diff left unread isn't the file's diff, so it must not be remembered as one.
+        if file.waits_to_be_asked(DiffView::default()) {
+            return details::file_diff(repo, commit, file, DiffView::default()).map(Arc::new);
+        }
         self.diffs
-            .get_or_load(&diff_key(fingerprint, oid, file), || {
-                details::file_diff(repo, oid, file, DiffView::default())
+            .get_or_load(&diff_key(fingerprint, &commit.oid, file), || {
+                details::file_diff(repo, commit, file, DiffView::default())
             })
     }
 }
@@ -159,7 +176,7 @@ pub fn fingerprint(repo: &Path) -> String {
         repo,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     ) {
-        let common = PathBuf::from(common.trim());
+        let common = crate::repo::wsl::from_git(repo, common.trim());
         add("grafts", read(common.join("info").join("grafts")));
         add(
             "info-attributes",
@@ -236,7 +253,7 @@ mod tests {
             .read_details(repo.path(), "fp", &oid, &cancel)
             .unwrap();
         let file = details.files[0].clone();
-        let patch = first.read_diff(repo.path(), "fp", &oid, &file).unwrap();
+        let patch = first.read_diff(repo.path(), "fp", &details, &file).unwrap();
         first.details.flush();
         first.diffs.flush();
 
@@ -247,7 +264,10 @@ mod tests {
             second.read_details(gone, "fp", &oid, &cancel).unwrap(),
             details
         );
-        assert_eq!(second.read_diff(gone, "fp", &oid, &file).unwrap(), patch);
+        assert_eq!(
+            second.read_diff(gone, "fp", &details, &file).unwrap(),
+            patch
+        );
         assert!(second.disk_size() > 0);
         second.clear();
         assert_eq!(second.disk_size(), 0);

@@ -1,12 +1,20 @@
-//! Updating a portable copy from the project's GitHub releases.
+//! Updating a portable copy from the project's releases.
 //!
-//! The steps: ask GitHub for the latest release, and if it is newer, download the archive
-//! built for this system, check it against the release's `SHA256SUMS.txt`, take the program
-//! out of it, and swap it in for the running one. The new version starts the next time the
-//! app does. Nothing is installed without the checksum matching, and nothing at all happens
-//! for a copy a package manager installed.
+//! The steps: ask the host ([`HOST`], Gitea for now) for the newest release on the chosen
+//! [`Track`], and if it is newer, download the archive built for this system, check it
+//! against the release's `SHA256SUMS.txt`, take the program out of it, and swap it in for
+//! the running one. The new version starts the next time the app does. Nothing is installed
+//! without the checksum matching, and nothing at all happens for a copy a package manager
+//! installed.
 //!
-//! The network sits behind [`Http`], so every step is tested without one.
+//! The network sits behind [`Http`], and the forge behind [`Host`], so every step is
+//! tested without one.
+
+mod host;
+mod track;
+
+pub use host::{HOST, Host};
+pub use track::Track;
 
 use super::Channel;
 use sha2::{Digest, Sha256};
@@ -15,9 +23,6 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-
-/// The GitHub project releases are read from, as `owner/name`.
-pub const REPOSITORY: &str = "pretext8335/gitclient";
 
 /// The most a release's archive may be, so a wrong answer can't fill the disk.
 const MAX_ARCHIVE: u64 = 256 * 1024 * 1024;
@@ -61,6 +66,48 @@ impl fmt::Display for Version {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
     }
+}
+
+/// The program that is running: its version, and the commit it was built from when known.
+/// Nightly builds all share one version, so the commit is what tells one from another.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Build {
+    pub version: Version,
+    pub commit: Option<String>,
+}
+
+impl Build {
+    /// This app, built from `commit` (the build's `GITCLIENT_COMMIT`, if it had one).
+    pub fn current(commit: Option<&str>) -> Self {
+        Self {
+            version: Version::current(),
+            commit: commit.filter(|c| is_commit(c)).map(str::to_owned),
+        }
+    }
+
+    /// A build of a known version and no known commit.
+    pub fn of(version: Version) -> Self {
+        Self {
+            version,
+            commit: None,
+        }
+    }
+
+    /// `0.1.0`, or `0.1.0 (1a2b3c4)` when the commit is known.
+    pub fn label(&self) -> String {
+        match &self.commit {
+            Some(commit) => format!("{} ({})", self.version, short(commit)),
+            None => self.version.to_string(),
+        }
+    }
+}
+
+fn is_commit(text: &str) -> bool {
+    text.len() == 40 && text.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn short(commit: &str) -> &str {
+    commit.get(..7).unwrap_or(commit)
 }
 
 /// The build a release has for one kind of system, named as the release workflow names it.
@@ -108,18 +155,16 @@ pub struct Asset {
 /// A release newer than this copy, with what it takes to install it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Available {
-    pub version: Version,
+    /// What to call it: `0.2.0`, or `nightly 1a2b3c4`.
+    pub name: String,
     pub tag: String,
+    /// Where the release is described, without the scheme.
+    pub page: String,
+    /// How to go back to what is running now, said once the update is in place.
+    pub back: String,
     archive: Asset,
     checksums: Asset,
     target: Target,
-}
-
-impl Available {
-    /// Where the release is described, for telling the user how to go back.
-    pub fn page(&self) -> String {
-        format!("github.com/{REPOSITORY}/releases/tag/{}", self.tag)
-    }
 }
 
 /// Whether this copy can update itself, and if not, why in words.
@@ -161,10 +206,7 @@ impl Http for Web {
             .into();
         let mut response = agent
             .get(url)
-            .header(
-                "Accept",
-                "application/vnd.github+json, application/octet-stream",
-            )
+            .header("Accept", "application/json, application/octet-stream")
             .call()
             .map_err(describe)?;
         let mut body = response.body_mut().as_reader();
@@ -188,85 +230,160 @@ impl Http for Web {
 }
 
 fn describe(error: ureq::Error) -> String {
+    let host = HOST.name();
     match error {
-        ureq::Error::StatusCode(404) => "GitHub has no published release to update to.".to_owned(),
+        ureq::Error::StatusCode(404) => format!("{host} has no published release to update to."),
         ureq::Error::StatusCode(403 | 429) => {
-            "GitHub is limiting requests from this network. Try again later.".to_owned()
+            format!("{host} is limiting requests from this network. Try again later.")
         }
-        ureq::Error::StatusCode(code) => format!("GitHub answered with an error ({code})."),
-        other => format!("Couldn't reach GitHub: {other}."),
+        ureq::Error::StatusCode(code) => format!("{host} answered with an error ({code})."),
+        other => format!("Couldn't reach {host}: {other}."),
     }
 }
 
 // ---- looking ----
 
-/// Asks GitHub for the latest release, and returns it if it is newer than `current`.
+/// Asks `host` for the newest release on `track`, and returns it if it is newer than what
+/// is running.
 pub fn check(
     http: &dyn Http,
-    current: Version,
+    host: &Host,
+    track: Track,
+    current: &Build,
     target: Target,
 ) -> Result<Option<Available>, String> {
-    let url = format!("https://api.github.com/repos/{REPOSITORY}/releases/latest");
     let mut body = Vec::new();
-    http.get(&url, &mut body, MAX_TEXT)?;
-    read_release(&body, current, target)
+    match track {
+        Track::Stable => {
+            http.get(&host.releases_url(), &mut body, MAX_TEXT)?;
+            read_stable(&body, host, current, target)
+        }
+        Track::Nightly => {
+            http.get(&host.tag_url(Track::NIGHTLY_TAG), &mut body, MAX_TEXT)?;
+            read_nightly(&body, host, current, target)
+        }
+    }
 }
 
-/// What GitHub's answer says about the latest release.
-fn read_release(
+fn unexpected(host: &Host) -> String {
+    format!("{}'s answer wasn't what gitclient expected.", host.name())
+}
+
+/// The newest full release in a list of releases. A release counts by its tag: `v1.2.3`,
+/// with nothing after the number (so `nightly` and `v1.3.0-rc1` never do), and not by the
+/// host's pre-release flag, which Gitea sets on releases made from a tag.
+fn read_stable(
     json: &[u8],
-    current: Version,
+    host: &Host,
+    current: &Build,
     target: Target,
 ) -> Result<Option<Available>, String> {
-    let release: serde_json::Value = serde_json::from_slice(json)
-        .map_err(|_| "GitHub's answer wasn't what gitclient expected.".to_owned())?;
-    let flag = |key: &str| release[key].as_bool().unwrap_or(false);
-    if flag("draft") || flag("prerelease") {
+    let releases: serde_json::Value = serde_json::from_slice(json).map_err(|_| unexpected(host))?;
+    let releases = releases.as_array().ok_or_else(|| unexpected(host))?;
+    let newest = releases
+        .iter()
+        .filter(|release| !release["draft"].as_bool().unwrap_or(false))
+        .filter_map(|release| {
+            let tag = release["tag_name"].as_str()?;
+            let plain = !tag.trim_start_matches('v').contains(['-', '+']);
+            let version = Version::parse(tag).filter(|_| plain)?;
+            Some((version, tag, release))
+        })
+        .max_by_key(|(version, _, _)| *version);
+    let Some((version, tag, release)) = newest else {
+        return Ok(None);
+    };
+    if version <= current.version {
         return Ok(None);
     }
-    let tag = release["tag_name"].as_str().unwrap_or_default();
-    let version = Version::parse(tag)
-        .ok_or_else(|| format!("The latest release is called {tag:?}, which isn't a version."))?;
-    if version <= current {
+    let name = version.to_string();
+    let back = way_back(host, current);
+    release_assets(release, host, tag, name, back, target).map(Some)
+}
+
+/// The nightly release, if it was built from a different commit than this copy. Its body
+/// names the commit ("Built from <sha>"), which is the only thing that tells one nightly
+/// from the next, as they all carry the same version.
+fn read_nightly(
+    json: &[u8],
+    host: &Host,
+    current: &Build,
+    target: Target,
+) -> Result<Option<Available>, String> {
+    let release: serde_json::Value = serde_json::from_slice(json).map_err(|_| unexpected(host))?;
+    if release["draft"].as_bool().unwrap_or(false) {
         return Ok(None);
     }
-    let asset = |name: &str| -> Result<Asset, String> {
+    let commit = release["body"]
+        .as_str()
+        .and_then(|body| {
+            body.split(|c: char| !c.is_ascii_alphanumeric())
+                .find(|w| is_commit(w))
+        })
+        .or_else(|| {
+            release["target_commitish"]
+                .as_str()
+                .filter(|c| is_commit(c))
+        })
+        .ok_or("The nightly build doesn't say which commit it was built from.")?;
+    if current
+        .commit
+        .as_deref()
+        .is_some_and(|mine| mine.eq_ignore_ascii_case(commit))
+    {
+        return Ok(None);
+    }
+    let name = format!("{} {}", Track::NIGHTLY_TAG, short(commit));
+    let back = way_back(host, current);
+    release_assets(&release, host, Track::NIGHTLY_TAG, name, back, target).map(Some)
+}
+
+/// How to return to the running version, once an update has replaced it.
+fn way_back(host: &Host, current: &Build) -> String {
+    format!(
+        "To go back, download {} from {}.",
+        current.version,
+        host.page(&format!("v{}", current.version))
+    )
+}
+
+/// The archive and checksums of `release`, which must be downloads `host` is trusted for.
+fn release_assets(
+    release: &serde_json::Value,
+    host: &Host,
+    tag: &str,
+    name: String,
+    back: String,
+    target: Target,
+) -> Result<Available, String> {
+    let asset = |file: &str| -> Result<Asset, String> {
         let found = release["assets"].as_array().and_then(|assets| {
             assets
                 .iter()
-                .find(|asset| asset["name"].as_str() == Some(name))
+                .find(|asset| asset["name"].as_str() == Some(file))
         });
         let url = found
             .and_then(|asset| asset["browser_download_url"].as_str())
-            .ok_or_else(|| format!("Release {tag} has no {name}."))?;
-        if !trusted(url) {
+            .ok_or_else(|| format!("Release {tag} has no {file}."))?;
+        if !host.trusts(url) {
             return Err(format!(
-                "Release {tag} points {name} somewhere gitclient won't download from."
+                "Release {tag} points {file} somewhere gitclient won't download from."
             ));
         }
         Ok(Asset {
-            name: name.to_owned(),
+            name: file.to_owned(),
             url: url.to_owned(),
         })
     };
-    Ok(Some(Available {
-        version,
+    Ok(Available {
+        name,
         tag: tag.to_owned(),
+        page: host.page(tag),
+        back,
         archive: asset(&target.archive_name(tag))?,
         checksums: asset("SHA256SUMS.txt")?,
         target,
-    }))
-}
-
-/// Downloads only over HTTPS from GitHub, whatever a release says.
-fn trusted(url: &str) -> bool {
-    let Some(rest) = url.strip_prefix("https://") else {
-        return false;
-    };
-    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    host == "github.com"
-        || host.ends_with(".github.com")
-        || host.ends_with(".githubusercontent.com")
+    })
 }
 
 // ---- installing ----
@@ -287,8 +404,8 @@ pub fn install(http: &dyn Http, available: &Available, exe: &Path) -> Result<(),
                 "gitclient's folder ({}) can't be written to, so it can't update itself: {error}. \
                  Download {} from {} instead.",
                 folder.display(),
-                available.version,
-                available.page()
+                available.name,
+                available.page
             )
         })?;
 
@@ -450,7 +567,7 @@ pub enum Status {
     Installing(Available),
     /// Installed. The new version starts the next time the app does.
     Ready {
-        version: Version,
+        name: String,
         back: String,
     },
     CheckFailed(String),
@@ -473,18 +590,18 @@ impl Status {
     pub fn band(&self) -> Option<Band> {
         let (message, action, warning) = match self {
             Self::Available(found) => (
-                format!("gitclient {} is available.", found.version),
-                Some(format!("Update to {}", found.version)),
+                format!("gitclient {} is available.", found.name),
+                Some(format!("Update to {}", found.name)),
                 false,
             ),
             Self::Installing(found) => (
-                format!("Downloading gitclient {}…", found.version),
+                format!("Downloading gitclient {}…", found.name),
                 None,
                 false,
             ),
-            Self::Ready { version, back } => (
+            Self::Ready { name, back } => (
                 format!(
-                    "gitclient {version} is installed and starts the next time you open it. {back}"
+                    "gitclient {name} is installed and starts the next time you open it. {back}"
                 ),
                 Some("Restart now".to_owned()),
                 false,
@@ -500,21 +617,22 @@ impl Status {
     }
 
     /// The sentence under "Check for updates" on the Settings page.
-    pub fn sentence(&self, current: Version) -> String {
+    pub fn sentence(&self, current: &Build, track: Track) -> String {
+        let current = current.label();
         match self {
             Self::Idle => format!("This is gitclient {current}."),
             Self::Checking => "Looking for a newer version…".to_owned(),
-            Self::UpToDate => format!("gitclient {current} is the newest version."),
+            Self::UpToDate => match track {
+                Track::Stable => format!("gitclient {current} is the newest version."),
+                Track::Nightly => format!("gitclient {current} is the newest nightly build."),
+            },
             Self::Available(found) => {
-                format!(
-                    "gitclient {} is available. This is {current}.",
-                    found.version
-                )
+                format!("gitclient {} is available. This is {current}.", found.name)
             }
-            Self::Installing(found) => format!("Downloading gitclient {}…", found.version),
-            Self::Ready { version, back } => {
+            Self::Installing(found) => format!("Downloading gitclient {}…", found.name),
+            Self::Ready { name, back } => {
                 format!(
-                    "gitclient {version} is installed and starts the next time you open it. {back}"
+                    "gitclient {name} is installed and starts the next time you open it. {back}"
                 )
             }
             Self::CheckFailed(error) => format!("Couldn't look for a newer version. {error}"),
@@ -526,7 +644,7 @@ impl Status {
     pub fn button(&self) -> Option<String> {
         match self {
             Self::Available(found) | Self::InstallFailed(found, _) => {
-                Some(format!("Update to {}", found.version))
+                Some(format!("Update to {}", found.name))
             }
             Self::Ready { .. } => Some("Restart now".to_owned()),
             Self::Idle | Self::UpToDate | Self::CheckFailed(_) => Some("Check now".to_owned()),
@@ -535,16 +653,12 @@ impl Status {
     }
 
     /// The status once `found` has been installed, with how to go back.
-    pub fn installed(found: &Available, current: Version) -> Self {
+    pub fn installed(found: &Available) -> Self {
         Self::Ready {
-            version: found.version,
-            back: format!("To go back, download {current} from {}.", old_page(current)),
+            name: found.name.clone(),
+            back: found.back.clone(),
         }
     }
-}
-
-fn old_page(version: Version) -> String {
-    format!("github.com/{REPOSITORY}/releases/tag/v{version}")
 }
 
 /// The sentence under "Check for updates when gitclient starts".

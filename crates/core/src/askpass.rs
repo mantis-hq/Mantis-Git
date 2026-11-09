@@ -7,10 +7,14 @@
 //! The app calls [`serve`] once and gets the questions. Without it, as in tests, git is
 //! told to fail at once rather than wait for an answer nobody can give.
 
+use std::collections::HashMap;
+#[cfg(unix)]
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 /// What the helper reads its socket path from. Its presence is what makes the app run as
 /// the helper rather than open a window.
+#[cfg(unix)]
 const SOCKET_VAR: &str = "GITCLIENT_ASKPASS_SOCKET";
 
 /// The questions as they come, from [`serve`].
@@ -90,12 +94,86 @@ impl Request {
     }
 }
 
-#[cfg(unix)]
-pub use unix::{run_helper, serve, variables};
+/// Where questions go, once the app is serving.
+static QUESTIONS: OnceLock<async_channel::Sender<Request>> = OnceLock::new();
+static REMEMBERED: Mutex<Option<Remembered>> = Mutex::new(None);
 
+/// Answers kept until the app closes, so the same key isn't asked for on every fetch.
+/// Each remembers which process it last answered: ssh asking the same question again
+/// itself means the answer was wrong, and it is forgotten.
+#[derive(Default)]
+struct Remembered(HashMap<String, (String, u32)>);
+
+impl Remembered {
+    fn recall(&mut self, prompt: &str, asker: u32) -> Option<String> {
+        match self.0.get_mut(prompt) {
+            Some((answer, last)) if *last != asker => {
+                *last = asker;
+                Some(answer.clone())
+            }
+            Some(_) => {
+                self.0.remove(prompt);
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn keep(&mut self, prompt: &str, answer: &str, asker: u32) {
+        self.0.insert(prompt.to_owned(), (answer.to_owned(), asker));
+    }
+}
+
+fn remembered<T>(f: impl FnOnce(&mut Remembered) -> T) -> T {
+    let mut slot = REMEMBERED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    f(slot.get_or_insert_with(Remembered::default))
+}
+
+/// Asks the window, unless an earlier answer to the same question can be reused. `None`
+/// means the person cancelled, or nothing is serving. This blocks until they answer.
+pub(crate) fn ask(asker: u32, prompt: &str) -> Option<String> {
+    ask_through(QUESTIONS.get()?, asker, prompt)
+}
+
+fn ask_through(
+    questions: &async_channel::Sender<Request>,
+    asker: u32,
+    prompt: &str,
+) -> Option<String> {
+    if let Some(value) = remembered(|kept| kept.recall(prompt, asker)) {
+        return Some(value);
+    }
+    let (reply, answer) = async_channel::bounded(1);
+    let request = Request {
+        prompt: prompt.to_owned(),
+        reply,
+    };
+    questions.send_blocking(request).ok()?;
+    // A closed or dropped request is a cancel.
+    let value = answer.recv_blocking().ok()??;
+    remembered(|kept| kept.keep(prompt, &value, asker));
+    Some(value)
+}
+
+#[cfg(unix)]
+pub use unix::{run_helper, variables};
+
+/// Starts listening for questions from git and ssh, and returns them as they come. Call
+/// it once.
+#[cfg(unix)]
+pub fn serve() -> Option<Questions> {
+    unix::serve()
+}
+
+/// Where there are no sockets, questions come only from git running in WSL, which the
+/// output of the command carries, so there is nothing to listen on.
 #[cfg(not(unix))]
 pub fn serve() -> Option<Questions> {
-    None
+    let (questions, receiver) = async_channel::unbounded();
+    QUESTIONS.set(questions).ok()?;
+    Some(receiver)
 }
 
 /// Environment that makes git and ssh ask through the app, or `None` when it isn't serving.
@@ -114,6 +192,7 @@ pub fn run_helper() -> Option<i32> {
 /// Applies [`variables`] to `command`. Where the app isn't serving, or a program of the
 /// user's own is set, ssh is told to use one that fails, so it never waits on a terminal
 /// where nobody will see the question.
+#[cfg(unix)]
 pub(crate) fn configure(command: &mut Command) {
     if std::env::var_os("SSH_ASKPASS").is_some() {
         return;
@@ -132,50 +211,15 @@ pub(crate) fn configure(command: &mut Command) {
 
 #[cfg(unix)]
 mod unix {
-    use super::{Questions, Request, SOCKET_VAR};
-    use std::collections::HashMap;
+    use super::{QUESTIONS, Questions, Request, SOCKET_VAR, ask_through};
     use std::ffi::OsString;
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::fs::DirBuilderExt;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::PathBuf;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
 
     static SOCKET: OnceLock<PathBuf> = OnceLock::new();
-    static REMEMBERED: Mutex<Option<Remembered>> = Mutex::new(None);
-
-    /// Answers kept until the app closes, so the same key isn't asked for on every fetch.
-    /// Each remembers which process it last answered: ssh asking the same question again
-    /// itself means the answer was wrong, and it is forgotten.
-    #[derive(Default)]
-    struct Remembered(HashMap<String, (String, u32)>);
-
-    impl Remembered {
-        fn recall(&mut self, prompt: &str, asker: u32) -> Option<String> {
-            match self.0.get_mut(prompt) {
-                Some((answer, last)) if *last != asker => {
-                    *last = asker;
-                    Some(answer.clone())
-                }
-                Some(_) => {
-                    self.0.remove(prompt);
-                    None
-                }
-                None => None,
-            }
-        }
-
-        fn keep(&mut self, prompt: &str, answer: &str, asker: u32) {
-            self.0.insert(prompt.to_owned(), (answer.to_owned(), asker));
-        }
-    }
-
-    fn remembered<T>(f: impl FnOnce(&mut Remembered) -> T) -> T {
-        let mut slot = REMEMBERED
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        f(slot.get_or_insert_with(Remembered::default))
-    }
 
     /// Starts listening for questions from git and ssh, and returns them as they come. Call
     /// it once; the socket lives in a folder only this user can open.
@@ -187,6 +231,7 @@ mod unix {
         let listener = UnixListener::bind(&path).ok()?;
         SOCKET.set(path).ok()?;
         let (requests, receiver) = async_channel::unbounded();
+        let _ = QUESTIONS.set(requests.clone());
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let requests = requests.clone();
@@ -212,25 +257,9 @@ mod unix {
         let asker: u32 = asker.parse().unwrap_or(0);
         let prompt = prompt.to_owned();
         let mut stream = stream;
-        if let Some(value) = remembered(|kept| kept.recall(&prompt, asker)) {
-            let _ = writeln!(stream, "ok\n{value}");
-            return;
-        }
-        let (reply, answer) = async_channel::bounded(1);
-        let request = Request {
-            prompt: prompt.clone(),
-            reply,
-        };
-        if requests.send_blocking(request).is_err() {
-            return;
-        }
-        // A closed or dropped request is a cancel.
-        let _ = match answer.recv_blocking() {
-            Ok(Some(value)) => {
-                remembered(|kept| kept.keep(&prompt, &value, asker));
-                writeln!(stream, "ok\n{value}")
-            }
-            _ => writeln!(stream, "cancel"),
+        let _ = match ask_through(requests, asker, &prompt) {
+            Some(value) => writeln!(stream, "ok\n{value}"),
+            None => writeln!(stream, "cancel"),
         };
     }
 
@@ -278,6 +307,7 @@ mod unix {
 
     #[cfg(test)]
     mod tests {
+        use super::super::Remembered;
         use super::*;
 
         #[test]

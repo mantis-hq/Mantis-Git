@@ -18,6 +18,34 @@ pub struct Line {
     pub text: Arc<str>,
 }
 
+/// How many characters of one line a diff draws. A scene or data file can hold a single
+/// line of megabytes, and laying one out takes the window a second or more.
+pub const MAX_DRAWN_CHARS: usize = 1000;
+
+impl Line {
+    /// This line as it is drawn: unchanged, or for one past [`MAX_DRAWN_CHARS`] its start
+    /// and a note of how much was left out.
+    pub fn clipped(&self) -> Self {
+        // Bytes are at least characters, so this is a cheap way to rule most lines out.
+        if self.text.len() <= MAX_DRAWN_CHARS {
+            return self.clone();
+        }
+        let Some((end, _)) = self.text.char_indices().nth(MAX_DRAWN_CHARS) else {
+            return self.clone();
+        };
+        let hidden = self.text[end..].chars().count();
+        Self {
+            text: format!(
+                "{}… {} more characters",
+                &self.text[..end],
+                crate::text::group_digits(hidden)
+            )
+            .into(),
+            ..self.clone()
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Hunk {
     /// What git says this hunk is inside, such as a function's first line.
@@ -35,6 +63,16 @@ pub struct FilePatch {
     pub hunks: Vec<Hunk>,
     /// The lines before the first hunk.
     header: String,
+}
+
+impl FilePatch {
+    /// A file with no hunks, for one whose diff wasn't read.
+    pub fn empty(path: &str) -> Self {
+        Self {
+            path: path.to_owned(),
+            ..Self::default()
+        }
+    }
 }
 
 impl Cacheable for FilePatch {
@@ -148,6 +186,9 @@ impl FilePatch {
 pub struct DiffView {
     pub whole_file: bool,
     pub ignore_whitespace: bool,
+    /// Read the diff of a [large](crate::commit::details::FileChange::large) file too,
+    /// which is otherwise left until it is asked for. Set for one file at a time.
+    pub allow_large: bool,
 }
 
 impl DiffView {
@@ -339,12 +380,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_line_of_megabytes_is_drawn_as_its_start_and_a_note() {
+        let line = |text: &str| Line {
+            kind: LineKind::Added,
+            old: None,
+            new: Some(3),
+            text: text.into(),
+        };
+        let short = line("let x = 1;");
+        assert_eq!(short.clipped(), short);
+        // Exactly the limit is kept whole, in characters rather than bytes.
+        let edge = line(&"é".repeat(MAX_DRAWN_CHARS));
+        assert_eq!(edge.clipped(), edge);
+
+        let long = line(&"ab".repeat(1_000_000));
+        let clipped = long.clipped();
+        assert!(clipped.text.starts_with(&"ab".repeat(MAX_DRAWN_CHARS / 2)));
+        assert!(clipped.text.ends_with("… 1 999 000 more characters"));
+        assert!(clipped.text.len() < 2 * MAX_DRAWN_CHARS);
+        assert_eq!((clipped.kind, clipped.new), (LineKind::Added, Some(3)));
+        // A cut can't land inside a multi-byte character.
+        let wide = line(&"日本".repeat(MAX_DRAWN_CHARS));
+        assert!(wide.clipped().text.contains("more characters"));
+    }
+
+    #[test]
     fn a_diff_view_names_the_git_options_it_needs() {
         assert!(DiffView::default().is_default());
         assert!(DiffView::default().args().is_empty());
         let view = DiffView {
             whole_file: true,
             ignore_whitespace: true,
+            ..DiffView::default()
         };
         assert!(!view.is_default());
         assert_eq!(view.args(), ["--unified=1000000", "-w"]);

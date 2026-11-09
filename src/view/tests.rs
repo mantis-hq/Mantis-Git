@@ -102,6 +102,52 @@ fn load_with(
 }
 
 #[gpui_kit::test]
+fn searching_for_a_file_lists_its_commits_and_picking_one_selects_it(cx: &mut TestAppContext) {
+    use gitclient_core::history::search::Mode;
+    use gitclient_core::testing::Repo;
+    let repo = Repo::new();
+    repo.write("a.txt", "1");
+    let first = repo.commit("first");
+    repo.write("b.txt", "1");
+    let second = repo.commit("second");
+    repo.write("a.txt", "2");
+    let third = repo.commit("third");
+    let (view, mut cx) = open_view(cx);
+    view.update(&mut cx, |view, _| {
+        view.repo = Some(repo.path().to_path_buf())
+    });
+    load(&view, &[&third, &second, &first], &mut cx);
+
+    cx.simulate_keystrokes("ctrl-f");
+    assert!(view.read_with(&cx, |view, _| view.search_is_open()));
+
+    view.update_in(&mut cx, |view, window, cx| {
+        view.search_for("a.txt", Mode::File, window, cx)
+    });
+    cx.executor().allow_parking();
+    for _ in 0..500 {
+        cx.run_until_parked();
+        if view.read_with(&cx, |view, _| view.search_subjects().is_some()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let found = view.read_with(&cx, |view, _| view.search_subjects());
+    assert_eq!(found, Some(vec!["third".to_owned(), "first".to_owned()]));
+
+    view.update_in(&mut cx, |view, window, cx| {
+        view.pick_search_result(1, window, cx)
+    });
+    assert_eq!(view.read_with(&cx, |view, _| view.selected()), Some(2));
+
+    cx.simulate_keystrokes("escape");
+    assert!(!view.read_with(&cx, |view, _| view.search_is_open()));
+    // The keys are back with the graph.
+    cx.simulate_keystrokes("up");
+    assert_eq!(view.read_with(&cx, |view, _| view.selected()), Some(1));
+}
+
+#[gpui_kit::test]
 fn keyboard_moves_the_selection_and_stops_at_the_ends(cx: &mut TestAppContext) {
     let (view, mut cx) = open_view(cx);
     load(&view, &["a", "b", "c"], &mut cx);
@@ -1183,7 +1229,7 @@ fn open_repo(
     repo.commit("base");
     let (view, mut cx) = open_view(cx);
     view.update(&mut cx, |view, cx| view.open(repo.path().to_owned(), cx));
-    cx.run_until_parked();
+    wait_until_loaded(&view, &mut cx);
     (repo, view, cx)
 }
 
@@ -1393,17 +1439,128 @@ fn open_repo_with_remote(
     repo.git(&["remote", "add", "origin", url]);
     let (view, mut cx) = open_view(cx);
     view.update(&mut cx, |view, cx| view.open(repo.path().to_owned(), cx));
-    // Git runs on another thread, so give it a moment rather than parking on it.
+    wait_until_loaded(&view, &mut cx);
+    (repo, view, cx)
+}
+
+/// Git runs on another thread, so give it a moment rather than parking on it.
+fn wait_until_loaded(view: &Entity<GraphView>, cx: &mut VisualTestContext) {
     cx.executor().allow_parking();
     for _ in 0..500 {
         cx.run_until_parked();
-        if view.read_with(&cx, |view, _| *view.status() == Status::Loaded) {
+        if view.read_with(cx, |view, _| *view.status() == Status::Loaded) {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(view.read_with(&cx, |view, _| *view.status() == Status::Loaded));
-    (repo, view, cx)
+    assert!(view.read_with(cx, |view, _| *view.status() == Status::Loaded));
+}
+
+#[gpui_kit::test]
+fn branch_counts_arrive_after_the_load_without_holding_it_up(cx: &mut TestAppContext) {
+    let repo = gitclient_core::testing::Repo::new();
+    repo.write("a", "1\n");
+    repo.commit("base");
+    repo.git(&["checkout", "-q", "-b", "side"]);
+    repo.write("b", "2\n");
+    repo.commit("add b");
+    repo.git(&["checkout", "-q", "main"]);
+    let (view, mut cx) = open_view(cx);
+    view.update(&mut cx, |view, cx| view.open(repo.path().to_owned(), cx));
+    wait_until_loaded(&view, &mut cx);
+
+    let delta = |view: &GraphView, name: &str| {
+        let default = view.refs.default_branch.as_deref();
+        let branch = view.refs.branches.iter().find(|b| b.name == name).unwrap();
+        branch.delta(default)
+    };
+    // A branch level with the default is known at once; the other fills in when counted.
+    for _ in 0..500 {
+        cx.run_until_parked();
+        if view.read_with(&cx, |view, _| !view.refs.needs_counts()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    view.read_with(&cx, |view, _| {
+        assert!(!view.refs.needs_counts());
+        assert_eq!(delta(view, "side"), "+1");
+    });
+}
+
+#[gpui_kit::test]
+fn the_commit_graph_hint_writes_one_and_goes_away(cx: &mut TestAppContext) {
+    let (repo, view, mut cx) = open_repo(cx);
+    view.update(&mut cx, |view, cx| {
+        view.graph_hint = Some("Counting the branches took 7 s.".into());
+        assert!(view.render_graph_hint(cx).is_some());
+        view.write_commit_graph(cx);
+        assert!(view.graph_hint.is_none(), "it is said once it is acted on");
+    });
+    cx.executor().allow_parking();
+    for _ in 0..500 {
+        cx.run_until_parked();
+        if view.read_with(&cx, |view, _| view.busy.is_none()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    view.read_with(&cx, |view, _| {
+        let said = view.notice_text().unwrap_or_default();
+        assert!(said.starts_with("Wrote the commit graph."), "{said}");
+    });
+    assert!(!gitclient_core::repo::commit_graph::is_missing(repo.path()));
+}
+
+#[gpui_kit::test]
+fn a_slow_step_is_explained_only_when_there_is_no_commit_graph(cx: &mut TestAppContext) {
+    use std::time::Duration;
+    let (repo, view, mut cx) = open_repo(cx);
+    let settle = |view: &Entity<GraphView>, cx: &mut VisualTestContext| {
+        cx.executor().allow_parking();
+        for _ in 0..50 {
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        view.read_with(cx, |view, _| view.graph_hint.clone())
+    };
+
+    view.update(&mut cx, |view, cx| {
+        view.explain_slowness("Loading the history", Duration::from_millis(900), cx)
+    });
+    assert_eq!(settle(&view, &mut cx), None, "a quick step needs no word");
+
+    view.update(&mut cx, |view, cx| {
+        view.explain_slowness("Loading the history", Duration::from_secs(8), cx)
+    });
+    let said = settle(&view, &mut cx).expect("slow with no commit graph says why");
+    assert!(
+        said.starts_with("Loading the history took 8 s because"),
+        "{said}"
+    );
+
+    view.update(&mut cx, |view, _| view.graph_hint = None);
+    gitclient_core::repo::commit_graph::write(repo.path()).unwrap();
+    view.update(&mut cx, |view, cx| {
+        view.explain_slowness("Loading the history", Duration::from_secs(8), cx)
+    });
+    assert_eq!(
+        settle(&view, &mut cx),
+        None,
+        "with a commit graph it is not why"
+    );
+}
+
+#[gpui_kit::test]
+fn a_dismissed_commit_graph_hint_stays_dismissed_for_that_repository(cx: &mut TestAppContext) {
+    let (repo, view, mut cx) = open_repo(cx);
+    view.update(&mut cx, |view, cx| {
+        view.graph_hint = Some("slow".into());
+        view.graph_hint_dismissed.insert(repo.path().to_owned());
+        view.graph_hint = None;
+        assert!(view.render_graph_hint(cx).is_none());
+        assert!(view.graph_hint_dismissed.contains(repo.path()));
+    });
 }
 
 fn remote_branch(name: &str) -> Dragged {
@@ -1633,4 +1790,47 @@ fn no_section_is_drawn_for_a_remote_on_no_known_forge(cx: &mut TestAppContext) {
     view.read_with(&cx, |view, _| {
         assert!(view.request_rows_for_test().is_empty());
     });
+}
+
+#[gpui_kit::test]
+fn a_repository_is_cloned_from_an_address_in_a_tab_with_nothing_open(cx: &mut TestAppContext) {
+    use gitclient_core::menu::form::Form;
+    let source = gitclient_core::testing::Repo::new();
+    source.write("a", "1\n");
+    source.commit("base");
+    let into = gitclient_core::testing::Repo::new();
+    let address = source.path().to_str().unwrap().to_owned();
+    let (view, mut cx) = open_view(cx);
+    let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let seen = asked.clone();
+    cx.update(|_, cx| {
+        cx.subscribe(
+            &view,
+            move |_, event: &crate::view::OpenWorktreeInTab, _| {
+                seen.borrow_mut().push(event.0.clone())
+            },
+        )
+        .detach()
+    });
+    view.update(&mut cx, |view, cx| {
+        let form = Form::Clone {
+            address,
+            into: into.path().join("code").display().to_string(),
+        };
+        view.open_form(form, cx)
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.executor().allow_parking();
+    for _ in 0..500 {
+        cx.run_until_parked();
+        if !asked.borrow().is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let opened = asked.borrow().clone();
+    assert_eq!(opened.len(), 1, "the clone asks for its folder to be shown");
+    assert!(opened[0].join("a").is_file());
+    assert_eq!(view.read_with(&cx, |view, cx| view.form_values(cx)), None);
 }

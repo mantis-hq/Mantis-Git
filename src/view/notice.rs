@@ -6,6 +6,7 @@
 use super::GraphView;
 use super::parts::band;
 use crate::theme::tokens;
+use gitclient_core::repo::commit_graph;
 use gpui_kit::component::button::*;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
@@ -94,6 +95,50 @@ impl GraphView {
             }
             (After::Reload, _) => self.reload(cx),
         }
+    }
+
+    /// The band that says counting the branches was slow because there is no commit graph,
+    /// with the button that writes one. It stays out of the way of every other band and is
+    /// drawn only when both are true.
+    pub(super) fn render_graph_hint(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let message = self.graph_hint.clone()?;
+        let peach = tokens(cx.theme().is_dark()).peach;
+        Some(
+            band("graph-hint", cx)
+                .child(div().flex_1().min_w_0().text_color(peach).child(message))
+                .child(
+                    Button::new("graph-hint-dismiss")
+                        .ghost()
+                        .small()
+                        .label("Dismiss")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(repo) = this.repo.clone() {
+                                this.graph_hint_dismissed.insert(repo);
+                            }
+                            this.graph_hint = None;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("graph-hint-write")
+                        .ghost()
+                        .small()
+                        .label(commit_graph::WRITE_ACTION)
+                        .on_click(cx.listener(|this, _, _, cx| this.write_commit_graph(cx))),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// Writes the commit graph the way Settings → Repository does, then reads the
+    /// repository again so the counts come back quickly.
+    pub(super) fn write_commit_graph(&mut self, cx: &mut Context<Self>) {
+        self.graph_hint = None;
+        self.run_operation(
+            "Writing the commit graph…",
+            |repo| commit_graph::write(repo).map(|report| Some(report.written_message())),
+            cx,
+        );
     }
 
     pub(super) fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

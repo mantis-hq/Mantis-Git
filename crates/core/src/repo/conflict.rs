@@ -6,7 +6,7 @@
 use crate::ops::{self, git};
 use crate::repo::status;
 use crate::text::{count, short_oid};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::ops::Range;
 use std::path::Path;
@@ -87,6 +87,8 @@ pub struct ConflictFile {
     pub path: String,
     /// Positions in [`Progress::decisions`], in order.
     pub decisions: Vec<usize>,
+    /// There are no lines to merge: a binary file, or one side deleted the file.
+    pub whole_file: bool,
 }
 
 impl ConflictFile {
@@ -260,14 +262,20 @@ impl Progress {
 
     /// The files with decisions to make, in the order their first decision comes.
     pub fn files(&self) -> Vec<ConflictFile> {
+        // Looked up by path, since a merge of thousands of files has thousands of them.
+        let mut at: HashMap<&str, usize> = HashMap::new();
         let mut files: Vec<ConflictFile> = Vec::new();
         for (index, decision) in self.decisions.iter().enumerate() {
-            match files.iter_mut().find(|file| file.path == decision.path) {
-                Some(file) => file.decisions.push(index),
-                None => files.push(ConflictFile {
-                    path: decision.path.clone(),
-                    decisions: vec![index],
-                }),
+            match at.get(decision.path.as_str()) {
+                Some(&file) => files[file].decisions.push(index),
+                None => {
+                    at.insert(&decision.path, files.len());
+                    files.push(ConflictFile {
+                        path: decision.path.clone(),
+                        decisions: vec![index],
+                        whole_file: decision.whole_file,
+                    });
+                }
             }
         }
         files
@@ -348,7 +356,8 @@ impl Progress {
 /// The paused operation, if there is one.
 pub fn detect(repo: &Path) -> Option<Progress> {
     let git_dir = ops::run(repo, &["rev-parse", "--absolute-git-dir"]).ok()?;
-    let git_dir = Path::new(git_dir.trim());
+    let git_dir = super::wsl::from_git(repo, git_dir.trim());
+    let git_dir = git_dir.as_path();
     let rebase_state = ["rebase-merge", "rebase-apply"]
         .map(|name| git_dir.join(name))
         .into_iter()
@@ -414,9 +423,10 @@ pub fn detect(repo: &Path) -> Option<Progress> {
 fn read_resolved(repo: &Path, decisions: &[Decision]) -> Vec<String> {
     let listing = ops::run(repo, &["ls-files", "--resolve-undo", "-z"]).unwrap_or_default();
     // One entry per stage the file had: `<mode> <oid> <stage>\t<path>`.
+    let conflicted: HashSet<&str> = decisions.iter().map(|d| d.path.as_str()).collect();
     let paths: BTreeSet<&str> = (listing.split('\0'))
         .filter_map(|entry| entry.split_once('\t').map(|(_, path)| path))
-        .filter(|path| !decisions.iter().any(|decision| decision.path == *path))
+        .filter(|path| !conflicted.contains(path))
         .collect();
     paths.into_iter().map(str::to_owned).collect()
 }
@@ -492,8 +502,10 @@ fn read_decisions(
     ];
     let conflicted = ops::run(repo, &args).unwrap_or_default();
     let mut decisions = Vec::new();
+    let mut whys = Whys::new(repo, progress.kind, other_commit);
+    let mut stages: Option<HashMap<String, (bool, bool)>> = None;
     for path in conflicted.split('\0').filter(|path| !path.is_empty()) {
-        let other_why = why_changed(repo, other_commit, path);
+        let other_why = whys.of(path);
         let bytes = fs::read(repo.join(path)).ok();
         let text = bytes.and_then(|bytes| String::from_utf8(bytes).ok());
         let parsed = text.as_deref().map(split_conflicts).filter(|segments| {
@@ -503,7 +515,8 @@ fn read_decisions(
         });
 
         let Some(segments) = parsed else {
-            let (mine, other) = whole_file_sides(repo, path, progress);
+            let stages = stages.get_or_insert_with(|| all_stages(repo));
+            let (mine, other) = whole_file_sides(stages.get(path), progress);
             decisions.push(Decision {
                 path: path.to_owned(),
                 line: 0,
@@ -537,11 +550,93 @@ fn read_decisions(
     decisions
 }
 
-fn why_changed(repo: &Path, commit: &str, path: &str) -> String {
+/// Says when and why the other side last changed each file, for the line under its name.
+///
+/// A revert or cherry-pick only conflicts in files its commit changed, so for every file
+/// the answer is that commit, and one `git log` serves them all. A merge or rebase reads
+/// the newest [`Whys::LOOKED_BACK`] commits once, with the files each changed, and takes
+/// each file's newest; a file older than that goes without a line.
+struct Whys<'a> {
+    repo: &'a Path,
+    commit: &'a str,
+    /// Set when one answer serves every file.
+    shared: Option<String>,
+    /// Each file's newest change, read the first time one is asked for.
+    listed: Option<HashMap<String, String>>,
+}
+
+impl<'a> Whys<'a> {
+    /// How many commits back a merge or rebase looks for the change to a file.
+    const LOOKED_BACK: usize = 1000;
+
+    fn new(repo: &'a Path, kind: Kind, commit: &'a str) -> Self {
+        let shared = matches!(kind, Kind::CherryPick | Kind::Revert)
+            .then(|| why_changed(repo, commit, None));
+        Self {
+            repo,
+            commit,
+            shared,
+            listed: None,
+        }
+    }
+
+    fn of(&mut self, path: &str) -> String {
+        if let Some(shared) = &self.shared {
+            return shared.clone();
+        }
+        let (repo, commit) = (self.repo, self.commit);
+        let listed = self
+            .listed
+            .get_or_insert_with(|| last_changes(repo, commit));
+        listed.get(path).cloned().unwrap_or_default()
+    }
+}
+
+/// When and why each file was last changed, going back from `commit`, from one `git log`.
+fn last_changes(repo: &Path, commit: &str) -> HashMap<String, String> {
+    let mut found = HashMap::new();
+    if commit.is_empty() {
+        return found;
+    }
+    let limit = Whys::LOOKED_BACK.to_string();
+    let args = [
+        "-c",
+        "core.quotepath=off",
+        "log",
+        "-n",
+        &limit,
+        "--no-renames",
+        "--name-only",
+        "--format=%x01%ar: %s",
+        commit,
+    ];
+    let log = ops::run(repo, &args).unwrap_or_default();
+    found.extend(changes_in(&log));
+    found
+}
+
+/// Reads `git log --name-only --format=%x01<text>`: each commit's text, then its files.
+/// The newest commit to name a file wins.
+fn changes_in(log: &str) -> HashMap<String, String> {
+    let mut found = HashMap::new();
+    for commit in log.split('\x01').filter(|commit| !commit.is_empty()) {
+        let mut lines = commit.lines();
+        let why = format!("Changed {}", lines.next().unwrap_or_default().trim());
+        for path in lines.filter(|path| !path.is_empty()) {
+            found.entry(path.to_owned()).or_insert_with(|| why.clone());
+        }
+    }
+    found
+}
+
+fn why_changed(repo: &Path, commit: &str, path: Option<&str>) -> String {
     if commit.is_empty() {
         return String::new();
     }
-    let args = ["log", "-1", "--format=%ar: %s", commit, "--", path];
+    let mut args = vec!["log", "-1", "--format=%ar: %s", commit];
+    if let Some(path) = path {
+        args.extend(["--", path]);
+    }
     match ops::run(repo, &args) {
         Ok(line) if !line.trim().is_empty() => format!("Changed {}", line.trim()),
         _ => String::new(),
@@ -551,18 +646,35 @@ fn why_changed(repo: &Path, commit: &str, path: &str) -> String {
 /// Which sides of a conflict without markers have the file at all.
 fn file_stages(repo: &Path, path: &str) -> (bool, bool) {
     let listing = ops::run(repo, &["ls-files", "-u", "-z", "--", path]).unwrap_or_default();
-    let stage = |number: &str| {
-        listing.split('\0').any(|entry| {
-            let meta = entry.split('\t').next().unwrap_or_default();
-            meta.split(' ').nth(2) == Some(number)
-        })
-    };
-    (stage("2"), stage("3"))
+    stages_in(&listing).remove(path).unwrap_or_default()
+}
+
+/// The same for every conflicted file, from one git call.
+fn all_stages(repo: &Path) -> HashMap<String, (bool, bool)> {
+    let listing = ops::run(repo, &["ls-files", "-u", "-z"]).unwrap_or_default();
+    stages_in(&listing)
+}
+
+/// Reads `git ls-files -u -z`: `<mode> <oid> <stage>\t<path>` for each stage a file has.
+fn stages_in(listing: &str) -> HashMap<String, (bool, bool)> {
+    let mut found: HashMap<String, (bool, bool)> = HashMap::new();
+    for entry in listing.split('\0') {
+        let Some((meta, path)) = entry.split_once('\t') else {
+            continue;
+        };
+        let sides = found.entry(path.to_owned()).or_default();
+        match meta.split(' ').nth(2) {
+            Some("2") => sides.0 = true,
+            Some("3") => sides.1 = true,
+            _ => {}
+        }
+    }
+    found
 }
 
 /// Describes each side's outcome. Each names its branch, which also keeps the two apart
 /// when both sides simply have a different version of a binary file.
-fn whole_file_sides(repo: &Path, path: &str, progress: &Progress) -> (String, String) {
+fn whole_file_sides(stages: Option<&(bool, bool)>, progress: &Progress) -> (String, String) {
     let describe = |exists: bool, branch: &str| {
         if exists {
             format!("Keeps the version on {branch}.")
@@ -570,7 +682,7 @@ fn whole_file_sides(repo: &Path, path: &str, progress: &Progress) -> (String, St
             format!("Deletes the file, as {branch} did.")
         }
     };
-    let (first, second) = file_stages(repo, path);
+    let (first, second) = stages.copied().unwrap_or_default();
     let (mine, other) = progress.by_side(first, second);
     (
         describe(mine, &progress.mine),
@@ -1003,6 +1115,70 @@ pub fn rebase_target(repo: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_newest_change_to_each_file_is_read_from_one_log() {
+        let log = "\x011 hour ago: fix: b\n\nb\nsrc/c d\n\x012 days ago: feat: a\n\na\nb\n";
+        let changes = changes_in(log);
+        assert_eq!(changes["b"], "Changed 1 hour ago: fix: b");
+        assert_eq!(changes["src/c d"], "Changed 1 hour ago: fix: b");
+        assert_eq!(changes["a"], "Changed 2 days ago: feat: a");
+    }
+
+    #[test]
+    fn a_merge_reads_when_each_file_last_changed_with_one_log() {
+        let repo = Repo::new();
+        repo.write("a", "1\n");
+        repo.write("b", "1\n");
+        repo.commit("base");
+        repo.git(&["checkout", "-q", "-b", "feat"]);
+        repo.write("a", "2\n");
+        repo.commit("feat: touch a");
+        let found = last_changes(repo.path(), "feat");
+        assert!(found["a"].ends_with("feat: touch a"), "{found:?}");
+        assert!(found["b"].ends_with("base"), "{found:?}");
+    }
+
+    #[test]
+    fn stages_are_read_for_every_file_from_one_listing() {
+        let listing = "100644 aaa 1\ta\0100644 bbb 2\ta\0100644 ccc 3\ta\0100644 ddd 3\tb c\0";
+        let stages = stages_in(listing);
+        assert_eq!(stages["a"], (true, true));
+        assert_eq!(stages["b c"], (false, true));
+        assert_eq!(stages.get("missing"), None);
+    }
+
+    #[test]
+    fn files_group_decisions_in_the_order_they_first_come() {
+        let decision = |path: &str, whole_file| Decision {
+            path: path.to_owned(),
+            line: 1,
+            mine: String::new(),
+            other: String::new(),
+            whole_file,
+            mine_why: String::new(),
+            other_why: String::new(),
+        };
+        let progress = Progress {
+            kind: Kind::Merge,
+            mine: "main".to_owned(),
+            other: "feat".to_owned(),
+            steps: Vec::new(),
+            decisions: vec![
+                decision("b", false),
+                decision("a", true),
+                decision("b", false),
+            ],
+            resolved: Vec::new(),
+            mine_is_second: false,
+        };
+        let files = progress.files();
+        let seen: Vec<_> = files
+            .iter()
+            .map(|f| (&*f.path, &f.decisions[..], f.whole_file))
+            .collect();
+        assert_eq!(seen, [("b", &[0, 2][..], false), ("a", &[1][..], true)]);
+    }
 
     #[test]
     fn decisions_are_grouped_by_file_in_the_order_they_come() {

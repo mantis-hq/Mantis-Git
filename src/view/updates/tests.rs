@@ -1,5 +1,5 @@
 use super::{AppUpdates, Arc, Channel, Http, Status, Target, Updates, update};
-use gitclient_core::install::update::Version;
+use gitclient_core::install::update::{HOST, Track, Version};
 use gpui_kit::{AppContext as _, Entity, TestAppContext, VisualTestContext};
 use std::io::Write;
 use std::sync::Mutex;
@@ -34,6 +34,8 @@ impl Releases {
     }
 }
 
+const NIGHTLY_COMMIT: &str = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
+
 fn linux() -> Target {
     Target::of("linux", "x86_64").unwrap()
 }
@@ -44,16 +46,26 @@ impl Http for Releases {
         if self.broken {
             return Err("Couldn't reach GitHub: offline.".to_owned());
         }
-        if !url.ends_with("/releases/latest") {
+        let host = "https://git.example.com/o/r";
+        // Full releases come as a list, the nightly as the one release at its tag.
+        let json = if url == HOST.releases_url() {
+            let archive = linux().archive_name(&self.tag);
+            format!(
+                r#"[{{"tag_name":"{tag}","assets":[
+                    {{"name":"{archive}","browser_download_url":"{host}/{archive}"}},
+                    {{"name":"SHA256SUMS.txt","browser_download_url":"{host}/SHA256SUMS.txt"}}]}}]"#,
+                tag = self.tag
+            )
+        } else if url == HOST.tag_url("nightly") {
+            let archive = linux().archive_name("nightly");
+            format!(
+                r#"{{"tag_name":"nightly","body":"Built from {NIGHTLY_COMMIT}.","assets":[
+                    {{"name":"{archive}","browser_download_url":"{host}/{archive}"}},
+                    {{"name":"SHA256SUMS.txt","browser_download_url":"{host}/SHA256SUMS.txt"}}]}}"#
+            )
+        } else {
             return Err(format!("no answer for {url}"));
-        }
-        let archive = linux().archive_name(&self.tag);
-        let json = format!(
-            r#"{{"tag_name":"{tag}","assets":[
-                {{"name":"{archive}","browser_download_url":"https://github.com/o/r/{archive}"}},
-                {{"name":"SHA256SUMS.txt","browser_download_url":"https://github.com/o/r/SHA256SUMS.txt"}}]}}"#,
-            tag = self.tag
-        );
+        };
         into.write_all(json.as_bytes()).map_err(|e| e.to_string())
     }
 }
@@ -190,7 +202,7 @@ fn restarting_into_a_program_that_cannot_start_says_so_and_keeps_the_app_open(
     let (model, mut cx) = updates(Channel::Portable, Releases::at("v999.0.0"), cx);
     model.update(&mut cx, |updates, _| {
         updates.status = Status::Ready {
-            version: Version::parse("999.0.0").unwrap(),
+            name: "999.0.0".to_owned(),
             back: "To go back, download 0.1.0.".to_owned(),
         };
     });
@@ -240,7 +252,7 @@ fn the_band_is_drawn_over_the_window_in_every_state_it_can_take(cx: &mut TestApp
     let states = [
         Status::Available(found.clone()),
         Status::Installing(found.clone()),
-        Status::installed(&found, Version::current()),
+        Status::installed(&found),
         Status::InstallFailed(found.clone(), "No room.".to_owned()),
         Status::UpToDate,
     ];
@@ -262,4 +274,29 @@ fn the_band_is_drawn_over_the_window_in_every_state_it_can_take(cx: &mut TestApp
         cx.notify();
     });
     draw(&mut cx);
+}
+
+#[gpui_kit::test]
+fn switching_to_the_nightly_track_looks_again_and_offers_the_nightly(cx: &mut TestAppContext) {
+    let http = Releases::at("v0.1.0");
+    let (model, mut cx) = updates(Channel::Portable, http.clone(), cx);
+    look(&model, &mut cx);
+    assert!(matches!(status_of(&model, &cx), Status::UpToDate));
+    let asked = http.requests();
+
+    model.update(&mut cx, |updates, cx| updates.set_track(Track::Nightly, cx));
+    cx.run_until_parked();
+
+    assert_eq!(http.requests(), asked + 1, "it looked again on its own");
+    assert_eq!(model.read_with(&cx, |u, _| u.track()), Track::Nightly);
+    match status_of(&model, &cx) {
+        Status::Available(found) => assert_eq!(found.name, "nightly 1a2b3c4"),
+        other => panic!("{other:?}"),
+    }
+
+    // Choosing what is already chosen does nothing.
+    let asked = http.requests();
+    model.update(&mut cx, |updates, cx| updates.set_track(Track::Nightly, cx));
+    cx.run_until_parked();
+    assert_eq!(http.requests(), asked);
 }

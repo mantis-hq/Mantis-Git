@@ -3,6 +3,7 @@
 use crate::cache::{Cacheable, Reader, Writer};
 use crate::ops::{self, Cancel};
 use crate::patch::{self, DiffView, FilePatch};
+use crate::text;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -17,9 +18,61 @@ pub struct FileChange {
     pub additions: u32,
     pub deletions: u32,
     pub binary: bool,
+    /// The bigger of the file's two versions, in bytes. 0 when it wasn't asked.
+    pub size: u64,
 }
 
+/// A file bigger than this has its changes counted and drawn only when asked for. Git's
+/// diff takes time that grows faster than the file does when the two versions differ a
+/// lot, so a huge file can hold everything up for a minute. The limit is high on purpose:
+/// Unity scenes of 35 MB diff in a fraction of a second, and an earlier limit of 8 MB hid
+/// those for nothing. Unit tests use a small one so they needn't write a huge file.
+pub const LARGE_FILE_BYTES: u64 = if cfg!(test) {
+    8 * 1024 * 1024
+} else {
+    256 * 1024 * 1024
+};
+
 impl FileChange {
+    /// Whether its diff is left until the reader asks for it.
+    pub fn large(&self) -> bool {
+        self.size > LARGE_FILE_BYTES
+    }
+
+    /// What ends the file's row: `+n −n`, `binary`, or its size when it is large. Empty while
+    /// the counts are still being read (`counted` is false).
+    pub fn count_label(&self, counted: bool) -> String {
+        if self.large() {
+            text::bytes(self.size)
+        } else if !counted {
+            String::new()
+        } else if self.binary {
+            "binary".to_owned()
+        } else {
+            format!("+{} −{}", self.additions, self.deletions)
+        }
+    }
+
+    /// Whether [`file_diff`] will leave this file's diff unread with `view`.
+    pub fn waits_to_be_asked(&self, view: DiffView) -> bool {
+        self.large() && !view.allow_large
+    }
+
+    /// Why no changes are shown for a large file, and what asking for them costs.
+    pub fn large_sentence(&self) -> String {
+        format!(
+            "This file is {}. Its changes aren't worked out until you ask, because that can \
+             take a long time. Press the button to read them anyway.",
+            text::bytes(self.size)
+        )
+    }
+
+    /// The button that asks for a large file's diff.
+    pub fn large_button(&self) -> String {
+        let (_, name) = text::split_path(&self.path);
+        format!("Show changes in {name} ({})", text::bytes(self.size))
+    }
+
     pub fn status_name(&self) -> &'static str {
         match self.status {
             'A' => "Added",
@@ -37,7 +90,12 @@ pub struct CommitDetails {
     pub oid: Arc<str>,
     /// The message after its subject line.
     pub body: String,
+    /// Whether it has more than one parent, so its files are read against the first.
+    pub merge: bool,
     pub files: Vec<FileChange>,
+    /// Whether each file's `+n −n` has been read. [`read_names`] leaves them out, since
+    /// counting means diffing every file; [`count`] fills them in.
+    pub counted: bool,
 }
 
 impl CommitDetails {
@@ -50,7 +108,9 @@ impl CommitDetails {
 
 impl Cacheable for CommitDetails {
     // 2: merges are read against their first parent. Version 1 stored them with no files.
-    const FORMAT: u32 = 2;
+    // 3: remembers whether it is a merge, so a file's diff needn't ask git again.
+    // 4: remembers each file's size, so a large one can wait to be asked for.
+    const FORMAT: u32 = 4;
 
     fn weight(&self) -> usize {
         let files: usize = self
@@ -64,6 +124,7 @@ impl Cacheable for CommitDetails {
     fn encode(&self, out: &mut Writer) {
         out.str(&self.oid);
         out.str(&self.body);
+        out.bool(self.merge);
         out.len(self.files.len());
         for file in &self.files {
             out.u32(u32::from(file.status));
@@ -72,12 +133,14 @@ impl Cacheable for CommitDetails {
             out.u32(file.additions);
             out.u32(file.deletions);
             out.bool(file.binary);
+            out.u64(file.size);
         }
     }
 
     fn decode(input: &mut Reader) -> Option<Self> {
         let oid = input.str()?.into();
         let body = input.str()?.to_owned();
+        let merge = input.bool()?;
         let count = input.len()?;
         let mut files = Vec::new();
         for _ in 0..count {
@@ -88,20 +151,39 @@ impl Cacheable for CommitDetails {
                 additions: input.u32()?,
                 deletions: input.u32()?,
                 binary: input.bool()?,
+                size: input.u64()?,
             });
         }
-        Some(Self { oid, body, files })
+        // Only counted details are cached.
+        Some(Self {
+            oid,
+            body,
+            merge,
+            files,
+            counted: true,
+        })
     }
 }
 
-/// Reads what a commit changed. A set `cancel` stops it with [`ops::CANCELLED`], which
-/// matters because a commit of thousands of files takes a while to list.
+/// Reads what a commit changed, counts included. A set `cancel` stops it with
+/// [`ops::CANCELLED`], which matters because a commit of thousands of files takes a while
+/// to list.
 pub fn read(repo: &Path, oid: &str, cancel: &Cancel) -> Result<CommitDetails, String> {
-    let body = ops::run_cancellable(
+    count(repo, read_names(repo, oid, cancel)?, cancel)
+}
+
+/// Reads which files a commit changed and how big they are, without diffing any of them,
+/// so it answers at once whatever the files hold. The counts come from [`count`].
+pub fn read_names(repo: &Path, oid: &str, cancel: &Cancel) -> Result<CommitDetails, String> {
+    // One call for both, since they are fields of the same commit: the parents, a NUL, then
+    // the body.
+    let head = ops::run_cancellable(
         repo,
-        &["log", "-1", "--no-show-signature", "--format=%b", oid],
+        &["log", "-1", "--no-show-signature", "--format=%P%x00%b", oid],
         cancel,
     )?;
+    let (parents, body) = head.split_once('\0').unwrap_or((&head, ""));
+    let merge = parents.split_whitespace().count() > 1;
     let output = ops::run_cancellable(
         repo,
         &[
@@ -111,20 +193,111 @@ pub fn read(repo: &Path, oid: &str, cancel: &Cancel) -> Result<CommitDetails, St
             "-z",
             "-M",
             "--raw",
-            "--numstat",
             "--no-commit-id",
         ]
         .into_iter()
-        .chain(first_parent(repo, oid).as_deref())
+        .chain(base(oid, merge).as_deref())
         .chain([oid])
         .collect::<Vec<_>>(),
         cancel,
     )?;
+    let mut files = parse_changes(&output);
+    set_sizes(repo, &output, &mut files, cancel)?;
     Ok(CommitDetails {
         oid: oid.into(),
         body: body.trim().to_owned(),
-        files: parse_changes(&output),
+        merge,
+        files,
+        counted: false,
     })
+}
+
+/// Fills in each file's `+n −n`, which means diffing every file, so it is the slow half of
+/// reading a commit. A [large](FileChange::large) file is left uncounted: git is told to
+/// treat anything over [`LARGE_FILE_BYTES`] as binary for this one call, which skips it.
+pub fn count(
+    repo: &Path,
+    mut details: CommitDetails,
+    cancel: &Cancel,
+) -> Result<CommitDetails, String> {
+    let limit = format!("core.bigFileThreshold={LARGE_FILE_BYTES}");
+    let output = ops::run_cancellable(
+        repo,
+        &[
+            "-c",
+            &limit,
+            "diff-tree",
+            "--root",
+            "-r",
+            "-z",
+            "-M",
+            "--numstat",
+            "--no-commit-id",
+        ]
+        .into_iter()
+        .chain(base(&details.oid, details.merge).as_deref())
+        .chain([&*details.oid])
+        .collect::<Vec<_>>(),
+        cancel,
+    )?;
+    set_counts(&mut details.files, &output);
+    // What git calls binary only because of the limit is large, not binary.
+    for file in details.files.iter_mut().filter(|file| file.large()) {
+        file.binary = false;
+    }
+    details.counted = true;
+    Ok(details)
+}
+
+/// Looks up how big each file is from the blob ids in `--raw` output, in one call.
+fn set_sizes(
+    repo: &Path,
+    raw: &str,
+    files: &mut [FileChange],
+    cancel: &Cancel,
+) -> Result<(), String> {
+    // Per file, its old and new blob. An absent side is all zeros, which has no size.
+    let blobs: Vec<[&str; 2]> = raw
+        .split('\0')
+        .filter_map(|field| field.strip_prefix(':'))
+        .map(|record| {
+            let mut parts = record.split(' ').skip(2);
+            [parts.next().unwrap_or(""), parts.next().unwrap_or("")]
+        })
+        .collect();
+    let mut input = String::new();
+    for blob in blobs.iter().flatten() {
+        // Every line must answer, so an absent side asks about a name that can't exist.
+        input.push_str(if blob.bytes().all(|byte| byte == b'0') {
+            "missing"
+        } else {
+            blob
+        });
+        input.push('\n');
+    }
+    if input.is_empty() || cancel.is_cancelled() {
+        return if cancel.is_cancelled() {
+            Err(ops::CANCELLED.into())
+        } else {
+            Ok(())
+        };
+    }
+    let sizes = ops::run_with_input(
+        repo,
+        &["cat-file", "--batch-check=%(objectsize)"],
+        input.as_bytes(),
+    )?;
+    let mut sizes = sizes.lines().map(|line| line.parse::<u64>().unwrap_or(0));
+    for file in files {
+        let (old, new) = (sizes.next().unwrap_or(0), sizes.next().unwrap_or(0));
+        file.size = old.max(new);
+    }
+    Ok(())
+}
+
+/// What a commit is read against: a merge's first parent, else nothing.
+fn base(oid: &str, merge: bool) -> Option<String> {
+    merge.then(|| format!("{oid}^1"))
 }
 
 /// A merge has no diff of its own, so it is read against its first parent: what it brought
@@ -135,13 +308,12 @@ pub(crate) fn first_parent(repo: &Path, oid: &str) -> Option<String> {
         &["log", "-1", "--no-show-signature", "--format=%P", oid],
     )
     .ok()?;
-    (parents.split_whitespace().count() > 1).then(|| format!("{oid}^1"))
+    base(oid, parents.split_whitespace().count() > 1)
 }
 
 /// Parses `--raw --numstat -z`: every file's raw record, then every file's numstat record.
 pub(crate) fn parse_changes(output: &str) -> Vec<FileChange> {
     let mut files: Vec<FileChange> = Vec::new();
-    let mut numstat_index = 0;
     let mut fields = output.split('\0').filter(|field| !field.is_empty());
 
     while let Some(field) = fields.next() {
@@ -160,9 +332,25 @@ pub(crate) fn parse_changes(output: &str) -> Vec<FileChange> {
                 old_path,
                 ..FileChange::default()
             });
+        }
+    }
+    set_counts(&mut files, output);
+    files
+}
+
+/// Reads the numstat records of `-z` output into the files, in order. Raw records are
+/// skipped, so the output may hold both, or only one of them.
+fn set_counts(files: &mut [FileChange], output: &str) {
+    let mut index = 0;
+    let mut fields = output.split('\0').filter(|field| !field.is_empty());
+    while let Some(field) = fields.next() {
+        if field.starts_with(':') {
+            // A raw record: its path follows, or two for a rename or copy.
+            let status = field.split(' ').nth(4).unwrap_or("M");
+            let paths = if status.starts_with(['R', 'C']) { 2 } else { 1 };
+            fields.nth(paths - 1);
             continue;
         }
-
         let mut stats = field.splitn(3, '\t');
         let (additions, deletions) = (stats.next(), stats.next());
         // A rename's numstat leaves its path empty and gives both paths as fields.
@@ -170,27 +358,30 @@ pub(crate) fn parse_changes(output: &str) -> Vec<FileChange> {
             fields.next();
             fields.next();
         }
-        if let Some(file) = files.get_mut(numstat_index) {
+        if let Some(file) = files.get_mut(index) {
             file.binary = additions == Some("-");
             file.additions = additions.and_then(|n| n.parse().ok()).unwrap_or(0);
             file.deletions = deletions.and_then(|n| n.parse().ok()).unwrap_or(0);
         }
-        numstat_index += 1;
+        index += 1;
     }
-    files
 }
 
 /// Reads one file's diff within a commit.
 pub fn file_diff(
     repo: &Path,
-    oid: &str,
+    commit: &CommitDetails,
     file: &FileChange,
     view: DiffView,
 ) -> Result<FilePatch, String> {
+    if file.waits_to_be_asked(view) {
+        return Ok(FilePatch::empty(&file.path));
+    }
+    let oid = &*commit.oid;
     let command = ["diff-tree", "--root", "-r", "-p", "-M", "--no-commit-id"];
     let mut args = patch::diff_args(&command);
     args.extend(view.args());
-    let base = first_parent(repo, oid);
+    let base = base(oid, commit.merge);
     args.extend(base.as_deref());
     args.extend([oid, "--", &*file.path]);
     // A rename only shows as one if git can see both of its ends.
@@ -211,6 +402,71 @@ mod tests {
         (0..count)
             .map(|index| format!("{word} {index}\n"))
             .collect()
+    }
+
+    #[test]
+    fn names_come_first_and_counts_after() {
+        let repo = Repo::new();
+        repo.write("a.txt", "one\n");
+        repo.write("old.txt", "x\n");
+        repo.commit("first");
+        repo.write("a.txt", "one\ntwo\nthree\n");
+        fs::remove_file(repo.path().join("old.txt")).unwrap();
+        let oid = repo.commit("second");
+
+        let names = read_names(repo.path(), &oid, &Cancel::new()).unwrap();
+        assert!(!names.counted);
+        let paths: Vec<_> = names.files.iter().map(|file| &*file.path).collect();
+        assert_eq!(paths, ["a.txt", "old.txt"]);
+        assert_eq!(names.files[0].additions, 0);
+        assert_eq!(names.files[0].size, 14);
+
+        let counted = count(repo.path(), names, &Cancel::new()).unwrap();
+        assert!(counted.counted);
+        assert_eq!(counted.files[0].additions, 2);
+        assert_eq!(counted.files[1].deletions, 1);
+        assert_eq!(
+            counted,
+            read(repo.path(), &oid, &Cancel::new()).unwrap(),
+            "reading in two steps gives what one read does"
+        );
+    }
+
+    #[test]
+    fn a_large_file_waits_to_be_asked_for() {
+        let repo = Repo::new();
+        repo.write("scene.unity", "a\n");
+        repo.write("small.txt", "a\n");
+        repo.commit("first");
+        let big = "line of text\n".repeat(LARGE_FILE_BYTES as usize / 13 + 10);
+        repo.write("scene.unity", &big);
+        repo.write("small.txt", "b\n");
+        let oid = repo.commit("second");
+
+        let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
+        let (scene, small) = (&details.files[0], &details.files[1]);
+        assert!(scene.large() && !small.large());
+        // Not counted, but not called binary either.
+        assert!(!scene.binary && scene.additions == 0);
+        assert_eq!((small.additions, small.deletions), (1, 1));
+
+        let view = DiffView::default();
+        assert!(scene.waits_to_be_asked(view));
+        let waiting = file_diff(repo.path(), &details, scene, view).unwrap();
+        assert!(waiting.hunks.is_empty());
+
+        let asked = DiffView {
+            allow_large: true,
+            ..view
+        };
+        assert!(!scene.waits_to_be_asked(asked));
+        let patch = file_diff(repo.path(), &details, scene, asked).unwrap();
+        assert!(!patch.hunks.is_empty());
+        assert!(
+            scene
+                .large_button()
+                .starts_with("Show changes in scene.unity (")
+        );
     }
 
     #[test]
@@ -323,10 +579,17 @@ mod tests {
 
         let merge = repo.git(&["rev-parse", "HEAD"]);
         let details = read(repo.path(), &merge, &Cancel::new()).unwrap();
+        assert!(details.merge);
         assert_eq!(details.files.len(), 1);
         assert_eq!(&*details.files[0].path, "b");
         assert_eq!(details.files[0].status, 'A');
-        let patch = file_diff(repo.path(), &merge, &details.files[0], DiffView::default()).unwrap();
+        let patch = file_diff(
+            repo.path(),
+            &details,
+            &details.files[0],
+            DiffView::default(),
+        )
+        .unwrap();
         assert_eq!(patch.path, "b");
         assert_eq!(patch.hunks[0].lines.len(), 1);
     }
@@ -342,7 +605,13 @@ mod tests {
         let oid = repo.commit("both");
 
         let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
-        let patch = file_diff(repo.path(), &oid, &details.files[0], DiffView::default()).unwrap();
+        let patch = file_diff(
+            repo.path(),
+            &details,
+            &details.files[0],
+            DiffView::default(),
+        )
+        .unwrap();
         assert_eq!(patch.path, "a");
         assert_eq!(patch.hunks[0].lines.len(), 2);
     }
@@ -357,7 +626,13 @@ mod tests {
         let oid = repo.commit("rename");
 
         let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
-        let patch = file_diff(repo.path(), &oid, &details.files[0], DiffView::default()).unwrap();
+        let patch = file_diff(
+            repo.path(),
+            &details,
+            &details.files[0],
+            DiffView::default(),
+        )
+        .unwrap();
         assert_eq!(patch.path, "after");
         let added = patch.hunks[0].lines.iter().filter(|l| l.old.is_none());
         assert_eq!(added.count(), 1, "not the whole file");
@@ -369,7 +644,13 @@ mod tests {
         repo.write("a", "one\ntwo\n");
         let oid = repo.commit("root");
         let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
-        let patch = file_diff(repo.path(), &oid, &details.files[0], DiffView::default()).unwrap();
+        let patch = file_diff(
+            repo.path(),
+            &details,
+            &details.files[0],
+            DiffView::default(),
+        )
+        .unwrap();
         assert_eq!(patch.hunks[0].lines.len(), 2);
     }
 
@@ -384,19 +665,19 @@ mod tests {
         let details = read(repo.path(), &oid, &Cancel::new()).unwrap();
         let file = &details.files[0];
 
-        let plain = file_diff(repo.path(), &oid, file, DiffView::default()).unwrap();
+        let plain = file_diff(repo.path(), &details, file, DiffView::default()).unwrap();
         assert!(plain.hunks.len() > 1);
         let whole = DiffView {
             whole_file: true,
             ..DiffView::default()
         };
-        let whole = file_diff(repo.path(), &oid, file, whole).unwrap();
+        let whole = file_diff(repo.path(), &details, file, whole).unwrap();
         assert_eq!(whole.hunks.len(), 1);
         let quiet = DiffView {
             ignore_whitespace: true,
             ..DiffView::default()
         };
-        let quiet = file_diff(repo.path(), &oid, file, quiet).unwrap();
+        let quiet = file_diff(repo.path(), &details, file, quiet).unwrap();
         assert_eq!(
             quiet.hunks.len(),
             1,

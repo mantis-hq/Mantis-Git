@@ -5,8 +5,8 @@
 
 use super::command::Weight;
 use crate::history::refs::Refs;
-use crate::repo::{branch, remote, submodule};
-use std::path::Path;
+use crate::repo::{branch, clone, remote, submodule};
+use std::path::{Path, PathBuf};
 
 /// A form, and what it applies to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,6 +27,9 @@ pub enum Form {
         branch: String,
         existing: Vec<String>,
     },
+    /// Clones a repository from an address into a folder, which needs no open
+    /// repository. It starts with `address` and `into` typed in.
+    Clone { address: String, into: String },
 }
 
 /// One input of a form.
@@ -49,6 +52,17 @@ const REMOTE_FIELDS: &[Field] = &[
     Field {
         label: "Address",
         placeholder: "https://example.com/you/repo.git",
+    },
+];
+
+const CLONE_FIELDS: &[Field] = &[
+    Field {
+        label: "Address",
+        placeholder: "https://example.com/you/repo.git",
+    },
+    Field {
+        label: "Clone into",
+        placeholder: "A folder to put the repository in",
     },
 ];
 
@@ -112,6 +126,7 @@ impl Form {
                 original: Some(path),
             } => format!("Edit the submodule {path}"),
             Self::Upstream { branch, .. } => format!("Set the upstream of {branch}"),
+            Self::Clone { .. } => "Clone a repository".to_owned(),
         }
     }
 
@@ -123,6 +138,7 @@ impl Form {
             Self::Submodule { original: None } => SUBMODULE_ADD_FIELDS,
             Self::Submodule { original: Some(_) } => SUBMODULE_EDIT_FIELDS,
             Self::Upstream { .. } => UPSTREAM_FIELDS,
+            Self::Clone { .. } => CLONE_FIELDS,
         }
     }
 
@@ -156,6 +172,7 @@ impl Form {
                 let remote = same.or(remotes.first()).cloned().unwrap_or_default();
                 return vec![remote, branch.clone()];
             }
+            Self::Clone { address, into } => return vec![address.clone(), into.clone()],
             _ => {}
         }
         vec![String::new(); self.fields().len()]
@@ -237,6 +254,10 @@ impl Form {
                 }
                 _ => "Set upstream".to_owned(),
             },
+            Self::Clone { .. } => match clone::name_of(value(values, 0)) {
+                Some(name) => format!("Clone {name}"),
+                None => "Clone".to_owned(),
+            },
         }
     }
 
@@ -273,8 +294,16 @@ impl Form {
                     None
                 }
             }
+            Self::Clone { .. } => return clone::problem(value(values, 0), value(values, 1)),
         };
         problem.map(str::to_owned)
+    }
+
+    /// The folder a clone will make, or `None` for any other form.
+    pub fn cloned_to(&self, values: &[String]) -> Option<PathBuf> {
+        matches!(self, Self::Clone { .. })
+            .then(|| clone::destination(value(values, 0), value(values, 1)))
+            .flatten()
     }
 
     /// What the app is doing while the form's command runs.
@@ -286,6 +315,7 @@ impl Form {
             Self::Submodule { original: None } => "Adding the submodule",
             Self::Submodule { original: Some(_) } => "Saving the submodule",
             Self::Upstream { .. } => "Setting the upstream",
+            Self::Clone { .. } => "Cloning",
         }
     }
 
@@ -313,6 +343,10 @@ impl Form {
             ),
             Self::Upstream { branch, .. } => {
                 branch::set_upstream(repo, branch, value(values, 0), value(values, 1))
+            }
+            Self::Clone { .. } => {
+                let target = clone::run(value(values, 0), value(values, 1))?;
+                Ok(Some(format!("Cloned into {}.", target.display())))
             }
         }
     }
@@ -526,6 +560,25 @@ mod tests {
             edit.initial_values(&refs),
             values(&["https://example.com/lib.git", "vendor/lib"]),
             "an edit starts from the submodule as it is"
+        );
+    }
+
+    #[test]
+    fn a_clone_form_names_the_folder_it_makes_and_where() {
+        let form = Form::Clone {
+            address: "git@github.com:octo/cat.git".into(),
+            into: "/code".into(),
+        };
+        let start = form.initial_values(&Refs::default());
+        assert_eq!(start, values(&["git@github.com:octo/cat.git", "/code"]));
+        assert_eq!(form.action(&start), "Clone cat");
+        assert_eq!(form.action(&values(&["", "/code"])), "Clone");
+        assert_eq!(form.cloned_to(&start), Some("/code/cat".into()));
+        assert_eq!(new_branch().cloned_to(&start), None);
+        assert!(
+            form.problem(&values(&[" ", "/code"]))
+                .unwrap()
+                .contains("Paste")
         );
     }
 

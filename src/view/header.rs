@@ -62,6 +62,15 @@ impl GraphView {
             .when_some(action.filter(|_| has_repo), |bar, action| {
                 bar.child(self.render_action(action, cx))
             })
+            .when(has_repo, |bar| {
+                bar.child(
+                    Button::new("search")
+                        .ghost()
+                        .label("Search")
+                        .tooltip("Find commits by message, author, hash or file (Ctrl F)")
+                        .on_click(cx.listener(|this, _, window, cx| this.open_search(window, cx))),
+                )
+            })
             .child(
                 Button::new("settings")
                     .ghost()

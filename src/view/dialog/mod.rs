@@ -64,7 +64,8 @@ impl GraphView {
         }
     }
 
-    /// Closes the menu if one is open, otherwise the diff or the resolver.
+    /// Closes the menu if one is open, otherwise the diff or the resolver, otherwise the
+    /// search.
     fn dismiss(&mut self, cx: &mut Context<Self>) {
         if self.menu.is_some() {
             self.close_menu(cx);
@@ -72,6 +73,8 @@ impl GraphView {
             self.close_diff(cx);
         } else if self.conflict.open {
             self.close_resolver(cx);
+        } else if self.search.open {
+            self.close_search(cx);
         }
     }
 

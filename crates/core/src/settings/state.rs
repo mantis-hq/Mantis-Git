@@ -7,6 +7,7 @@
 //! missing or broken file is the same as a fresh install.
 
 use crate::cache::{DEFAULT_DISK_MB, DiskSettings};
+use crate::install::update::Track;
 use crate::text::count;
 use crate::tree::FileView;
 use std::ffi::OsString;
@@ -39,6 +40,10 @@ pub struct AppState {
     pub welcome_seen: bool,
     /// Whether a portable copy looks for a newer release when it starts.
     pub check_updates: bool,
+    /// Whether updates are full releases or the nightly pre-release.
+    pub update_track: Track,
+    /// The folder the last repository was cloned into, which the clone form starts with.
+    pub clone_dir: Option<PathBuf>,
 }
 
 /// Whether the dock was open, how many terminals it had and which of its tabs was in
@@ -79,6 +84,8 @@ impl Default for AppState {
             dock: DockLayout::default(),
             welcome_seen: false,
             check_updates: true,
+            update_track: Track::default(),
+            clone_dir: None,
         }
     }
 }
@@ -142,6 +149,10 @@ impl AppState {
                 "files_view" => state.files_view = FileView::from_key(value),
                 "welcome_seen" => state.welcome_seen = value.trim() == "true",
                 "check_updates" => state.check_updates = value.trim() != "false",
+                "update_track" => state.update_track = Track::from_key(value),
+                "clone_dir" if !value.trim().is_empty() => {
+                    state.clone_dir = Some(PathBuf::from(value.trim()));
+                }
                 "dock_open" => state.dock.open = value.trim() == "true",
                 "dock_terminals" => state.dock.terminals = value.trim().parse().unwrap_or(0),
                 "dock_tab" => state.dock.tab = value.trim().parse().unwrap_or(0),
@@ -164,6 +175,12 @@ impl AppState {
         text.push_str(&format!("files_view={}\n", self.files_view.key()));
         text.push_str(&format!("welcome_seen={}\n", self.welcome_seen));
         text.push_str(&format!("check_updates={}\n", self.check_updates));
+        text.push_str(&format!("update_track={}\n", self.update_track.key()));
+        if let Some(dir) = self.clone_dir.as_deref().and_then(Path::to_str)
+            && !dir.contains('\n')
+        {
+            text.push_str(&format!("clone_dir={dir}\n"));
+        }
         text.push_str(&format!("dock_open={}\n", self.dock.open));
         text.push_str(&format!("dock_terminals={}\n", self.dock.terminals));
         text.push_str(&format!("dock_tab={}\n", self.dock.tab));
@@ -422,6 +439,8 @@ mod tests {
             },
             welcome_seen: true,
             check_updates: false,
+            update_track: Track::Nightly,
+            clone_dir: Some("/work/clones".into()),
         };
         state.save(&file).unwrap();
         assert_eq!(AppState::load(&file), state);
@@ -441,6 +460,19 @@ mod tests {
         assert!(!AppState::parse("welcome_seen=yes").welcome_seen);
         assert!(!AppState::parse("check_updates=false").check_updates);
         assert!(AppState::parse("check_updates=maybe").check_updates);
+    }
+
+    #[test]
+    fn updates_follow_full_releases_unless_nightly_is_chosen() {
+        assert_eq!(AppState::parse("").update_track, Track::Stable);
+        assert_eq!(
+            AppState::parse("update_track=nightly").update_track,
+            Track::Nightly
+        );
+        assert_eq!(
+            AppState::parse("update_track=garbage").update_track,
+            Track::Stable
+        );
     }
 
     #[test]

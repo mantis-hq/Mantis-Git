@@ -8,6 +8,7 @@ use super::parts::{loading, title};
 use super::{GraphView, Status};
 use crate::theme::tokens;
 use chrono::{Local, TimeZone};
+use gitclient_core::cache::keys::Caches;
 use gitclient_core::commit::actions;
 use gitclient_core::commit::details::{self, CommitDetails};
 use gitclient_core::history::{Commit, Entry, split_subject};
@@ -20,6 +21,7 @@ use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 const WIDTH: Pixels = px(380.);
@@ -193,23 +195,81 @@ impl GraphView {
         let cancel = Cancel::new();
         self.inspector.loading = Some(cancel.clone());
         let finished = cancel.clone();
+        let (repo_again, caches_again, fingerprint_again) =
+            (repo.clone(), caches.clone(), fingerprint.clone());
         Self::spawn_blocking(
-            move || match fingerprint {
+            move || {
                 // The disk is read here too, so a commit seen in an earlier run is quick.
-                Some(fingerprint) => caches.read_details(&repo, &fingerprint, &wanted, &cancel),
-                None => details::read(&repo, &wanted, &cancel).map(Arc::new),
+                let cached = fingerprint
+                    .as_deref()
+                    .and_then(|fingerprint| caches.cached_details(fingerprint, &wanted));
+                match cached {
+                    Some(details) => Ok(details),
+                    // Only the names: counting diffs every file, which can take long.
+                    None => details::read_names(&repo, &wanted, &cancel).map(Arc::new),
+                }
             },
             move |this, details, cx| {
                 // Only the newest read has anything to say: an older one was cancelled.
                 if finished.is_cancelled() || this.selected_oid.as_ref() != Some(&oid) {
                     return;
                 }
-                this.inspector.loading = None;
-                this.inspector.details = details.ok();
+                let names = details.ok();
+                let counting = names.clone().filter(|names| !names.counted);
+                if counting.is_none() {
+                    this.inspector.loading = None;
+                }
+                this.inspector.details = names;
                 this.inspector
                     .files_scroll
                     .scroll_to_item(0, ScrollStrategy::Top);
                 this.details_loaded(cx);
+                cx.notify();
+                if let Some(names) = counting {
+                    this.count_files(
+                        names,
+                        repo_again,
+                        caches_again,
+                        fingerprint_again,
+                        finished,
+                        cx,
+                    );
+                }
+            },
+            cx,
+        );
+    }
+
+    /// Reads the `+n −n` of a commit's files, which are on show without them by now, and
+    /// swaps the counted details in. Stops with the selection, like the read before it.
+    fn count_files(
+        &mut self,
+        names: Arc<CommitDetails>,
+        repo: PathBuf,
+        caches: Caches,
+        fingerprint: Option<Arc<str>>,
+        cancel: Cancel,
+        cx: &mut Context<Self>,
+    ) {
+        let oid = names.oid.clone();
+        let finished = cancel.clone();
+        Self::spawn_blocking(
+            move || {
+                let counted = details::count(&repo, (*names).clone(), &cancel)?;
+                Ok::<_, String>(match fingerprint {
+                    Some(fingerprint) => caches.store_details(&fingerprint, counted),
+                    None => Arc::new(counted),
+                })
+            },
+            move |this, counted, cx| {
+                if finished.is_cancelled() || this.selected_oid.as_deref() != Some(&*oid) {
+                    return;
+                }
+                this.inspector.loading = None;
+                // The files are the same and in the same order, so the open diff stays.
+                if let Ok(counted) = counted {
+                    this.inspector.details = Some(counted);
+                }
                 cx.notify();
             },
             cx,
@@ -346,7 +406,9 @@ impl GraphView {
         let details = CommitDetails {
             oid: WORKING_ID.into(),
             body: String::new(),
+            merge: false,
             files: changes.all().map(WorkingFile::change).collect(),
+            counted: true,
         };
         self.inspector.working = Some(Working {
             changes,

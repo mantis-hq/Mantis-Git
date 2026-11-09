@@ -122,26 +122,27 @@ fn copy(text: &str, what: &'static str) -> Command {
     }
 }
 
-/// The line that checks out a branch, remote branch or tag, or says it already is.
-fn check_out_ref_line(current: Option<&str>, kind: RefKind, name: &str) -> Line {
+/// The line that checks out a branch, remote branch or tag. The checked-out branch gets
+/// none, since the menu's own heading already shows it.
+fn check_out_ref_line(current: Option<&str>, kind: RefKind, name: &str) -> Option<Line> {
     if kind == RefKind::Branch && current == Some(name) {
-        return Line::unavailable(format!("{name} is already checked out"));
+        return None;
     }
     let label = match kind {
         RefKind::Remote => format!("Check out {name} as a local branch"),
         RefKind::Tag => format!("Check out {name} without a branch"),
         _ => format!("Check out {name}"),
     };
-    Line::item(
+    Some(Line::item(
         label,
         Command::CheckOutRef {
             kind,
             name: name.to_owned(),
         },
-    )
+    ))
 }
 
-/// Pull and push for a local branch that isn't checked out, against the remote branch it
+/// Pull and push for a local branch, checked out or not, against the remote branch it
 /// follows. A branch that follows nothing gets neither: "Set upstream" is how it starts.
 fn sync_lines(refs: &Refs, name: &str) -> Vec<Line> {
     let Some(branch) = refs.branches.iter().find(|b| b.name == name) else {
@@ -159,7 +160,8 @@ fn sync_lines(refs: &Refs, name: &str) -> Vec<Line> {
     );
     let push = match branch.upstream {
         None => Line::unavailable(format!("{remote} is gone, so there is nothing to push to")),
-        Some((0, _)) => Line::unavailable(format!("{name} has no commits {remote} lacks")),
+        // Nothing to push: say nothing rather than list a line that can't be used.
+        Some((0, _)) => return vec![pull],
         Some((ahead, _)) => Line::item(
             format!("Push {} to {remote}", crate::text::count(ahead, "commit")),
             Command::PushBranch {
@@ -177,7 +179,7 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
     let is_current = kind == RefKind::Branch && current == Some(name.as_str());
     let mut lines = vec![Line::Heading(name.clone())];
 
-    lines.push(check_out_ref_line(current, kind, &name));
+    lines.extend(check_out_ref_line(current, kind, &name));
 
     if let Some(current) = current.filter(|_| !is_current) {
         lines.push(Line::item(
@@ -197,7 +199,7 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
         }
     }
 
-    if kind == RefKind::Branch && !is_current {
+    if kind == RefKind::Branch {
         lines.extend(sync_lines(refs, &name));
     }
 
@@ -636,7 +638,7 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
     let current = refs.head_branch.as_deref();
     for chip in refs.chips_at(&oid) {
         if chip.label.kind != RefKind::DetachedHead {
-            lines.push(check_out_ref_line(
+            lines.extend(check_out_ref_line(
                 current,
                 chip.label.kind,
                 &chip.label.name,
@@ -1045,7 +1047,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tracking_branch_that_is_not_checked_out_offers_pull_and_push() {
+    fn a_tracking_branch_offers_pull_and_push() {
         let mut refs = refs();
         let target = Dragged {
             kind: RefKind::Branch,
@@ -1070,7 +1072,7 @@ mod tests {
             "{found:?}"
         );
 
-        // Level: nothing to push, and the checked-out branch gets neither line.
+        // Level: nothing to push.
         refs.branches[1].upstream = Some((0, 0));
         assert!(
             ref_menu(&refs, &target)
@@ -1082,11 +1084,12 @@ mod tests {
             kind: RefKind::Branch,
             name: "main".into(),
         };
-        assert!(
-            !labels(&ref_menu(&refs, &main))
-                .iter()
-                .any(|l| l.starts_with("Pull"))
-        );
+        // The checked-out branch gets the same lines.
+        refs.branches[0].upstream = Some((1, 0));
+        let found = ref_menu(&refs, &main);
+        let found = labels(&found);
+        assert!(found.contains(&"Pull origin/main into main"), "{found:?}");
+        assert!(found.contains(&"Push 1 commit to origin/main"), "{found:?}");
     }
 
     #[test]
@@ -1321,13 +1324,9 @@ mod tests {
         let lines = ref_menu(&refs(), &target(RefKind::Branch, "main"));
         assert_eq!(
             labels(&lines),
-            [
-                "main is already checked out",
-                "New branch from main",
-                "Set upstream of main"
-            ]
+            ["New branch from main", "Set upstream of main"]
         );
-        assert!(lines[1].command().is_none());
+        assert!(!labels(&lines).iter().any(|l| l.starts_with("Check out")));
     }
 
     #[test]
@@ -1362,7 +1361,6 @@ mod tests {
         assert_eq!(
             labels(&on_head),
             [
-                "main is already checked out",
                 "Check out aaaaaaa without a branch",
                 "Revert",
                 "New branch from aaaaaaa",

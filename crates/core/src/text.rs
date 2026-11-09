@@ -24,6 +24,34 @@ pub fn short_oid(oid: &str) -> &str {
     &oid[..oid.len().min(7)]
 }
 
+/// A number with its thousands set apart by a space: "9 549 076".
+pub fn group_digits(number: usize) -> String {
+    let digits = number.to_string();
+    let mut out = String::new();
+    for (at, digit) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at) % 3 == 0 {
+            out.push(' ');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// A size for people: "800 B", "12 KB", "64 MB".
+pub fn bytes(size: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let (mut value, mut unit) = (size as f64, 0);
+    while value >= 1024. && unit < UNITS.len() - 1 {
+        value /= 1024.;
+        unit += 1;
+    }
+    if unit == 0 || value >= 10. {
+        format!("{value:.0} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
 /// The folder and file name of a path, to draw the folder quieter.
 pub fn split_path(path: &str) -> (&str, &str) {
     let split = path.rfind('/').map_or(0, |slash| slash + 1);
@@ -33,6 +61,14 @@ pub fn split_path(path: &str) -> (&str, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn digits_are_grouped_in_threes() {
+        assert_eq!(group_digits(0), "0");
+        assert_eq!(group_digits(999), "999");
+        assert_eq!(group_digits(1000), "1 000");
+        assert_eq!(group_digits(9_549_076), "9 549 076");
+    }
 
     #[test]
     fn nouns_are_plural_except_for_one() {

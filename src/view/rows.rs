@@ -323,7 +323,7 @@ impl GraphView {
 }
 
 /// When a commit happened, as short as it can be said.
-fn format_when(commit: &Commit, now: i64) -> String {
+pub(super) fn format_when(commit: &Commit, now: i64) -> String {
     let Some(date) = Local.timestamp_opt(commit.time, 0).single() else {
         return String::new();
     };

@@ -89,6 +89,7 @@ pub fn list(repo: &Path, workdir: &Path) -> Vec<Worktree> {
     let mut found = parse(&listing);
     let here = canonical(workdir);
     for worktree in &mut found {
+        worktree.path = super::wsl::from_git(repo, &worktree.path.to_string_lossy());
         worktree.is_current = canonical(&worktree.path) == here;
     }
     found
@@ -97,14 +98,18 @@ pub fn list(repo: &Path, workdir: &Path) -> Vec<Worktree> {
 /// Takes a working tree away. Git refuses one with changes in it or one that is locked,
 /// and says so, so this never forces.
 pub fn remove(repo: &Path, path: &Path) -> Result<Option<String>, String> {
-    let path = path.to_string_lossy();
+    let path = super::wsl::for_git(repo, path);
     ops::run(repo, &["worktree", "remove", &path])?;
     Ok(Some(format!("Removed the worktree at {path}.")))
 }
 
 /// What removing `worktree` does, and how to bring it back.
 pub fn remove_warning(worktree: &Worktree) -> String {
-    let path = worktree.path.display();
+    // The undo is typed in a terminal, which in WSL is the distribution's.
+    let path = match super::wsl::locate(&worktree.path) {
+        Some(location) => location.linux_path,
+        None => worktree.path.display().to_string(),
+    };
     let undo = match (&worktree.branch, worktree.head.as_str()) {
         (Some(branch), _) => format!("`git worktree add {path} {branch}`"),
         (None, head) if !head.is_empty() => format!("`git worktree add --detach {path} {head}`"),
@@ -122,6 +127,25 @@ pub fn remove_warning(worktree: &Worktree) -> String {
 
 fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_owned())
+}
+
+#[cfg(test)]
+mod wsl_tests {
+    use super::*;
+
+    #[test]
+    fn the_undo_for_a_wsl_worktree_names_the_distributions_path() {
+        let worktree = Worktree {
+            path: PathBuf::from(r"\\wsl.localhost\Ubuntu\home\ada\wt"),
+            branch: Some("feat/x".into()),
+            head: String::new(),
+            is_main: false,
+            is_current: false,
+            locked: false,
+            missing: false,
+        };
+        assert!(remove_warning(&worktree).contains("`git worktree add /home/ada/wt feat/x`"));
+    }
 }
 
 #[cfg(test)]

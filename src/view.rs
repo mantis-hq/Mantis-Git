@@ -11,6 +11,7 @@ mod menu;
 mod notice;
 mod parts;
 mod rows;
+mod search;
 mod settings;
 mod sidebar;
 mod updates;
@@ -27,15 +28,18 @@ use gitclient_core::cache::keys::{self, Caches};
 use gitclient_core::history::refs::Refs;
 use gitclient_core::history::selection::Selection;
 use gitclient_core::history::{self, Entry, LoadEvent};
+use gitclient_core::repo::commit_graph;
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use notice::Notice;
+use std::collections::HashSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 const PAGE_ROWS: usize = 20;
 
@@ -58,7 +62,8 @@ actions!(
         NextField,
         PreviousField,
         PreviousConflict,
-        NextConflict
+        NextConflict,
+        FindCommits
     ]
 );
 
@@ -67,10 +72,10 @@ pub fn bind_keys(cx: &mut App) {
     settings::bind_keys(cx);
     dock::bind_keys(cx);
     // KeyBinding::new has no OS to resolve a `secondary-` modifier against, and panics.
-    let (refresh, sidebar) = if cfg!(target_os = "macos") {
-        ("cmd-r", "cmd-b")
+    let (refresh, sidebar, find) = if cfg!(target_os = "macos") {
+        ("cmd-r", "cmd-b", "cmd-f")
     } else {
-        ("ctrl-r", "ctrl-b")
+        ("ctrl-r", "ctrl-b", "ctrl-f")
     };
     let context = Some(KEY_CONTEXT);
     // Letter keys would swallow typing, so they only act while no text input has focus.
@@ -87,6 +92,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("f5", Refresh, context),
         KeyBinding::new(refresh, Refresh, context),
         KeyBinding::new(sidebar, ToggleSidebar, context),
+        KeyBinding::new(find, FindCommits, context),
         KeyBinding::new("escape", CloseMenu, context),
         KeyBinding::new("enter", ActivateMenu, context),
         KeyBinding::new("space", ToggleChoice, letters),
@@ -151,6 +157,12 @@ pub struct GraphView {
     /// The running git operation, in words. Only one runs at a time.
     busy: Option<SharedString>,
     notice: Option<Notice>,
+    /// Why counting the branches was slow, when a missing commit graph is the reason.
+    graph_hint: Option<SharedString>,
+    /// Repositories whose hint was dismissed, so it isn't shown again this session.
+    graph_hint_dismissed: HashSet<PathBuf>,
+    /// When the load under way began, to tell how long its history took to arrive.
+    load_started: Option<Instant>,
     /// A rewrite waiting in the band under the header for a second click.
     confirm: Option<Confirm>,
     /// The popup over the window: a question before a deletion, or a form.
@@ -158,6 +170,7 @@ pub struct GraphView {
     /// Whether the key now down is a repeat of one still held.
     key_held: bool,
     sidebar: sidebar::State,
+    search: search::State,
     inspector: inspector::State,
     diff: diff::State,
     commit: inspector::commit_form::State,
@@ -213,10 +226,14 @@ impl GraphView {
             load_task: None,
             busy: None,
             notice: None,
+            graph_hint: None,
+            graph_hint_dismissed: HashSet::new(),
+            load_started: None,
             confirm: None,
             dialog: None,
             key_held: false,
             sidebar: sidebar::State::new(),
+            search: Default::default(),
             inspector: Default::default(),
             diff: Default::default(),
             commit: Default::default(),
@@ -281,6 +298,8 @@ impl GraphView {
             return;
         };
         self.status = Status::Loading;
+        self.load_started = Some(Instant::now());
+        self.graph_hint = None;
         self.pending_refs = None;
         self.more = None;
         self.more_task = None;
@@ -371,6 +390,11 @@ impl GraphView {
         match event {
             LoadEvent::Refs(refs) => self.pending_refs = Some(refs),
             LoadEvent::Batch(batch) => {
+                // The first batch is how long the history took to start arriving, which is
+                // where git sorts everything and a commit graph saves the most.
+                if let Some(started) = self.load_started.take() {
+                    self.explain_slowness("Loading the history", started.elapsed(), cx);
+                }
                 self.commit_pending_refs();
                 if let Some(oid) = &self.selected_oid
                     && self.selected.is_none()
@@ -447,11 +471,71 @@ impl GraphView {
         self.refresh_spotlight();
         self.probe_forge(cx);
         self.check_paused_operation(cx);
+        self.load_branch_counts(cx);
         cx.notify();
     }
 
+    /// Counts how far each branch is from the default one, off the UI thread and after the
+    /// refs are on screen, because without a commit-graph that takes seconds in a big
+    /// repository. The sidebar shows the counts when they arrive.
+    fn load_branch_counts(&mut self, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        if !self.refs.needs_counts() {
+            return;
+        }
+        let refs = self.refs.clone();
+        let asked = refs.fingerprint().to_owned();
+        Self::spawn_blocking(
+            move || {
+                let started = Instant::now();
+                let counts = history::refs::read_counts(&repo, &refs);
+                (counts, started.elapsed())
+            },
+            move |this, (counts, took), cx| {
+                // Refs that moved meanwhile are being counted again by their own load.
+                if this.refs.fingerprint() == asked {
+                    Arc::make_mut(&mut this.refs).set_counts(&counts);
+                    this.explain_slowness("Counting the branches", took, cx);
+                    cx.notify();
+                }
+            },
+            cx,
+        );
+    }
+
+    /// Says why something took `took`, when that was long and a missing commit graph is the
+    /// reason, with the button that writes one. A quick step is not worth a word, and only
+    /// a slow one is worth the check, which reads settings and a folder.
+    fn explain_slowness(&mut self, what: &'static str, took: Duration, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        if took < commit_graph::SLOW_AFTER
+            || self.graph_hint.is_some()
+            || self.graph_hint_dismissed.contains(&repo)
+        {
+            return;
+        }
+        let asked = repo.clone();
+        Self::spawn_blocking(
+            move || commit_graph::is_missing(&repo),
+            move |this, missing, cx| {
+                if missing && this.repo.as_deref() == Some(asked.as_path()) {
+                    this.graph_hint = Some(commit_graph::slow_sentence(what, took).into());
+                    cx.notify();
+                }
+            },
+            cx,
+        );
+    }
+
     fn commit_pending_refs(&mut self) {
-        if let Some(refs) = self.pending_refs.take() {
+        if let Some(mut refs) = self.pending_refs.take() {
+            // Counting against the default branch is slow in a big repository, so a reload
+            // keeps the counts it had rather than showing none while it asks again.
+            Arc::make_mut(&mut refs).keep_counts_from(&self.refs);
             self.refs = refs;
             self.entries.clear();
             self.max_columns = 0;
@@ -603,6 +687,15 @@ impl GraphView {
                         .on_click(cx.listener(|this, _, _, cx| this.prompt_for_repository(cx))),
                 )
             })
+            .when(show_open, |message| {
+                message.child(
+                    Button::new("clone-repository")
+                        .ghost()
+                        .label("Clone from an address")
+                        .tooltip("Paste a link to a repository to download it (Ctrl Shift O)")
+                        .on_click(cx.listener(|this, _, _, cx| this.open_clone_form(cx))),
+                )
+            })
     }
 }
 
@@ -625,23 +718,33 @@ impl GraphView {
             .min_h_0()
             .child(match diff {
                 Some(diff) => diff,
+                // The search bar sits over the graph, and what it finds takes the graph's place.
                 None => div()
-                    .relative()
+                    .v_flex()
                     .flex_1()
                     .min_h_0()
-                    .child(
-                        uniform_list(
-                            "commits",
-                            self.entries.len(),
-                            cx.processor(|this, range: Range<usize>, _, cx| {
-                                this.load_more_if_near_the_end(range.end, cx);
-                                this.render_rows(range, cx)
-                            }),
-                        )
-                        .track_scroll(&self.scroll)
-                        .size_full(),
-                    )
-                    .vertical_scrollbar(&self.scroll)
+                    .children(self.render_search_bar(cx))
+                    .child(match self.render_search_results(cx) {
+                        Some(results) => results,
+                        None => div()
+                            .relative()
+                            .flex_1()
+                            .min_h_0()
+                            .child(
+                                uniform_list(
+                                    "commits",
+                                    self.entries.len(),
+                                    cx.processor(|this, range: Range<usize>, _, cx| {
+                                        this.load_more_if_near_the_end(range.end, cx);
+                                        this.render_rows(range, cx)
+                                    }),
+                                )
+                                .track_scroll(&self.scroll)
+                                .size_full(),
+                            )
+                            .vertical_scrollbar(&self.scroll)
+                            .into_any_element(),
+                    })
                     .into_any_element(),
             });
         // The graph keeps at least this much, so no edge can be dragged over it.
@@ -687,6 +790,7 @@ impl Render for GraphView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sidebar.window_is_wide = window.viewport_size().width >= sidebar::WIDE_WINDOW;
         self.ensure_commit_inputs(window, cx);
+        self.refocus_after_search(window, cx);
         self.clear_form_after_commit(window, cx);
         let theme = cx.theme();
         let (background, foreground) = (theme.background, theme.foreground);
@@ -696,6 +800,7 @@ impl Render for GraphView {
         let bar = Some(self.render_toolbar(cx).into_any_element());
         let content = self.render_graph(cx);
         let notice = self.render_notice(cx);
+        let graph_hint = self.render_graph_hint(cx);
         let menu = self.render_menu(cx);
         let dialog = self.render_dialog(window, cx);
 
@@ -727,6 +832,9 @@ impl Render for GraphView {
             }))
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.reload(cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| this.toggle_sidebar(cx)))
+            .on_action(
+                cx.listener(|this, _: &FindCommits, window, cx| this.open_search(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &settings::OpenSettings, _, cx| {
                 settings::open(this.repo.clone(), cx)
             }))
@@ -751,6 +859,7 @@ impl Render for GraphView {
             .on_action(cx.listener(|this, _: &NextConflict, _, cx| this.go_to_conflict(true, cx)))
             .children(bar)
             .children(notice)
+            .children(graph_hint)
             .child(content)
             .children(menu)
             .children(dialog)

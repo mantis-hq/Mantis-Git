@@ -84,7 +84,7 @@ struct Shared {
 pub struct Terminal {
     shared: Arc<Mutex<Shared>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
-    writer: Mutex<Box<dyn Write + Send>>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     changes: async_channel::Receiver<()>,
 }
@@ -102,13 +102,24 @@ impl Terminal {
             .openpty(pty_size(size))
             .map_err(|error| format!("could not open a terminal: {error}"))?;
 
-        let mut command = CommandBuilder::new(shell());
+        // A repository inside WSL gets the distribution's own shell, started in its folder.
+        let wsl = crate::repo::wsl::locate(directory);
+        let mut command = match &wsl {
+            Some(location) => {
+                let mut command = CommandBuilder::new(crate::repo::wsl::PROGRAM);
+                command.args(["-d", &location.distro, "--cd", &location.linux_path]);
+                command
+            }
+            None => CommandBuilder::new(shell()),
+        };
         if cfg!(target_os = "macos") {
             // Terminal apps on macOS start login shells. Without that, an app opened from
             // the Dock misses the PATH that the user's profile builds, and with it git.
             command.arg("-l");
         }
-        command.cwd(directory);
+        if wsl.is_none() {
+            command.cwd(plain_path(directory));
+        }
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         // Launched from inside a git hook these would point at some other repository.
@@ -127,6 +138,7 @@ impl Terminal {
             .take_writer()
             .map_err(|error| format!("could not write to the terminal: {error}"))?;
 
+        let writer = Arc::new(Mutex::new(writer));
         let (rows, cols) = size.clamped();
         let shared = Arc::new(Mutex::new(Shared {
             parser: vt100::Parser::new(rows, cols, SCROLLBACK),
@@ -135,7 +147,7 @@ impl Terminal {
         let child = Arc::new(Mutex::new(child));
         let (wake, changes) = async_channel::bounded(1);
 
-        let (output, process) = (shared.clone(), child.clone());
+        let (output, process, replies) = (shared.clone(), child.clone(), writer.clone());
         thread::Builder::new()
             .name("terminal".into())
             .spawn(move || {
@@ -146,6 +158,12 @@ impl Terminal {
                         break;
                     }
                     lock(&output).parser.process(&buffer[..read]);
+                    if cfg!(windows) && asks_for_cursor(&buffer[..read]) {
+                        // ConPTY asks where the cursor is when it starts and prints nothing
+                        // until it is told, which leaves the terminal blank.
+                        let mut writer = lock(&replies);
+                        let _ = writer.write_all(b"\x1b[1;1R").and_then(|()| writer.flush());
+                    }
                     let _ = wake.try_send(());
                 }
                 let status = lock(&process).wait();
@@ -161,7 +179,7 @@ impl Terminal {
         Ok(Self {
             shared,
             master: Mutex::new(pair.master),
-            writer: Mutex::new(writer),
+            writer,
             child,
             changes,
         })
@@ -302,6 +320,21 @@ fn same_look(a: &Run, b: &Run) -> bool {
         b.underline,
         b.inverse,
     )
+}
+
+/// Whether `output` holds a cursor position request (`ESC [ 6 n`).
+fn asks_for_cursor(output: &[u8]) -> bool {
+    output.windows(4).any(|window| window == b"\x1b[6n")
+}
+
+/// `path` without the `\\?\` prefix Windows gives canonical paths. cmd.exe and PowerShell
+/// don't take it as a working directory and start somewhere else, or not at all.
+fn plain_path(path: &Path) -> std::path::PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with("UNC") => rest.into(),
+        _ => path.to_path_buf(),
+    }
 }
 
 fn pty_size(size: Size) -> PtySize {
@@ -464,6 +497,18 @@ mod tests {
 
     fn encoded(key: Key<'_>) -> Vec<u8> {
         encode_key(&key, false).expect("the key is sent")
+    }
+
+    #[test]
+    fn a_cursor_position_request_is_found_and_verbatim_paths_are_made_plain() {
+        assert!(asks_for_cursor(b"\x1b[?9001h\x1b[6n"));
+        assert!(!asks_for_cursor(b"hello \x1b[1m"));
+        assert_eq!(plain_path(Path::new(r"\\?\C:\repo")), Path::new(r"C:\repo"));
+        assert_eq!(
+            plain_path(Path::new(r"\\?\UNC\host\share")),
+            Path::new(r"\\?\UNC\host\share")
+        );
+        assert_eq!(plain_path(Path::new("/tmp/x")), Path::new("/tmp/x"));
     }
 
     #[test]

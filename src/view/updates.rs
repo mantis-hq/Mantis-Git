@@ -1,4 +1,4 @@
-//! Updating a portable copy of gitclient from its GitHub releases. One model for the whole
+//! Updating a portable copy of gitclient from its releases. One model for the whole
 //! app: the band over the window offers the step, and Settings → App shows where it stands.
 //!
 //! Everything about releases, downloads and wording is in `gitclient_core::install::update`.
@@ -7,7 +7,9 @@
 
 use super::parts::{band, pill};
 use crate::theme::tokens;
-use gitclient_core::install::update::{self, Http, Status, Support, Target, Version, Web};
+use gitclient_core::install::update::{
+    self, Build, HOST, Http, Status, Support, Target, Track, Web,
+};
 use gitclient_core::install::{Channel, exe_path};
 use gpui_kit::component::button::*;
 use gpui_kit::component::*;
@@ -23,6 +25,10 @@ pub struct Updates {
     /// Why this copy doesn't update itself, in words.
     reason: Option<String>,
     http: Arc<dyn Http + Send + Sync>,
+    /// Whether to look at full releases or the nightly build.
+    track: Track,
+    /// The program that is running, which a release has to be newer than.
+    build: Build,
     status: Status,
     /// The user chose "Later" for the release on offer.
     later: bool,
@@ -35,9 +41,16 @@ struct AppUpdates(Entity<Updates>);
 impl Global for AppUpdates {}
 
 /// Makes the updater every window shares, for a copy installed as `channel`.
-pub fn install_updates(channel: Channel, cx: &mut App) -> Entity<Updates> {
-    let updates =
-        cx.new(|_| Updates::new(channel, exe_path(), Target::this_system(), Arc::new(Web)));
+pub fn install_updates(
+    channel: Channel,
+    track: Track,
+    build: Build,
+    cx: &mut App,
+) -> Entity<Updates> {
+    let updates = cx.new(|_| {
+        Updates::new(channel, exe_path(), Target::this_system(), Arc::new(Web))
+            .following(track, build)
+    });
     cx.set_global(AppUpdates(updates.clone()));
     updates
 }
@@ -63,10 +76,46 @@ impl Updates {
             target,
             reason,
             http,
+            track: Track::default(),
+            build: Build::current(None),
             status: Status::Idle,
             later: false,
             problem: None,
         }
+    }
+
+    /// The same updater following `track`, as the build `build`.
+    pub fn following(mut self, track: Track, build: Build) -> Self {
+        self.track = track;
+        self.build = build;
+        self
+    }
+
+    pub fn track(&self) -> Track {
+        self.track
+    }
+
+    pub fn build(&self) -> &Build {
+        &self.build
+    }
+
+    /// Switches between full releases and the nightly build, and looks again, since what
+    /// was found belongs to the other track. A download in progress or a finished one is
+    /// left alone, and the choice applies to the next look.
+    pub fn set_track(&mut self, track: Track, cx: &mut Context<Self>) {
+        if track == self.track {
+            return;
+        }
+        self.track = track;
+        if matches!(self.status, Status::Installing(_) | Status::Ready { .. }) {
+            cx.notify();
+            return;
+        }
+        self.status = Status::Idle;
+        self.later = false;
+        self.problem = None;
+        self.check(cx);
+        cx.notify();
     }
 
     /// Why this copy doesn't update itself, or `None` if it does.
@@ -90,10 +139,20 @@ impl Updates {
         self.problem = None;
         cx.notify();
         let http = self.http.clone();
+        let (track, build) = (self.track, self.build.clone());
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { update::check(&*http, Version::current(), target) })
+                .background_spawn(
+                    async move { update::check(&*http, &HOST, track, &build, target) },
+                )
                 .await;
+            // The track changed while this was asking, so the answer is for the wrong one.
+            if this
+                .read_with(cx, |this, _| this.track != track)
+                .unwrap_or(true)
+            {
+                return;
+            }
             this.update(cx, |this, cx| {
                 this.status = match result {
                     Ok(Some(found)) => {
@@ -127,7 +186,7 @@ impl Updates {
                 .await;
             this.update(cx, |this, cx| {
                 this.status = match result {
-                    Ok(found) => Status::installed(&found, Version::current()),
+                    Ok(found) => Status::installed(&found),
                     Err(error) => Status::InstallFailed(found, error),
                 };
                 cx.notify();

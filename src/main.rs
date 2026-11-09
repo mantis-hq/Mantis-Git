@@ -32,6 +32,7 @@ fn main() {
     let startup = saved.startup(&given, std::env::current_dir().ok());
     let dock = saved.dock;
     let check_updates = saved.check_updates;
+    let update_track = saved.update_track;
     // Only a portable copy manages its own launcher; a package puts one in place itself.
     let launcher = channel.is_portable().then(Launcher::this_system).flatten();
     // Without a cache folder the caches still work, from memory.
@@ -47,7 +48,8 @@ fn main() {
             theme::init(cx);
             view::bind_keys(cx);
             view::install_caches(caches, cx);
-            let updates = view::install_updates(channel, cx);
+            let build = update::Build::current(option_env!("GITCLIENT_COMMIT"));
+            let updates = view::install_updates(channel, update_track, build, cx);
             if check_updates {
                 updates.update(cx, |updates, cx| updates.check(cx));
             }
@@ -63,6 +65,8 @@ fn main() {
             let options = WindowOptions {
                 titlebar: Some(TitlebarOptions {
                     title: Some("gitclient".into()),
+                    // On Windows the tab strip is the title bar, with its own controls.
+                    appears_transparent: cfg!(windows),
                     ..Default::default()
                 }),
                 window_bounds: Some(WindowBounds::centered(size(px(1200.), px(800.)), cx)),

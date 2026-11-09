@@ -3,7 +3,7 @@
 
 use super::*;
 use gitclient_core::install::exe_path;
-use gitclient_core::install::update::{self, Version};
+use gitclient_core::install::update::{self, Track};
 
 impl Settings {
     /// Reads how the launcher stands, which is what the page shows. Settings reads the disk
@@ -51,6 +51,25 @@ impl Settings {
             Ok(state) => {
                 self.feedback = Feedback::Saved(update::check_saved_message(on).to_owned());
                 self.app = state;
+            }
+            Err(error) => self.feedback = Feedback::Failed(error),
+        }
+        cx.notify();
+    }
+
+    /// Chooses full releases or the nightly build, saves it at once and tells the updater,
+    /// which looks again on the new track.
+    pub(super) fn set_update_track(&mut self, track: Track, cx: &mut Context<Self>) {
+        let Some(file) = &self.state_file else {
+            return;
+        };
+        match AppState::change(file, |state| state.update_track = track) {
+            Ok(state) => {
+                self.feedback = Feedback::Saved(track.saved_message().to_owned());
+                self.app = state;
+                if let Some(updates) = &self.updates {
+                    updates.update(cx, |updates, cx| updates.set_track(track, cx));
+                }
             }
             Err(error) => self.feedback = Feedback::Failed(error),
         }
@@ -145,7 +164,37 @@ impl Settings {
             }))
             .into_any_element();
 
-        let status = updates.read(cx).status().clone();
+        let track = self.app.update_track;
+        let chips = Track::ALL.into_iter().map(|choice| {
+            chip(
+                ("update-track", choice as usize),
+                choice.label(),
+                choice == track,
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.set_update_track(choice, cx)))
+        });
+        let choice = div()
+            .v_flex()
+            .px_4()
+            .py_3()
+            .gap_2()
+            .child(self.row_words(
+                "Which versions to update to",
+                if enabled {
+                    track.sentence()
+                } else {
+                    "gitclient can't find a folder to keep this in."
+                },
+                cx,
+            ))
+            .children(enabled.then(|| div().flex().flex_wrap().gap_1().children(chips)))
+            .into_any_element();
+
+        let (status, build) = {
+            let updates = updates.read(cx);
+            (updates.status().clone(), updates.build().clone())
+        };
         let button = status.button().map(|label| {
             let updates = updates.clone();
             Button::new("update-act")
@@ -159,14 +208,10 @@ impl Settings {
             .py_3()
             .gap_3()
             .h_flex()
-            .child(self.row_words(
-                "Check for updates",
-                &status.sentence(Version::current()),
-                cx,
-            ))
+            .child(self.row_words("Check for updates", &status.sentence(&build, track), cx))
             .children(button)
             .into_any_element();
-        self.render_group("Updates", vec![switch, state], cx)
+        self.render_group("Updates", vec![switch, choice, state], cx)
     }
 
     /// Turns "reopen repositories on launch" on or off and saves it at once.

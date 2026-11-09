@@ -40,18 +40,57 @@ impl Http for Fake {
     }
 }
 
-const RELEASES: &str = "https://api.github.com/repos/pretext8335/gitclient/releases/latest";
+fn releases() -> String {
+    HOST.releases_url()
+}
+
+fn stable(http: &dyn Http, current: &str, target: Target) -> Result<Option<Available>, String> {
+    check(http, &HOST, Track::Stable, &Build::of(v(current)), target)
+}
+
+/// What `read_stable` makes of one release, as the host lists it.
+fn read_release(
+    json: &[u8],
+    current: Version,
+    target: Target,
+) -> Result<Option<Available>, String> {
+    let list = [b"[", json, b"]"].concat();
+    read_stable(&list, &HOST, &Build::of(current), target)
+}
+
+fn nightly_json(commit: &str, target: Target) -> String {
+    let archive = target.archive_name("nightly");
+    format!(
+        r#"{{"tag_name":"nightly","draft":false,"prerelease":true,
+            "body":"Built from {commit}. Replaced on every push to main.",
+            "assets":[
+            {{"name":"{archive}","browser_download_url":"{}"}},
+            {{"name":"SHA256SUMS.txt","browser_download_url":"{}"}}]}}"#,
+        download(&archive),
+        download("SHA256SUMS.txt"),
+    )
+}
+
+fn build_at(commit: Option<&str>) -> Build {
+    Build {
+        version: v("0.1.0"),
+        commit: commit.map(str::to_owned),
+    }
+}
+
+const COMMIT_A: &str = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
+const COMMIT_B: &str = "ffffffffffffffffffffffffffffffffffffffff";
 
 fn download(name: &str) -> String {
-    format!("https://github.com/pretext8335/gitclient/releases/download/v0.2.0/{name}")
+    format!("https://git.example.com/example/gitclient/releases/download/v0.2.0/{name}")
 }
 
 fn release_json(target: Target, tag: &str) -> String {
     let archive = target.archive_name(tag);
     format!(
-        r#"{{"tag_name":"{tag}","draft":false,"prerelease":false,"assets":[
+        r#"[{{"tag_name":"{tag}","draft":false,"prerelease":false,"assets":[
             {{"name":"{archive}","browser_download_url":"{}"}},
-            {{"name":"SHA256SUMS.txt","browser_download_url":"{}"}}]}}"#,
+            {{"name":"SHA256SUMS.txt","browser_download_url":"{}"}}]}}]"#,
         download(&archive),
         download("SHA256SUMS.txt"),
     )
@@ -95,10 +134,10 @@ fn release(target: Target, archive: &[u8], sums: Option<String>) -> (Available, 
     let name = target.archive_name("v0.2.0");
     let sums = sums.unwrap_or_else(|| format!("{}  {name}\n", sum_of(archive)));
     let http = Fake::default()
-        .with(RELEASES, release_json(target, "v0.2.0"))
+        .with(&releases(), release_json(target, "v0.2.0"))
         .with(&download(&name), archive)
         .with(&download("SHA256SUMS.txt"), sums);
-    let found = check(&http, v("0.1.0"), target).unwrap().unwrap();
+    let found = stable(&http, "0.1.0", target).unwrap().unwrap();
     (found, http)
 }
 
@@ -156,7 +195,7 @@ fn each_system_has_the_archive_the_release_workflow_names() {
 #[test]
 fn a_newer_release_is_found_with_its_archive_and_checksums() {
     let (found, _) = release(linux(), b"unused", None);
-    assert_eq!(found.version, v("0.2.0"));
+    assert_eq!(found.name, "0.2.0");
     assert_eq!(found.tag, "v0.2.0");
     assert_eq!(
         found.archive.name,
@@ -164,30 +203,186 @@ fn a_newer_release_is_found_with_its_archive_and_checksums() {
     );
     assert_eq!(found.checksums.name, "SHA256SUMS.txt");
     assert_eq!(
-        found.page(),
-        "github.com/pretext8335/gitclient/releases/tag/v0.2.0"
+        found.page,
+        "git.example.com/example/gitclient/releases/tag/v0.2.0"
+    );
+    assert_eq!(
+        found.back,
+        "To go back, download 0.1.0 from git.example.com/example/gitclient/releases/tag/v0.1.0."
     );
 }
 
 #[test]
 fn the_same_or_an_older_release_is_not_an_update() {
-    let http = Fake::default().with(RELEASES, release_json(linux(), "v0.2.0"));
-    assert_eq!(check(&http, v("0.2.0"), linux()), Ok(None));
-    assert_eq!(check(&http, v("0.3.0"), linux()), Ok(None));
+    let http = Fake::default().with(&releases(), release_json(linux(), "v0.2.0"));
+    assert_eq!(stable(&http, "0.2.0", linux()), Ok(None));
+    assert_eq!(stable(&http, "0.3.0", linux()), Ok(None));
 }
 
 #[test]
-fn drafts_and_prereleases_are_not_offered() {
-    for flag in ["draft", "prerelease"] {
-        let json = format!(r#"{{"tag_name":"v9.0.0","{flag}":true,"assets":[]}}"#);
+fn drafts_and_suffixed_tags_are_not_offered() {
+    let json = br#"{"tag_name":"v9.0.0","draft":true,"assets":[]}"#;
+    assert_eq!(read_release(json, v("0.1.0"), linux()), Ok(None));
+    for tag in ["nightly", "v9.0.0-rc1", "v9.0.0+build"] {
+        let json = format!(r#"{{"tag_name":"{tag}","assets":[]}}"#);
         assert_eq!(read_release(json.as_bytes(), v("0.1.0"), linux()), Ok(None));
     }
 }
 
 #[test]
+fn a_tagged_release_counts_even_when_the_host_flags_it_as_a_pre_release() {
+    // The Gitea workflow publishes tagged releases with the flag set.
+    let (found, _) = release(linux(), b"unused", None);
+    let json =
+        release_json(linux(), "v0.2.0").replace(r#""prerelease":false"#, r#""prerelease":true"#);
+    let http = Fake::default().with(&releases(), json);
+    assert_eq!(stable(&http, "0.1.0", linux()), Ok(Some(found)));
+}
+
+#[test]
+fn the_newest_full_release_wins_whatever_order_the_host_lists_them_in() {
+    let one = |tag: &str| {
+        let json = release_json(linux(), tag);
+        json[1..json.len() - 1].to_owned()
+    };
+    let json = format!(
+        r#"[{{"tag_name":"nightly","assets":[]}},{},{}]"#,
+        one("v0.9.0"),
+        one("v0.10.0")
+    );
+    let found = read_stable(json.as_bytes(), &HOST, &Build::of(v("0.1.0")), linux())
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.name, "0.10.0");
+}
+
+#[test]
+fn a_nightly_built_from_another_commit_is_offered_and_the_same_one_is_not() {
+    let http = Fake::default().with(&HOST.tag_url("nightly"), nightly_json(COMMIT_A, linux()));
+    let ask = |commit| check(&http, &HOST, Track::Nightly, &build_at(commit), linux());
+
+    let found = ask(Some(COMMIT_B)).unwrap().unwrap();
+    assert_eq!(found.name, "nightly 1a2b3c4");
+    assert_eq!(found.tag, "nightly");
+    assert_eq!(
+        found.archive.name,
+        "gitclient-nightly-x86_64-unknown-linux-gnu.tar.gz"
+    );
+    assert_eq!(ask(Some(COMMIT_A)), Ok(None), "this is that build");
+    let upper = COMMIT_A.to_uppercase();
+    assert_eq!(ask(Some(&upper)), Ok(None));
+    // A copy that doesn't know its commit is offered the nightly rather than none.
+    assert!(ask(None).unwrap().is_some());
+}
+
+#[test]
+fn a_nightly_installs_like_any_release() {
+    let archive = tar_gz(&[("gitclient", b"nightly program")]);
+    let name = linux().archive_name("nightly");
+    let http = Fake::default()
+        .with(&HOST.tag_url("nightly"), nightly_json(COMMIT_A, linux()))
+        .with(&download(&name), archive.clone())
+        .with(
+            &download("SHA256SUMS.txt"),
+            format!("{}  {name}\n", sum_of(&archive)),
+        );
+    let found = check(&http, &HOST, Track::Nightly, &build_at(None), linux())
+        .unwrap()
+        .unwrap();
+    let (_dir, exe) = old_program();
+    install(&http, &found, &exe).unwrap();
+    assert_eq!(std::fs::read(&exe).unwrap(), b"nightly program");
+}
+
+#[test]
+fn a_nightly_that_names_no_commit_says_so() {
+    let json = nightly_json(COMMIT_A, linux()).replace(COMMIT_A, "nothing");
+    let error = read_nightly(json.as_bytes(), &HOST, &build_at(None), linux()).unwrap_err();
+    assert!(error.contains("which commit"), "{error}");
+    // The release's own commit is the fallback.
+    let json = json.replace(
+        r#""draft":false"#,
+        &format!(r#""draft":false,"target_commitish":"{COMMIT_A}""#),
+    );
+    assert!(
+        read_nightly(json.as_bytes(), &HOST, &build_at(None), linux())
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn a_draft_nightly_is_not_offered() {
+    let json = nightly_json(COMMIT_A, linux()).replace(r#""draft":false"#, r#""draft":true"#);
+    assert_eq!(
+        read_nightly(json.as_bytes(), &HOST, &build_at(None), linux()),
+        Ok(None)
+    );
+}
+
+#[test]
+fn the_host_decides_where_to_ask_and_what_to_trust() {
+    let gitea = Host::gitea("https://git.example.org", "me/app");
+    assert_eq!(
+        gitea.releases_url(),
+        "https://git.example.org/api/v1/repos/me/app/releases?draft=false&limit=50"
+    );
+    assert_eq!(
+        gitea.tag_url("nightly"),
+        "https://git.example.org/api/v1/repos/me/app/releases/tags/nightly"
+    );
+    assert_eq!(
+        gitea.page("v1.0.0"),
+        "git.example.org/me/app/releases/tag/v1.0.0"
+    );
+    assert_eq!(gitea.name(), "git.example.org");
+    assert!(gitea.trusts("https://git.example.org/me/app/releases/download/v1/a.zip"));
+    assert!(!gitea.trusts("https://git.example.org.evil.test/a.zip"));
+    assert!(!gitea.trusts("http://git.example.org/a.zip"));
+    assert!(!gitea.trusts("https://github.com/me/app/a.zip"));
+
+    let github = Host::github("me/app");
+    assert_eq!(
+        github.releases_url(),
+        "https://api.github.com/repos/me/app/releases?per_page=50"
+    );
+    assert_eq!(
+        github.tag_url("nightly"),
+        "https://api.github.com/repos/me/app/releases/tags/nightly"
+    );
+    assert_eq!(
+        github.page("v1.0.0"),
+        "github.com/me/app/releases/tag/v1.0.0"
+    );
+    assert_eq!(github.name(), "GitHub");
+    assert!(github.trusts("https://github.com/o/r/releases/download/v1/a.zip"));
+    assert!(github.trusts("https://objects.githubusercontent.com/x"));
+    assert!(!github.trusts("https://evilgithub.com/x"));
+    assert!(!github.trusts("http://github.com/x"));
+}
+
+#[test]
+fn the_track_is_kept_as_a_word_and_a_mangled_one_is_the_full_releases() {
+    for track in Track::ALL {
+        assert_eq!(Track::from_key(track.key()), track);
+    }
+    assert_eq!(Track::from_key("  nightly\n"), Track::Nightly);
+    assert_eq!(Track::from_key("beta"), Track::Stable);
+    assert_eq!(Track::default(), Track::Stable);
+}
+
+#[test]
+fn a_build_says_its_commit_only_when_it_is_a_real_one() {
+    assert_eq!(Build::current(None).commit, None);
+    assert_eq!(Build::current(Some("not a commit")).commit, None);
+    assert_eq!(build_at(Some(COMMIT_A)).label(), "0.1.0 (1a2b3c4)");
+    assert_eq!(build_at(None).label(), "0.1.0");
+}
+
+#[test]
 fn a_release_without_this_systems_build_says_so_and_offers_nothing() {
     let json = r#"{"tag_name":"v0.2.0","assets":[
-        {"name":"SHA256SUMS.txt","browser_download_url":"https://github.com/x/SHA256SUMS.txt"}]}"#;
+        {"name":"SHA256SUMS.txt","browser_download_url":"https://git.example.com/x/SHA256SUMS.txt"}]}"#;
     let error = read_release(json.as_bytes(), v("0.1.0"), linux()).unwrap_err();
     assert!(
         error.contains("no gitclient-v0.2.0-x86_64-unknown-linux-gnu.tar.gz"),
@@ -196,7 +391,7 @@ fn a_release_without_this_systems_build_says_so_and_offers_nothing() {
 
     let archive = linux().archive_name("v0.2.0");
     let json = format!(
-        r#"{{"tag_name":"v0.2.0","assets":[{{"name":"{archive}","browser_download_url":"https://github.com/x/a"}}]}}"#
+        r#"{{"tag_name":"v0.2.0","assets":[{{"name":"{archive}","browser_download_url":"https://git.example.com/x/a"}}]}}"#
     );
     let error = read_release(json.as_bytes(), v("0.1.0"), linux()).unwrap_err();
     assert!(error.contains("no SHA256SUMS.txt"), "{error}");
@@ -205,18 +400,22 @@ fn a_release_without_this_systems_build_says_so_and_offers_nothing() {
 #[test]
 fn nonsense_from_the_network_is_an_error_and_not_a_crash() {
     assert!(read_release(b"<html>", v("0.1.0"), linux()).is_err());
-    assert!(read_release(br#"{"tag_name":"nightly"}"#, v("0.1.0"), linux()).is_err());
-    assert!(read_release(b"{}", v("0.1.0"), linux()).is_err());
+    assert!(read_stable(b"{}", &HOST, &Build::of(v("0.1.0")), linux()).is_err());
+    assert!(read_nightly(b"<html>", &HOST, &Build::of(v("0.1.0")), linux()).is_err());
+    assert!(read_nightly(b"[]", &HOST, &Build::of(v("0.1.0")), linux()).is_err());
 }
 
 #[test]
-fn only_https_downloads_from_github_are_followed() {
-    assert!(trusted("https://github.com/o/r/releases/download/v1/a.zip"));
-    assert!(trusted("https://objects.githubusercontent.com/x"));
-    assert!(!trusted("http://github.com/o/r/a.zip"));
-    assert!(!trusted("https://evil.example/github.com/a.zip"));
-    assert!(!trusted("https://github.com.evil.example/a.zip"));
-    assert!(!trusted("https://user@github.com.evil.example/a.zip"));
+fn only_https_downloads_from_the_host_are_followed() {
+    let trusted = |url| HOST.trusts(url);
+    assert!(trusted(
+        "https://git.example.com/o/r/releases/download/v1/a.zip"
+    ));
+    assert!(!trusted("http://git.example.com/o/r/a.zip"));
+    assert!(!trusted("https://github.com/o/r/a.zip"));
+    assert!(!trusted("https://evil.example/git.example.com/a.zip"));
+    assert!(!trusted("https://git.example.com.evil.example/a.zip"));
+    assert!(!trusted("https://user@git.example.com.evil.example/a.zip"));
     assert!(!trusted("file:///etc/passwd"));
 
     let archive = linux().archive_name("v0.2.0");
@@ -335,7 +534,7 @@ fn a_folder_that_cannot_be_written_to_says_where_to_download_instead() {
 
     assert!(error.contains("can't update itself"), "{error}");
     assert!(
-        error.contains("github.com/pretext8335/gitclient/releases/tag/v0.2.0"),
+        error.contains("git.example.com/example/gitclient/releases/tag/v0.2.0"),
         "{error}"
     );
 }
@@ -401,8 +600,6 @@ fn packaged_copies_and_unknown_systems_cannot_update_and_say_why() {
 #[test]
 fn the_band_offers_the_next_step_and_stays_quiet_otherwise() {
     let (found, _) = release(linux(), b"x", None);
-    let current = v("0.1.0");
-
     let band = Status::Available(found.clone()).band().unwrap();
     assert_eq!(band.message, "gitclient 0.2.0 is available.");
     assert_eq!(band.action.as_deref(), Some("Update to 0.2.0"));
@@ -411,12 +608,12 @@ fn the_band_offers_the_next_step_and_stays_quiet_otherwise() {
     let band = Status::Installing(found.clone()).band().unwrap();
     assert_eq!(band.action, None);
 
-    let ready = Status::installed(&found, current);
+    let ready = Status::installed(&found);
     let band = ready.band().unwrap();
     assert!(band.message.starts_with("gitclient 0.2.0 is installed"));
     // It says how to undo the step.
     assert!(band.message.contains(
-        "To go back, download 0.1.0 from github.com/pretext8335/gitclient/releases/tag/v0.1.0."
+        "To go back, download 0.1.0 from git.example.com/example/gitclient/releases/tag/v0.1.0."
     ));
     assert_eq!(band.action.as_deref(), Some("Restart now"));
 
@@ -438,16 +635,24 @@ fn the_band_offers_the_next_step_and_stays_quiet_otherwise() {
 
 #[test]
 fn the_settings_sentence_and_button_follow_the_status() {
-    let current = v("0.1.0");
+    let current = &build_at(None);
+    let stable = Track::Stable;
     let (found, _) = release(linux(), b"x", None);
-    assert_eq!(Status::Idle.sentence(current), "This is gitclient 0.1.0.");
+    assert_eq!(
+        Status::Idle.sentence(current, stable),
+        "This is gitclient 0.1.0."
+    );
     assert_eq!(Status::Idle.button().as_deref(), Some("Check now"));
     assert_eq!(
-        Status::UpToDate.sentence(current),
+        Status::UpToDate.sentence(current, stable),
         "gitclient 0.1.0 is the newest version."
     );
     assert_eq!(
-        Status::Available(found.clone()).sentence(current),
+        Status::UpToDate.sentence(&build_at(Some(COMMIT_A)), Track::Nightly),
+        "gitclient 0.1.0 (1a2b3c4) is the newest nightly build."
+    );
+    assert_eq!(
+        Status::Available(found.clone()).sentence(current, stable),
         "gitclient 0.2.0 is available. This is 0.1.0."
     );
     assert_eq!(
@@ -457,8 +662,8 @@ fn the_settings_sentence_and_button_follow_the_status() {
     assert_eq!(Status::Checking.button(), None);
     assert_eq!(Status::Installing(found).button(), None);
     assert_eq!(
-        Status::CheckFailed("GitHub is limiting requests.".into()).sentence(current),
-        "Couldn't look for a newer version. GitHub is limiting requests."
+        Status::CheckFailed("The host is limiting requests.".into()).sentence(current, stable),
+        "Couldn't look for a newer version. The host is limiting requests."
     );
     // After a failed look the user can look again.
     assert_eq!(
@@ -493,7 +698,7 @@ fn web_reads_a_real_release_and_stops_a_body_that_is_too_long() {
 #[ignore = "needs the network"]
 fn web_says_what_it_found_for_this_project() {
     let target = Target::of("linux", "x86_64").unwrap();
-    let result = check(&Web, Version::current(), target);
+    let result = check(&Web, &HOST, Track::Stable, &Build::current(None), target);
     eprintln!("this project's latest release: {result:?}");
     // Either there is nothing newer, a release to offer, or a plain-words reason.
     if let Err(error) = result {

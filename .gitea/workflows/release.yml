@@ -1,0 +1,133 @@
+# Gitea only. Gitea reads this folder instead of .github/workflows, and GitHub never reads
+# it, so each host has its own workflows. Push a tag like v0.2.0 to build Linux and Windows
+# and publish a release here. Every push to main does the same into one "nightly"
+# pre-release that is replaced each time. "Run workflow" builds both without publishing.
+# Linux builds in a rust:1-bookworm container that installs its packages on each run. Windows needs a runner labelled `windows`: gpui compiles its
+# shaders in a build script that only runs on a Windows host, so it can't be cross-built.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    # Docs-only pushes to main don't build a nightly. Tag pushes ignore this filter.
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+      - "LICENSE"
+  workflow_dispatch:
+
+# A newer push to the same ref stops the build still running for it. Tags have their own
+# group, so a nightly never cancels a release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: docker
+    container:
+      image: rust:1-bookworm
+    steps:
+      # The Rust image has no Node, which the JavaScript actions below need.
+      - run: apt-get update && apt-get install -y --no-install-recommends nodejs
+      - uses: actions/checkout@v7
+      - run: sh .gitea/ci-setup.sh
+      # Kept by the runner's cache server, on the runner's own disk: the downloaded crates
+      # and the build output. A changed Cargo.lock starts from the newest older cache and
+      # rebuilds only what moved.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
+            target
+          key: build-${{ hashFiles('Cargo.lock') }}
+          restore-keys: build-
+      - run: cargo build --release --locked
+      - name: Package
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/*) tag="$GITHUB_REF_NAME" ;;
+            *) tag=nightly ;;
+          esac
+          mkdir dist
+          tar -czf "dist/gitclient-$tag-x86_64-unknown-linux-gnu.tar.gz" \
+            -C target/release gitclient
+      - uses: actions/upload-artifact@v3
+        with:
+          name: linux
+          path: dist/*
+
+  windows:
+    runs-on: windows
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      # The runner needs Rust (rustup) and Git for Windows. gpui finds fxc.exe in the Windows
+      # SDK that Visual Studio's C++ build tools install.
+      - run: cargo build --release --locked
+      - name: Package
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/*) tag="$GITHUB_REF_NAME" ;;
+            *) tag=nightly ;;
+          esac
+          mkdir dist
+          powershell -NoProfile -Command "Compress-Archive -Path target/release/gitclient.exe -DestinationPath dist/gitclient-$tag-x86_64-pc-windows-msvc.zip"
+      - uses: actions/upload-artifact@v3
+        with:
+          name: windows
+          path: dist/*
+
+  publish:
+    needs: [linux, windows]
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: docker
+    container:
+      image: rust:1-bookworm
+    steps:
+      - run: apt-get update && apt-get install -y --no-install-recommends nodejs jq
+      - uses: actions/download-artifact@v3
+        with:
+          name: linux
+          path: dist
+      - uses: actions/download-artifact@v3
+        with:
+          name: windows
+          path: dist
+      - run: cd dist && sha256sum gitclient-* > SHA256SUMS.txt
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TOKEN: ${{ github.token }}
+          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          id=$(curl -fsS -X POST "$API/releases" \
+            -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"$tag\",\"name\":\"$tag\",\"prerelease\":true}" | jq -r .id)
+          for f in dist/*; do
+            curl -fsS -X POST "$API/releases/$id/assets?name=$(basename "$f")" \
+              -H "Authorization: token $TOKEN" -F "attachment=@$f"
+          done
+      # One rolling release: drop the last nightly and its tag, then make it again at this commit.
+      - name: Publish nightly
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        env:
+          TOKEN: ${{ github.token }}
+          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+        run: |
+          old=$(curl -s -H "Authorization: token $TOKEN" "$API/releases/tags/nightly" | jq -r '.id // empty')
+          [ -n "$old" ] && curl -fsS -X DELETE -H "Authorization: token $TOKEN" "$API/releases/$old"
+          curl -s -X DELETE -H "Authorization: token $TOKEN" "$API/tags/nightly" || true
+          short=$(echo "$GITHUB_SHA" | cut -c1-7)
+          id=$(curl -fsS -X POST "$API/releases" \
+            -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"nightly\",\"target_commitish\":\"$GITHUB_SHA\",\"name\":\"nightly ($short)\",\"body\":\"Built from $GITHUB_SHA. Replaced on every push to main.\",\"prerelease\":true}" | jq -r .id)
+          for f in dist/*; do
+            curl -fsS -X POST "$API/releases/$id/assets?name=$(basename "$f")" \
+              -H "Authorization: token $TOKEN" -F "attachment=@$f"
+          done

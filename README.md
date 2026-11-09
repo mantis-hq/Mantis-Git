@@ -72,7 +72,9 @@ gitclient to the application menu (Linux) or the Start menu (Windows). On Linux 
 later.
 
 A copy unpacked this way looks for a newer release when it starts, and asks before
-installing one. The archive is checked against the release's `SHA256SUMS.txt` first. A copy
+installing one. Settings → App can follow the nightly pre-release (built from every push to
+`main`) instead of full releases. The archive is checked against the release's `SHA256SUMS.txt`
+first. A copy
 installed by a package manager neither adds a launcher nor updates itself; a package recipe
 marks its build with `GITCLIENT_INSTALL_CHANNEL=<name>` (anything but `portable`) at build
 time.

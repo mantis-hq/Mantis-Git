@@ -29,6 +29,9 @@ pub(super) struct State {
     /// Whole file or just the changes, and whether white space counts. It stays as it is
     /// set while other files and commits are picked.
     pub(super) view: DiffView,
+    /// The large file whose diff was asked for, as its commit and place. Only one at a
+    /// time, so every other large file still waits.
+    asked: Option<(Arc<str>, usize)>,
     scroll: UniformListScrollHandle,
 }
 
@@ -47,6 +50,8 @@ pub(super) struct Shown {
     widest: Option<usize>,
     /// Where the changes are, for the marks beside the scrollbar.
     marks: Vec<Mark>,
+    /// For a large file whose diff wasn't read: what to say, and the button that reads it.
+    ask: Option<(String, String)>,
 }
 
 /// A run of added or removed lines, by row.
@@ -79,7 +84,8 @@ impl Shown {
                 (title, _) => title.to_owned(),
             };
             rows.push(Row::Hunk { title, index });
-            rows.extend(hunk.lines.iter().cloned().map(Row::Line));
+            // Clipped: one line of megabytes would take the window a second to lay out.
+            rows.extend(hunk.lines.iter().map(|line| Row::Line(line.clipped())));
         }
         let width = |row: &Row| match row {
             Row::Hunk { title, .. } => title.len(),
@@ -113,7 +119,16 @@ impl Shown {
             rows,
             widest,
             marks,
+            ask: None,
         }
+    }
+
+    /// Marks this as a diff left unread because the file is large, if it was.
+    fn waiting(mut self, file: &FileChange, view: DiffView) -> Self {
+        if file.waits_to_be_asked(view) {
+            self.ask = Some((file.large_sentence(), file.large_button()));
+        }
+        self
     }
 
     /// Marks this as a working file in `side`, whose hunks move when `ticks` is set.
@@ -215,21 +230,28 @@ impl GraphView {
         cx.notify();
 
         let oid = details.oid.clone();
+        let commit = details.clone();
         let fingerprint = self.fingerprint.clone();
         let caches = self.caches.clone();
         let view = self.diff.view;
+        // A large file's diff is read only after it was asked for, and only that once.
+        let asked = self.diff.asked == Some((oid.clone(), index));
+        let read_view = DiffView {
+            allow_large: asked,
+            ..view
+        };
         // Even a cached diff is flattened into rows in the background, since a large one
         // takes a while to lay out.
         Self::spawn_blocking(
             move || {
                 // Only the plain view is cached; the others are read from git each time.
                 let patch = match fingerprint {
-                    Some(fingerprint) if view.is_default() => {
-                        caches.read_diff(&repo, &fingerprint, &oid, &file)?
+                    Some(fingerprint) if read_view.is_default() => {
+                        caches.read_diff(&repo, &fingerprint, &commit, &file)?
                     }
-                    _ => Arc::new(details::file_diff(&repo, &oid, &file, view)?),
+                    _ => Arc::new(details::file_diff(&repo, &commit, &file, read_view)?),
                 };
-                Ok::<_, String>(Shown::new(oid, &file, &patch))
+                Ok::<_, String>(Shown::new(oid, &file, &patch).waiting(&file, read_view))
             },
             move |this, shown, cx| {
                 let current = this
@@ -410,7 +432,33 @@ impl GraphView {
                                 .on_click(cx.listener(|this, _, _, cx| this.close_diff(cx))),
                         ),
                 )
-                .when(empty, |panel_body| {
+                .when_some(
+                    shown.ask.clone().filter(|_| empty),
+                    |panel_body, (sentence, button)| {
+                        let oid = shown.oid.clone();
+                        panel_body.child(
+                            div()
+                                .v_flex()
+                                .items_start()
+                                .gap_3()
+                                .p_4()
+                                .child(div().text_size(TEXT_BODY).text_color(muted).child(sentence))
+                                .child(
+                                    Button::new("diff-ask-large")
+                                        .primary()
+                                        .small()
+                                        .child(div().truncate().child(button))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            if let Some(index) = this.diff.file {
+                                                this.diff.asked = Some((oid.clone(), index));
+                                                this.load_file(index, cx);
+                                            }
+                                        })),
+                                ),
+                        )
+                    },
+                )
+                .when(empty && shown.ask.is_none(), |panel_body| {
                     panel_body.child(
                         div()
                             .p_4()
