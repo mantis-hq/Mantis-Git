@@ -27,31 +27,21 @@ installed `git`.
 
 Download the archive for your system from the
 [releases](https://github.com/pretext8335/gitclient/releases) page, unpack it and run
-`gitclient`.
+`gitclient`. On Windows it also opens repositories that live in WSL2.
 
 ## Dependencies
 
 - `git` on your `PATH`. Version 2.41 or newer is recommended, as the sidebar's branch
   counts need it.
-- On Windows, repositories inside WSL2 open like any other. Git runs inside the
-  distribution.
+- To build from source: a recent stable Rust toolchain.
+- To build on Linux: `pkg-config`, `libxcb1-dev`, `libxkbcommon-dev`,
+  `libxkbcommon-x11-dev`, `libfontconfig1-dev`, `libfreetype-dev` and `libwayland-dev`
+  (package names for Debian and Ubuntu).
 
 ## Building from source
 
-You need a recent stable Rust toolchain. On Linux you also need the usual GUI libraries:
-
-```sh
-sudo apt-get install pkg-config libxcb1-dev libxkbcommon-dev \
-  libxkbcommon-x11-dev libfontconfig1-dev libfreetype-dev libwayland-dev
-```
-
-Then:
-
 ```sh
 cargo run --release
-cargo test                # both crates
-cargo test --test render  # renders through the real GPU pipeline, opt-in
-cargo fmt --all           # plain `cargo fmt` skips crates/core, and CI checks it
 ```
 
 ## How it's put together
