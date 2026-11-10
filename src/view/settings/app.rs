@@ -239,9 +239,9 @@ impl Settings {
     pub(super) fn load_cache_size(&mut self, cx: &mut Context<Self>) {
         let caches = self.caches.clone();
         cx.spawn(async move |this, cx| {
-            let size = cx.background_spawn(async move { caches.disk_size() }).await;
+            let usage = cx.background_spawn(async move { caches.usage() }).await;
             this.update(cx, |this, cx| {
-                this.cache_size = Some(size);
+                this.cache_usage = Some(usage);
                 cx.notify();
             })
             .ok();
@@ -663,23 +663,31 @@ impl Settings {
             .child(div().flex().flex_wrap().gap_1().children(chips))
             .into_any_element();
 
-        let used = match self.cache_size {
-            Some(bytes) => format!("Using {} on disk.", bytes_label(bytes)),
+        let usage = self.cache_usage.clone().unwrap_or_default();
+        let used: u64 = usage.iter().map(|part| part.bytes).sum();
+        let sentence = match self.cache_usage {
+            Some(_) => self.app.cache_usage_sentence(used),
             None => "Counting…".to_owned(),
         };
         let clear = div()
+            .v_flex()
             .px_4()
             .py_3()
             .gap_3()
-            .h_flex()
-            .child(words("Clear the cache", used))
             .child(
-                Button::new("clear-cache")
-                    .ghost()
-                    .small()
-                    .label("Clear cache")
-                    .on_click(cx.listener(|this, _, _, cx| this.clear_cache(cx))),
+                div()
+                    .h_flex()
+                    .gap_3()
+                    .child(words("Storage", sentence))
+                    .child(
+                        Button::new("clear-cache")
+                            .ghost()
+                            .small()
+                            .label("Clear cache")
+                            .on_click(cx.listener(|this, _, _, cx| this.clear_cache(cx))),
+                    ),
             )
+            .children((!usage.is_empty()).then(|| self.render_usage_bar(&usage, cx)))
             .into_any_element();
 
         let rows = if enabled && on {
@@ -690,6 +698,80 @@ impl Settings {
             vec![switch]
         };
         self.render_group("Cache", rows, cx)
+    }
+
+    /// One bar for the whole cache, as long as the size limit while it is on, cut into what
+    /// each cache holds, with a legend that names each in words so that the shades aren't
+    /// all there is to go by. The shades are the muted greys of the palette, never a colour
+    /// that means something else.
+    fn render_usage_bar(&self, usage: &[Usage], cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let (track, bar_gap, muted) = (theme.border, theme.list_head, theme.muted_foreground);
+        let is_dark = theme.is_dark();
+        let shades = [
+            tokens(is_dark).subtext0,
+            theme.muted_foreground,
+            tokens(is_dark).overlay1,
+        ];
+        let used: u64 = usage.iter().map(|part| part.bytes).sum();
+        // Against the limit while it applies, else the whole bar is what is there.
+        let scale = if self.app.disk_cache {
+            (u64::from(self.app.cache_mb) << 20).max(used)
+        } else {
+            used
+        }
+        .max(1);
+        let segments = usage
+            .iter()
+            .enumerate()
+            .filter(|(_, part)| part.bytes > 0)
+            .map(|(index, part)| {
+                div()
+                    .h_full()
+                    .flex_none()
+                    .w(relative(part.bytes as f32 / scale as f32))
+                    .bg(shades[index % shades.len()])
+                    .border_r_2()
+                    .border_color(bar_gap)
+            });
+        let legend = usage.iter().enumerate().map(|(index, part)| {
+            div()
+                .h_flex()
+                .gap_1p5()
+                .child(
+                    div()
+                        .size(px(8.))
+                        .rounded(px(2.))
+                        .bg(shades[index % shades.len()]),
+                )
+                .child(div().text_size(TEXT_SMALL).text_color(muted).child(format!(
+                    "{} {}",
+                    part.label,
+                    bytes_label(part.bytes)
+                )))
+        });
+        div()
+            .v_flex()
+            .gap_2()
+            .child(
+                div()
+                    .h(px(8.))
+                    .w_full()
+                    .rounded(px(4.))
+                    .overflow_hidden()
+                    .bg(track)
+                    .h_flex()
+                    .children(segments),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_x_4()
+                    .gap_y_1()
+                    .children(legend),
+            )
+            .into_any_element()
     }
 
     pub(super) fn render_app(&self, cx: &mut Context<Self>) -> AnyElement {

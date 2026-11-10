@@ -17,7 +17,7 @@ use super::parts::{TEXT_BODY, TEXT_SMALL, TEXT_STATUS};
 use super::repository_name;
 use super::updates::{Updates, shared_updates};
 use crate::theme::{selected_row, tokens};
-use gitclient_core::cache::keys::Caches;
+use gitclient_core::cache::keys::{Caches, Usage};
 use gitclient_core::install::Channel;
 use gitclient_core::install::menu_entry::{Launcher, Status as LauncherStatus};
 use gitclient_core::settings::config::{self, Kind, Scope, Setting, Sources, Values, Version};
@@ -308,7 +308,8 @@ pub struct Settings {
     /// The caches the app runs with, which the cache settings act on.
     caches: Caches,
     /// How much the caches hold on disk, once counted.
-    cache_size: Option<u64>,
+    /// What each cache holds on disk, once counted.
+    cache_usage: Option<Vec<Usage>>,
     /// The application menu launcher, for a portable copy on a system that has one.
     launcher: Option<Launcher>,
     /// How the launcher stands on disk, read when the page opens and after each change.
@@ -452,7 +453,7 @@ impl Settings {
                 .unwrap_or_default(),
             state_file,
             caches: super::shared_caches(cx),
-            cache_size: None,
+            cache_usage: None,
             launcher,
             launcher_status: None,
             updates,

@@ -202,11 +202,19 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     Under "Cache", a tick box "Keep a cache on disk" (on by default) says that what git
     reports about commits and their file diffs is kept between runs, so a commit seen before
     opens at once. When it is on, a row of chips picks the size limit (64 MB, 256 MB by
-    default, 1 GB, 4 GB), and a row says how much is in use beside a quiet "Clear cache"
-    button. Changes apply at once to the running app. The cache lives in the system's cache
-    folder (`$XDG_CACHE_HOME` or `~/.cache` on Linux), never in the config folder, and an
+    default, 1 GB, 4 GB). It is one limit for every cache together: when they are over it
+    the least recently used entries of any of them go first, so a cache that fills gets the
+    room the others leave (`Budget` in `gitclient_core::cache`). A storage row says how much
+    is in use ("Using 98 MB of 256 MB.") beside a quiet "Clear cache" button that empties
+    every cache, and under it one 8 px bar, as long as the limit while the cache is on, cut
+    into what each cache holds (commit files, file diffs, avatars), largest first. The cuts
+    are the palette's muted greys (Subtext 0, Overlay 2, Overlay 1) with a gap of Mantle
+    between them on a Surface 0 track, and a legend names each with its size, so no meaning
+    rests on shade alone. Changes apply at once to the running app. The cache lives in the
+    system's cache folder (`$XDG_CACHE_HOME` or `~/.cache` on Linux), never in the config
+    folder, and an
     entry that is damaged or out of date is simply read from git again. What gravatar.com
-    said about an author is kept there too (a sixteenth of the limit, a few kilobytes each,
+    said about an author is kept there too (a few kilobytes each,
     found by the hash of the author's address): a picture until the cache is cleared, and
     "no Gravatar" for a week. Gravatar is asked about an address only when neither is there,
     at most once per session across every tab whatever the answer, so a failed request isn't
