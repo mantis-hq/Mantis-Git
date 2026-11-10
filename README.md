@@ -1,7 +1,7 @@
 # gitclient
 
-A fast desktop Git client that tells you in plain words where your repository stands and
-what each step will do, so you can understand it at a glance and never wait on it.
+A desktop Git client built for performance. Speed is the point: the window stays
+responsive and history opens quickly, whatever the size of the repository.
 
 It's written in Rust on [gpui-kit](https://crates.io/crates/gpui-kit) and talks to your
 installed `git`.
@@ -10,23 +10,18 @@ installed `git`.
 
 ## What it does
 
-Browse history as a lane graph, stage individual hunks, commit, stash, branch, merge,
-rebase, cherry-pick and revert. A few things work differently:
-
-- **Drag a branch onto another** to get a menu of what fits how the two histories relate
-  (fast-forward, merge, rebase). Dropping never does anything by itself.
-- **Branch names instead of "ours" and "theirs".** Those swap meaning during a rebase, so
-  the conflict resolver shows both versions of the whole file side by side, each labelled
-  with its branch, next to an editable result.
-- **Buttons say what they'll do** ("Push 2 commits", not "Push"), and anything risky tells
-  you the command that undoes it.
+- **Built for performance.** The window stays responsive and history opens quickly,
+  whatever the size of the repository.
+- **Understand a repository at a glance.** Your branch is the straight line down the
+  graph, and a plain sentence says where you are and what is waiting.
 - **Conventional Commits built in.** If you tag releases like `v1.2.3`, the commit form
   shows what landing the commit would do to the version.
 - **Pull and merge requests** for GitHub, GitLab and Gitea remotes are listed using git
   alone, with no sign-in and no API token.
-
-If a repository is slow to load, Settings → Repository checks whether git's commit-graph
-file covers your history and writes it if it doesn't.
+- **A clean UI.** Few controls, one typeface, and nothing on screen that the task doesn't
+  need.
+- **A fast flow, whatever your workflow.** The interface is made so the next step is
+  always close at hand, whether you stage hunks, rebase, or review branches.
 
 ## Installing
 
