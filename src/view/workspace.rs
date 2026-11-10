@@ -466,6 +466,7 @@ impl Workspace {
             }))
             .when_some(path, |tab, path| {
                 tab.tooltip(move |window, cx| Tooltip::new(path.clone()).build(window, cx))
+                    .tooltip_show_delay(std::time::Duration::ZERO)
             })
             .child(
                 div()

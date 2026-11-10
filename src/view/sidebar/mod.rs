@@ -1092,5 +1092,6 @@ fn status_icon(
         .id(ElementId::from(id))
         .flex_none()
         .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx))
+        .tooltip_show_delay(std::time::Duration::ZERO)
         .child(svg().path(icon.path()).size(px(14.)).text_color(color))
 }
