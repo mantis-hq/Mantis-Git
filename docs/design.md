@@ -514,6 +514,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   pictures are plain shapes served by the app (`src/icons.rs`), never emoji. A line that can't
   be used stays, in Overlay 2, and says why in as many rows as it needs, never cut short. Only lines that remove something are red, and they ask
   first, saying how to undo. `Up`/`Down` move, `Enter` chooses, `Esc` closes.
+  A ref chip in the graph opens its commit's menu, the same as the row, so the two give the
+  same lines; the sidebar's rows keep the menu of the ref itself.
   A commit's menu starts with a check-out line for each of its refs, as its chips show
   them ("Check out feat/x", "Check out origin/y as a local branch", "Check out v1.0.0
   without a branch"), then "Check out 1a2b3c4 without a branch" for the commit itself.
