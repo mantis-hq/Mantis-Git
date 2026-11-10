@@ -1875,7 +1875,6 @@ fn a_repository_is_cloned_from_an_address_in_a_tab_with_nothing_open(cx: &mut Te
 #[gpui_kit::test]
 #[ignore = "needs the network"]
 fn a_gravatar_replaces_the_initials_once_it_arrives(cx: &mut TestAppContext) {
-    use super::avatars::Face;
     use gitclient_core::history::avatar::Style;
     use gitclient_core::settings::state::AppState;
 
@@ -1901,24 +1900,19 @@ fn a_gravatar_replaces_the_initials_once_it_arrives(cx: &mut TestAppContext) {
     .unwrap();
     view.update(&mut cx, |view, _| view.set_state_file(Some(file)));
 
-    let commit = view.read_with(&cx, |view, _| {
-        view.entries
-            .iter()
-            .map(|entry| entry.commit.clone())
-            .find(|commit| &*commit.email == "beau@dentedreality.com.au")
-            .expect("the commit is listed with its address")
-    });
+    // Nothing calls the lookup by hand: drawing the window is what asks for the picture,
+    // as it does for someone using the app.
     let mut shown = false;
     for _ in 0..50 {
-        shown = view.update(&mut cx, |view, cx| {
-            view.prepare_avatars(cx);
-            matches!(view.avatar_face(&commit, cx), Face::Picture(_))
+        view.update(&mut cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        shown = view.read_with(&cx, |view, _| {
+            view.has_gravatar("beau@dentedreality.com.au")
         });
         if shown {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
-        cx.run_until_parked();
     }
     assert!(shown, "the Gravatar never replaced the initials");
 }
