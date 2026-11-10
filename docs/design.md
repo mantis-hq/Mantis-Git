@@ -255,7 +255,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   and for how long, so a slow command is never a silent wait. Terminals belong to the
   repository tab they were opened in, and start in its folder. The dock shows the front
   tab's terminals; switching tabs brings that tab's own back, and with the dock open a tab
-  that has none gets a clean one at once. Closing a tab ends its shells. Whether the dock is
+  that has none gets a clean one at once. Each tab remembers which of its terminals was in front, and the Log is the dock's own
+  choice: when it is in front it stays in front in every tab, and a tab's terminal is
+  found again when a terminal is picked. Closing a tab ends its shells. Whether the dock is
   open, how many terminals the front tab has and which of its tabs is in front are saved with
   the open tabs (see "App") and come back on launch, the terminals as fresh shells in the
   front repository's folder. The keyboard starts with the repository, not a terminal.
