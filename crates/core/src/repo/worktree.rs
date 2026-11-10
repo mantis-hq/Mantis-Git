@@ -103,6 +103,18 @@ pub fn remove(repo: &Path, path: &Path) -> Result<Option<String>, String> {
     Ok(Some(format!("Removed the worktree at {path}.")))
 }
 
+/// Locks a working tree, so git won't prune or remove it, or lifts the lock.
+pub fn set_locked(repo: &Path, path: &Path, lock: bool) -> Result<Option<String>, String> {
+    let path = super::wsl::for_git(repo, path);
+    let verb = if lock { "lock" } else { "unlock" };
+    ops::run(repo, &["worktree", verb, &path])?;
+    Ok(Some(if lock {
+        format!("Locked the worktree at {path}. To undo, unlock it from its menu.")
+    } else {
+        format!("Unlocked the worktree at {path}. To undo, lock it from its menu.")
+    }))
+}
+
 /// What removing `worktree` does, and how to bring it back.
 pub fn remove_warning(worktree: &Worktree) -> String {
     // The undo is typed in a terminal, which in WSL is the distribution's.

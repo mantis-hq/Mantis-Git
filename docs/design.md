@@ -361,7 +361,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   a word. A worktree whose
   folder is gone is dimmed and says so.
   Right-clicking one opens the usual menu: "Switch to <name>", "Open <name> in a new tab",
-  "Copy path", and in red "Remove worktree <name>", which asks first and gives the
+  "Copy path", "Lock worktree <name>" or, when it is locked, "Unlock worktree <name>" (the
+  main worktree can't be locked), and in red "Remove worktree <name>", which asks first and gives the
   `git worktree add` that brings it back. The main worktree, the one on show and a locked
   one stay, and the menu says why. Git refuses to remove one with uncommitted changes,
   and the app never forces it. With one working tree the section isn't drawn.

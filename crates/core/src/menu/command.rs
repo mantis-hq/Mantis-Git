@@ -108,6 +108,11 @@ pub enum Command {
     /// Handled by the interface, which opens the form: asks for the words a command needs,
     /// such as a new branch's name, then runs what the form says.
     Form(Form),
+    /// Locks a worktree so git won't prune or remove it, or lifts that lock.
+    LockWorktree {
+        path: PathBuf,
+        lock: bool,
+    },
     RemoveWorktree {
         path: PathBuf,
         /// What removing it does and how to bring it back, worked out when the menu opened.
@@ -271,6 +276,8 @@ impl Command {
             Self::ApplyFile { .. } => "Applying",
             Self::SwitchWorktree { .. } | Self::OpenWorktreeInTab { .. } => "Switching",
             Self::Form(form) => form.progress(),
+            Self::LockWorktree { lock: true, .. } => "Locking the worktree",
+            Self::LockWorktree { lock: false, .. } => "Unlocking the worktree",
             Self::RemoveWorktree { .. } => "Removing the worktree",
             Self::OpenSubmoduleInTab { .. } => "Switching",
             Self::UpdateSubmodule { .. } | Self::UpdateSubmodules => "Updating",
@@ -493,6 +500,7 @@ impl Command {
                 path,
                 old_path,
             } => actions::apply_file(repo, oid, path, old_path.as_deref()),
+            Self::LockWorktree { path, lock } => worktree::set_locked(repo, path, *lock),
             Self::RemoveWorktree { path, .. } => worktree::remove(repo, path),
             Self::UpdateSubmodule { path, .. } => submodule::update(repo, path),
             Self::UpdateSubmodules => submodule::update_all(repo),
