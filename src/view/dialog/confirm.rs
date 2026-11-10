@@ -1,5 +1,5 @@
-//! The question asked before a risky step. Rewrites ask in the band under the header;
-//! deletions ask in a popup, and those that lose work nothing else keeps need Enter twice.
+//! The question asked before a risky step, always in a popup. Those that lose work nothing
+//! else keeps need Enter twice.
 
 use super::{Dialog, Frame};
 use crate::view::GraphView;
@@ -42,13 +42,13 @@ impl Confirm {
         }
     }
 
-    /// A question in the band under the header, for a step that rewrites history.
-    pub fn banner(
+    /// A question for a step that rewrites history: Enter answers once.
+    pub fn popup(
         message: impl Into<SharedString>,
         action: impl Into<SharedString>,
         run: impl Fn(&mut GraphView, &mut Context<GraphView>) + 'static,
     ) -> Self {
-        Self::new(message, action, Weight::Banner, run)
+        Self::new(message, action, Weight::Popup, run)
     }
 
     pub(super) fn frame(&self, cx: &App) -> Frame {
@@ -73,19 +73,15 @@ impl Confirm {
 }
 
 impl GraphView {
-    /// Asks before `confirm` runs: in the band under the header, or in a popup.
+    /// Asks in a popup before `confirm` runs.
     pub(in crate::view) fn ask(&mut self, confirm: Confirm, cx: &mut Context<Self>) {
-        if confirm.weight == Weight::Banner {
-            self.confirm = Some(confirm);
-        } else {
-            self.dialog = Some(Dialog::Confirm(confirm));
-        }
+        self.dialog = Some(Dialog::Confirm(confirm));
         cx.notify();
     }
 
-    /// Whether a risky step is waiting for confirmation, in the band or in a popup.
+    /// Whether a risky step is waiting for confirmation.
     pub fn is_confirming(&self) -> bool {
-        self.confirm.is_some() || matches!(self.dialog, Some(Dialog::Confirm(_)))
+        matches!(self.dialog, Some(Dialog::Confirm(_)))
     }
 
     pub(super) fn press_enter_to_confirm(&mut self, cx: &mut Context<Self>) {

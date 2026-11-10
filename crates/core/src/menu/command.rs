@@ -189,9 +189,8 @@ pub struct Confirmation {
 /// How a confirmation is asked, by how much a mistake costs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Weight {
-    /// A band under the header, for steps that rewrite rather than remove.
-    Banner,
-    /// A small popup: Enter confirms, Escape cancels.
+    /// A small popup: Enter confirms, Escape cancels. Also for steps that rewrite rather than
+    /// remove.
     Popup,
     /// A popup for losing work that can't be found again: Enter has to be pressed twice,
     /// quickly.
@@ -281,7 +280,7 @@ impl Command {
             } => Some(Confirmation {
                 message: branch::rebase_warning(branch, onto),
                 action: "Rebase",
-                weight: Weight::Banner,
+                weight: Weight::Popup,
             }),
             Self::Delete {
                 kind,
@@ -309,7 +308,7 @@ impl Command {
             } => Some(Confirmation {
                 message: warning.clone(),
                 action: "Check out",
-                weight: Weight::Banner,
+                weight: Weight::Popup,
             }),
             Self::DeleteStashes { warning, .. } => Some(Confirmation {
                 message: warning.clone(),
@@ -336,7 +335,7 @@ impl Command {
                     short_oid(oid)
                 ),
                 action: "Discard and reset",
-                weight: Weight::Banner,
+                weight: Weight::Popup,
             }),
             _ => None,
         }

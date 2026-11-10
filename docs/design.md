@@ -233,7 +233,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     `gc.writeCommitGraph` or `maintenance.commit-graph.enabled` is off, the row says that
     git won't write it on its own. The page reads all this each time it opens. The main
     window says nothing about the commit graph unless it is the reason for a wait (see
-    "Commit graph band"). Both sentences for a missing or behind graph add that in a large
+    "Commit graph card"). Both sentences for a missing or behind graph add that in a large
     repository it makes branch counts, search and loading history slow.
 - Dock: a 36 px Mantle bar along the bottom of the window with a 1 px Surface 0 top
   border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
@@ -411,12 +411,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   cancels too. A held-down key never answers. The answering button is off while git runs.
   Every popup is drawn by one frame (`src/view/dialog/mod.rs`), and there is at most one.
   - **Delete confirmation:** deleting a branch, tag, worktree or remote asks in a popup,
-    never in the band under the header. The sentence says how to undo it and the result is
+    never in a toast. The sentence says how to undo it and the result is
     "Delete". Deleting a branch that is neither merged into the default branch nor pushed
     loses commits nothing else keeps, so `Enter` has to be pressed twice within 600 ms: the
     first press turns the key line Red and says "Press Enter again to delete." Rules for
     which is which live in core (`Weight` in `crates/core/src/menu/command.rs`). Other risky
-    steps (rebase, force push, hard reset) still use the band.
+    steps (rebase, force push, hard reset) ask in the same popup, where `Enter` answers
+    once.
   - **Forms** ask for a few words: a new branch's name, a remote's name and address, or a
     submodule's address and folder. The
     sentence says what the form makes or changes, and each input sits under its section
@@ -452,16 +453,20 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   it, the panel scrolls.
 - **Toast:** what just happened (and why a step failed, in Peach) is a card over the top
   right of the window, 420 px wide, on Mantle with a Surface 0 border and 8 px radius, and
-  ends in a quiet `×` that closes it. It floats over the graph, so the rows never move. A
-  question that waits for a second click stays a band under the header. Where this
-  document says "the band says" for an outcome, it means the toast. How long it stays
+  ends in a quiet `×` that closes it. It floats over the graph, so the rows never move.
+  There are no bands: nothing in the window pushes the graph down. Where this document
+  says "the band says" for an outcome, it means the toast. A card that offers something
+  (the commit graph and the update, below) is the same card with its buttons under the
+  text, at its right: quiet ones first, then the one blue button, the thing to do next.
+  Cards from one repository tab stack under each other at the top right, the toast first;
+  the update is the window's, not a tab's, and sits at the bottom right. A card that offers
+  something never closes itself. How long it stays
   follows what it says (`toast_lifetime` in `gitclient_core::text`): a confirmation such as
   "Copied 1a2b3c4" closes itself after 4 seconds, a longer one that says how to undo a step
   gets 50 ms more for each character past 30, up to 12 seconds, and a failure stays until
   its `×` is pressed. Hovering a toast holds it open, and it closes 2 seconds after the
   pointer leaves. A new one replaces the one showing.
-- **Commit graph band:** a band under the header, below the band that says what happened,
-  drawn only when a step took 2 seconds or more (`SLOW_AFTER` in
+- **Commit graph card:** a card under the toast, drawn only when a step took 2 seconds or more (`SLOW_AFTER` in
   `gitclient_core::repo::commit_graph`) and the repository has no commit graph that git
   would use (`is_missing`: not a shallow clone, `core.commitGraph` not off, no replace
   refs). The steps are loading the history, timed until its first commits arrive, which is
@@ -469,20 +474,19 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   read after the graph is on screen and fills in when it arrives. It says in Peach what took
   how long and why ("Loading the history took 8 s because this repository has no commit
   graph. Writing one takes about as long, once, and makes this quick."; "Counting the
-  branches took 7 s …"), with quiet buttons "Dismiss" (for that
-  repository, until the window closes) and "Write the commit graph", which runs the same
+  branches took 7 s …"), with a quiet "Dismiss" (for that
+  repository, until the window closes) and the blue "Write the commit graph", which runs the same
   write as Settings → Repository and says what it did in the usual band. A quick count, a
   graph that is only behind, or any other reason for being slow shows nothing. A branch level
   with the default branch is counted without asking git at all.
-- **Update band:** when a newer release is found, a band across the top of the window, above
-  the tabs, in the same style as the band under the header: a blue "Update" pill, "gitclient
-  0.2.0 is available.", and quiet buttons "Later" (hides it until a newer release) and
-  "Update to 0.2.0". Nothing is downloaded until the button is pressed. It then says
+- **Update card:** when a newer release is found, a card at the bottom right of the window:
+  a blue "Update" pill, "gitclient 0.2.0 is available.", and under it a quiet "Later" (hides
+  it until a newer release) and the blue "Update to 0.2.0". Nothing is downloaded until the button is pressed. It then says
   "Downloading gitclient 0.2.0…", and when the new program is in place "gitclient 0.2.0 is
   installed and starts the next time you open it. To go back, download 0.1.0 from
   github.com/…/releases/tag/v0.1.0." with "Restart now". A failure is said in Peach with
   "Try again". Looking and finding nothing, or failing to look, is only said in Settings.
-  The same band offers a nightly ("gitclient nightly 1a2b3c4 is available.") on that track.
+  The same card offers a nightly ("gitclient nightly 1a2b3c4 is available.") on that track.
   The release archive is checked against the release's `SHA256SUMS.txt` before anything is
   replaced, and a mismatch installs nothing. What is said and decided lives in core
   (`gitclient_core::install`).

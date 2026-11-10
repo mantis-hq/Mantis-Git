@@ -126,7 +126,7 @@ impl GraphView {
     /// Runs the header's action, stopping to explain first if it can lose work.
     pub fn start_action(&mut self, action: NextAction, cx: &mut Context<Self>) {
         if let NextAction::ForcePush { replaced, .. } = action {
-            let confirm = Confirm::banner(
+            let confirm = Confirm::popup(
                 self.refs.status.force_push_warning(replaced),
                 "Force push",
                 move |this, cx| this.run_action(action.clone(), cx),

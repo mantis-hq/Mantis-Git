@@ -5,7 +5,7 @@
 //! This only runs it off the UI thread and draws the result. Nothing is downloaded until
 //! the user asks, and a copy a package manager installed never looks.
 
-use super::parts::{band, pill};
+use super::parts::{card, card_actions, pill};
 use crate::theme::tokens;
 use gitclient_core::install::update::{
     self, Build, HOST, Http, Status, Support, Target, Track, Web,
@@ -225,7 +225,7 @@ impl Updates {
         }
     }
 
-    /// The band over the window, if there is something to offer or say.
+    /// The card over the window, if there is something to offer or say.
     fn band(&self) -> Option<update::Band> {
         if let Some(problem) = &self.problem {
             return Some(update::Band {
@@ -241,7 +241,7 @@ impl Updates {
     }
 }
 
-/// The band over the window for `updates`, when it has something to say.
+/// The card over the window for `updates`, when it has something to say.
 pub(super) fn render_band(updates: &Entity<Updates>, cx: &App) -> Option<AnyElement> {
     let (shown, offered) = {
         let this = updates.read(cx);
@@ -260,30 +260,44 @@ pub(super) fn render_band(updates: &Entity<Updates>, cx: &App) -> Option<AnyElem
         }
     };
     Some(
-        band("update", cx)
-            .child(pill("Update", theme.primary, cx))
+        card("update", cx)
+            .absolute()
+            .bottom_4()
+            .right_4()
             .child(
                 div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_color(color)
-                    .child(shown.message),
+                    .h_flex()
+                    .items_start()
+                    .gap_2()
+                    .child(pill("Update", theme.primary, cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_color(color)
+                            .child(shown.message),
+                    ),
             )
-            .children(offered.then(|| {
-                let updates = updates.clone();
-                Button::new("update-later")
-                    .ghost()
-                    .small()
-                    .label("Later")
-                    .on_click(move |_, _, cx| updates.update(cx, |updates, cx| updates.put_off(cx)))
-            }))
-            .children(shown.action.map(|action| {
-                Button::new("update-act")
-                    .ghost()
-                    .small()
-                    .label(action)
-                    .on_click(act(updates))
-            }))
+            .child(
+                card_actions()
+                    .children(offered.then(|| {
+                        let updates = updates.clone();
+                        Button::new("update-later")
+                            .ghost()
+                            .small()
+                            .label("Later")
+                            .on_click(move |_, _, cx| {
+                                updates.update(cx, |updates, cx| updates.put_off(cx))
+                            })
+                    }))
+                    .children(shown.action.map(|action| {
+                        Button::new("update-act")
+                            .primary()
+                            .small()
+                            .label(action)
+                            .on_click(act(updates))
+                    })),
+            )
             .into_any_element(),
     )
 }
