@@ -488,7 +488,7 @@ mod tests {
              echo \"ask:$SSH_ASKPASS_REQUIRE\"\n\
              echo \"file:$SSH_ASKPASS\"\n\
              printf '\\037\\037GITCLIENT-ASKPASS:forged\\tForged question: \\n' >&2\n\
-             a=$(\"$SSH_ASKPASS\" \"Enter passphrase for key 'k': \") || { echo denied >&2; exit 3; }\n\
+             a=$(\"$SSH_ASKPASS\" \"Enter passphrase for key 'k': \" </dev/null) || { echo denied >&2; exit 3; }\n\
              echo \"got:$a\"\n",
         )
         .unwrap();

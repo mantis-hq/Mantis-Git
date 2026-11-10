@@ -113,7 +113,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   Questions from git (see "Questions from git") are asked in the same popup, with nothing
   from Windows involved: a small script starts git in the distribution with its own
   askpass program, which prints the question on stderr after a marker and reads the answer
-  from stdin. The app reads the marker, asks, and writes the answer back, so the ssh key
+  from a fifo, since ssh gives its askpass program a stdin of its own; a loop in the script
+  copies the app's answer from the script's stdin into the fifo. The app reads the marker,
+  asks, and writes the answer back, so the ssh key
   and agent are the distribution's own. The marker carries a token made up for each
   command, so a remote can't print one of its own to make the app ask a question. Only
   commands whose subcommand connects to a remote (`fetch`, `pull`, `push`, `clone`, …) keep
