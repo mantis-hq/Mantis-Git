@@ -124,9 +124,10 @@ impl Settings {
         Some(self.render_group("Launcher", vec![row], cx))
     }
 
-    /// The "Updates" card. A copy a package manager installed says so and has nothing to
-    /// set. A portable one says where an update stands, and acts on it.
-    fn render_updates_group(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// The rows about updates, which the About page shows under the version. A copy a
+    /// package manager installed says so and has nothing to set. A portable one says where
+    /// an update stands, and acts on it.
+    pub(super) fn update_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let updates = self.updates.clone();
         let reason = match &updates {
             Some(updates) => updates.read(cx).reason().map(str::to_owned),
@@ -143,7 +144,7 @@ impl Settings {
                 .py_3()
                 .child(self.row_words("Updates", reason.as_deref().unwrap_or_default(), cx))
                 .into_any_element();
-            return self.render_group("Updates", vec![row], cx);
+            return vec![row];
         };
 
         let enabled = self.state_file.is_some();
@@ -215,7 +216,7 @@ impl Settings {
             .child(self.row_words("Check for updates", &status.sentence(&build, track), cx))
             .children(button)
             .into_any_element();
-        self.render_group("Updates", vec![switch, choice, state], cx)
+        vec![switch, choice, state]
     }
 
     /// Turns "reopen repositories on launch" on or off and saves it at once.
@@ -834,7 +835,6 @@ impl Settings {
                 cx,
             ))
             .children(self.render_launcher_group(cx))
-            .child(self.render_updates_group(cx))
             .child(self.render_graph_group(cx))
             .child(self.render_avatars_group(cx))
             .child(self.render_cache_group(cx))

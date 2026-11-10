@@ -1,22 +1,32 @@
-//! The About page: which build this is, where its source is, and the licenses of everything
-//! in it. What it says lives in `gitclient_core::about`; this only draws it.
+//! The About page: which build this is, how it updates, where its source is, and the licenses
+//! that have to be shown for everything in it. What it says lives in `gitclient_core::about`;
+//! this only draws it.
 
 use super::*;
 use gitclient_core::about::{self, License};
 use gitclient_core::install::update::Build;
+use gpui_kit::component::scroll::ScrollableElement as _;
+use std::ops::Range;
+
+/// The height of one license in the list. Every row shares it, so the list can draw only
+/// the rows in view.
+const LICENSE_ROW: Pixels = px(48.);
+/// How much of the list shows at once.
+const LICENSES_SHOWN: Pixels = px(288.);
+/// How much of a license's text shows at once before it scrolls.
+const TEXT_SHOWN: Pixels = px(320.);
 
 impl Settings {
-    /// Opens a license's text, or closes it when it is the one open.
-    pub(super) fn toggle_license(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.open_license = (self.open_license != Some(index)).then_some(index);
+    /// Picks a license to read, or puts it down when it is the one picked.
+    pub(super) fn pick_license(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.picked_license = (self.picked_license != Some(index)).then_some(index);
         cx.notify();
     }
 
-    /// The "Version" card: the build, what gitclient is licensed under, and a link to the
-    /// source.
+    /// The "Version" card: the build and where its source is, then how it updates.
     fn render_version_group(&self, cx: &mut Context<Self>) -> AnyElement {
         let build = Build::current(option_env!("GITCLIENT_COMMIT"));
-        let row = div()
+        let version = div()
             .px_4()
             .py_3()
             .gap_3()
@@ -30,90 +40,139 @@ impl Settings {
                     .on_click(|_, _, cx| cx.open_url(about::SOURCE_URL)),
             )
             .into_any_element();
-        self.render_group("Version", vec![row], cx)
+        let mut rows = vec![version];
+        rows.extend(self.update_rows(cx));
+        self.render_group("Version", rows, cx)
     }
 
-    /// One license: its name and what is under it, with its text under that when open.
-    fn render_license(
-        &self,
-        index: usize,
-        license: &License,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    /// The rows of the list in `range`: a license's name, what is under it, and how many.
+    fn render_license_rows(&self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let theme = cx.theme();
-        let (muted, base, hover) = (theme.muted_foreground, theme.background, theme.list_hover);
-        let open = self.open_license == Some(index);
-        let head = div()
-            .id(("license", index))
-            .v_flex()
-            .gap_0p5()
-            .px_4()
-            .py_2()
-            .cursor_pointer()
-            .hover(|row| row.bg(hover))
-            .on_click(cx.listener(move |this, _, _, cx| this.toggle_license(index, cx)))
-            .child(
+        let (muted, border, picked, hover) = (
+            theme.muted_foreground,
+            theme.border,
+            selected_row(theme),
+            theme.list_hover,
+        );
+        let all = about::licenses();
+        range
+            .filter_map(|index| Some((index, all.get(index)?)))
+            .map(|(index, license)| {
+                let on = self.picked_license == Some(index);
                 div()
-                    .h_flex()
-                    .gap_2()
-                    .child(div().w(px(12.)).text_color(muted).child(if open {
-                        "▾"
-                    } else {
-                        "▸"
-                    }))
+                    .id(("license", index))
+                    .v_flex()
+                    .justify_center()
+                    .h(LICENSE_ROW)
+                    .px_4()
+                    .gap_0p5()
+                    .border_b_1()
+                    .border_color(border)
+                    .cursor_pointer()
+                    .when(on, |row| row.bg(picked))
+                    .when(!on, |row| row.hover(|row| row.bg(hover)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.pick_license(index, cx)))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(TEXT_BODY)
-                            .line_height(px(20.))
-                            .child(license.name.clone()),
+                            .h_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(TEXT_BODY)
+                                    .line_height(px(20.))
+                                    .when(on, |name| name.font_semibold())
+                                    .child(license.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_size(TEXT_SMALL)
+                                    .text_color(muted)
+                                    .child(license.projects()),
+                            ),
                     )
                     .child(
                         div()
-                            .flex_none()
+                            .truncate()
                             .text_size(TEXT_SMALL)
+                            .line_height(px(17.))
                             .text_color(muted)
-                            .child(license.projects()),
-                    ),
-            )
-            .child(
-                div()
-                    .pl_5()
-                    .truncate()
-                    .text_size(TEXT_SMALL)
-                    .line_height(px(17.))
-                    .text_color(muted)
-                    .child(license.used_by_line()),
-            );
-        div()
-            .v_flex()
-            .child(head)
-            .when(open, |row| {
-                row.child(
-                    div().px_4().pb_3().child(
-                        div()
-                            .p_3()
-                            .rounded(px(6.))
-                            .bg(base)
-                            .text_size(TEXT_SMALL)
-                            .line_height(px(20.))
-                            .child(license.text.clone()),
-                    ),
-                )
+                            .child(license.used_by_line()),
+                    )
+                    .into_any_element()
             })
-            .into_any_element()
+            .collect()
     }
 
-    /// The "Licenses" card, one row for each license text.
+    /// The "Licenses" card: a list that draws only the rows in view, and the text of the
+    /// license picked from it under that.
     fn render_licenses_group(&self, cx: &mut Context<Self>) -> AnyElement {
-        let rows = about::licenses()
-            .iter()
-            .enumerate()
-            .map(|(index, license)| self.render_license(index, license, cx))
-            .collect();
-        self.render_group("Licenses", rows, cx)
+        let theme = cx.theme();
+        let (panel, border, muted, base) = (
+            theme.list_head,
+            theme.border,
+            theme.muted_foreground,
+            theme.background,
+        );
+        let all = about::licenses();
+        let list = div()
+            .relative()
+            .h(LICENSES_SHOWN)
+            .child(
+                uniform_list(
+                    "licenses",
+                    all.len(),
+                    cx.processor(|this, range: Range<usize>, _, cx| {
+                        this.render_license_rows(range, cx)
+                    }),
+                )
+                .track_scroll(&self.licenses_scroll)
+                .size_full(),
+            )
+            .vertical_scrollbar(&self.licenses_scroll);
+        let text = self
+            .picked_license
+            .and_then(|index| all.get(index))
+            .map(|license: &License| {
+                div()
+                    .id("license-text")
+                    .max_h(TEXT_SHOWN)
+                    .overflow_y_scroll()
+                    .m_3()
+                    .p_3()
+                    .rounded(px(6.))
+                    .bg(base)
+                    .text_size(TEXT_SMALL)
+                    .line_height(px(20.))
+                    .child(license.text.clone())
+            });
+        let hint = text.is_none().then(|| {
+            div()
+                .p_3()
+                .text_size(TEXT_SMALL)
+                .text_color(muted)
+                .child("Pick a license to read it.")
+        });
+        div()
+            .v_flex()
+            .gap_2()
+            .child(section_label(muted).child("Licenses"))
+            .child(
+                div()
+                    .v_flex()
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(border)
+                    .bg(panel)
+                    .overflow_hidden()
+                    .child(list)
+                    .children(text)
+                    .children(hint),
+            )
+            .into_any_element()
     }
 
     pub(super) fn render_about(&self, cx: &mut Context<Self>) -> AnyElement {
