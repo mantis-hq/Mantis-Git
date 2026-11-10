@@ -14,10 +14,11 @@ installed `git`.
   whatever the size of the repository.
 - **Understand a repository at a glance.** Your branch is the straight line down the
   graph, and a plain sentence says where you are and what is waiting.
-- **Conventional Commits built in.** If you tag releases like `v1.2.3`, the commit form
-  shows what landing the commit would do to the version.
+- **Conventional Commits built in.** Pick `feat`, `fix`, `docs` and the other kinds of
+  change in the commit form, and it writes the commit line for you.
 - **Pull and merge requests** for GitHub, GitLab and Gitea remotes are listed using git
   alone, with no sign-in and no API token.
+- **WSL2 support on Windows.** Repositories inside WSL2 open like any other.
 - **A clean UI.** Few controls, one typeface, and nothing on screen that the task doesn't
   need.
 - **A fast flow, whatever your workflow.** The interface is made so the next step is
@@ -26,39 +27,23 @@ installed `git`.
 ## Installing
 
 Download the archive for your system from the
-[releases](https://github.com/pretext8335/gitclient/releases) page (`.tar.gz` for Linux,
-`.zip` for Windows), unpack it anywhere and run `gitclient`. You need `git` on your `PATH`;
-a recent version is recommended, since some features, such as the sidebar's branch counts,
-need it.
+[releases](https://github.com/pretext8335/gitclient/releases) page, unpack it and run
+`gitclient`.
 
-On first run it offers to add itself to the application menu. It checks for a newer
-release on start and asks before installing one.
+## Dependencies
+
+- `git` on your `PATH`. Version 2.41 or newer is recommended, as the sidebar's branch
+  counts need it.
+- To build from source: a recent stable Rust toolchain.
+- To build on Linux: `pkg-config`, `libxcb1-dev`, `libxkbcommon-dev`,
+  `libxkbcommon-x11-dev`, `libfontconfig1-dev`, `libfreetype-dev` and `libwayland-dev`
+  (package names for Debian and Ubuntu).
 
 ## Building from source
 
-You need a recent stable Rust toolchain. On Linux you also need the usual GUI libraries:
-
-```sh
-sudo apt-get install pkg-config libxcb1-dev libxkbcommon-dev \
-  libxkbcommon-x11-dev libfontconfig1-dev libfreetype-dev libwayland-dev
-```
-
-Then:
-
 ```sh
 cargo run --release
-cargo test                # both crates
-cargo test --test render  # renders through the real GPU pipeline, opt-in
-cargo fmt --all           # plain `cargo fmt` skips crates/core, and CI checks it
 ```
-
-## How it's put together
-
-Everything about a repository lives in `crates/core` (`gitclient-core`), which never
-depends on the UI toolkit. The window in `src/` asks core what's true and draws the
-answer, so rules and wording can be tested without opening a window. All git goes through
-`crates/core/src/ops.rs`. The look and behaviour are specified in
-[docs/design.md](docs/design.md).
 
 ## AI disclosure
 
