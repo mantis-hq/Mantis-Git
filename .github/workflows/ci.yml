@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   check:
-    runs-on: docker
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'docker' }}
     container:
       image: rust:1-trixie
     steps:
