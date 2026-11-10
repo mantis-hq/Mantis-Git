@@ -83,7 +83,7 @@ pub(super) fn card(id: &'static str, cx: &App) -> Stateful<Div> {
         .px_3()
         .rounded_lg()
         .border_1()
-        .border_color(theme.border)
+        .border_color(theme.primary)
         .bg(theme.title_bar)
         .text_size(TEXT_BODY)
 }

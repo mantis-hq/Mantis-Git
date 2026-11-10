@@ -48,6 +48,8 @@ pub struct AppState {
     pub welcome_seen: bool,
     /// Whether a portable copy looks for a newer release when it starts.
     pub check_updates: bool,
+    /// Whether every open repository is fetched from its remotes every few minutes.
+    pub auto_fetch: bool,
     /// Whether updates are full releases or the nightly pre-release.
     pub update_track: Track,
     /// The folder the last repository was cloned into, which the clone form starts with.
@@ -95,6 +97,7 @@ impl Default for AppState {
             dock: DockLayout::default(),
             welcome_seen: false,
             check_updates: true,
+            auto_fetch: true,
             update_track: Track::default(),
             clone_dir: None,
         }
@@ -165,6 +168,7 @@ impl AppState {
                 }
                 "welcome_seen" => state.welcome_seen = value.trim() == "true",
                 "check_updates" => state.check_updates = value.trim() != "false",
+                "auto_fetch" => state.auto_fetch = value.trim() != "false",
                 "update_track" => state.update_track = Track::from_key(value),
                 "clone_dir" if !value.trim().is_empty() => {
                     state.clone_dir = Some(PathBuf::from(value.trim()));
@@ -198,6 +202,7 @@ impl AppState {
         }
         text.push_str(&format!("welcome_seen={}\n", self.welcome_seen));
         text.push_str(&format!("check_updates={}\n", self.check_updates));
+        text.push_str(&format!("auto_fetch={}\n", self.auto_fetch));
         text.push_str(&format!("update_track={}\n", self.update_track.key()));
         if let Some(dir) = self.clone_dir.as_deref().and_then(Path::to_str)
             && !dir.contains('\n')
@@ -516,6 +521,7 @@ mod tests {
             },
             welcome_seen: true,
             check_updates: false,
+            auto_fetch: false,
             update_track: Track::Nightly,
             clone_dir: Some("/work/clones".into()),
         };
@@ -537,6 +543,13 @@ mod tests {
         assert!(!AppState::parse("welcome_seen=yes").welcome_seen);
         assert!(!AppState::parse("check_updates=false").check_updates);
         assert!(AppState::parse("check_updates=maybe").check_updates);
+    }
+
+    #[test]
+    fn remotes_are_fetched_in_the_background_unless_turned_off() {
+        assert!(AppState::parse("").auto_fetch);
+        assert!(!AppState::parse("auto_fetch=false").auto_fetch);
+        assert!(AppState::parse("auto_fetch=maybe").auto_fetch);
     }
 
     #[test]

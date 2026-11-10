@@ -78,6 +78,14 @@ impl GraphView {
             })
     }
 
+    /// Whether the app settings let it fetch by itself. On when there is no settings file.
+    pub(in crate::view) fn auto_fetch_on(&self) -> bool {
+        self.commit
+            .state_file
+            .as_deref()
+            .is_none_or(|file| AppState::load(file).auto_fetch)
+    }
+
     /// Lists the files in `view` and remembers it for every repository. The file's other
     /// settings are left as they are.
     pub(in crate::view) fn set_files_view(&mut self, view: FileView, cx: &mut Context<Self>) {

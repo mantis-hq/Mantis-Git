@@ -39,6 +39,22 @@ fn configured(mut command: Command) -> Command {
     command
 }
 
+/// Set on a command that must never ask the person anything. See [`quietly`].
+const NEVER_ASK: &str = "GITCLIENT_NEVER_ASK";
+
+/// Marks a command as one nobody is waiting on, such as a fetch the app makes by itself.
+/// Where an ordinary command would open a question for a key's passphrase or a login, this
+/// one fails, so a popup never appears for something the person didn't start.
+pub(crate) fn quietly(command: &mut Command) -> &mut Command {
+    command.env(NEVER_ASK, "1")
+}
+
+fn is_quiet(command: &Command) -> bool {
+    command
+        .get_envs()
+        .any(|(name, value)| name == NEVER_ASK && value.is_some())
+}
+
 /// Runs git and returns its output, or what it said went wrong.
 pub fn run(repo: &Path, args: &[&str]) -> Result<String, String> {
     run_command(git(repo).args(args), None)
@@ -172,7 +188,7 @@ impl Process {
         // commands that can reach a remote keep stdin open for the answer; any other
         // might wait on an input that never comes.
         let asking = wsl::Invocation::of(command)
-            .filter(|invocation| !piped_stdin && invocation.may_ask())
+            .filter(|invocation| !piped_stdin && !is_quiet(command) && invocation.may_ask())
             .map(|_| {
                 // One asker for the whole command, so ssh asking again means a wrong answer.
                 let asker = NEXT_ASKER.fetch_add(1, Ordering::Relaxed);
@@ -205,7 +221,13 @@ impl Process {
         // ssh would otherwise ask on the terminal the app was started from, where nobody
         // sees it and git waits forever. The question goes to the app's popup instead.
         #[cfg(unix)]
-        if asking.is_none() {
+        if is_quiet(command) {
+            // Not even a program of the user's own, which would open a window.
+            command
+                .env("SSH_ASKPASS", "/bin/false")
+                .env("SSH_ASKPASS_REQUIRE", "force")
+                .env("GIT_ASKPASS", "/bin/false");
+        } else if asking.is_none() {
             crate::askpass::configure(command);
         }
         #[cfg(windows)]

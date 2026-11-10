@@ -279,7 +279,52 @@ impl GraphView {
 
     pub(super) fn run_command(&mut self, command: Command, cx: &mut Context<Self>) {
         let label = command.progress();
-        self.run_operation(label, move |repo| command.run(repo), cx);
+        if !matches!(command, Command::PushBranch { .. } | Command::PushTo { .. }) {
+            self.run_operation(label, move |repo| command.run(repo), cx);
+            return;
+        }
+        // A push git refuses because the remote has commits the branch lacks can be forced,
+        // which is asked about in its own popup.
+        let Some(workdir) = self.workdir() else {
+            return;
+        };
+        if self.busy.is_some() {
+            return;
+        }
+        self.busy = Some(label.into());
+        self.notice = None;
+        cx.notify();
+        Self::spawn_blocking(
+            move || {
+                let result = command.run(&workdir);
+                let force = result
+                    .as_ref()
+                    .err()
+                    .and_then(|error| command.force_after_rejection(&workdir, error));
+                (result, force)
+            },
+            |this, (result, force), cx| match force {
+                Some(force) => {
+                    this.busy = None;
+                    this.ask_to_force(force, cx);
+                }
+                None => this.finish_operation(result, cx),
+            },
+            cx,
+        );
+    }
+
+    /// Asks before a force push, which takes Enter twice.
+    fn ask_to_force(&mut self, force: Command, cx: &mut Context<Self>) {
+        if let Some(confirmation) = force.confirmation() {
+            let confirm = Confirm::new(
+                confirmation.message,
+                confirmation.action,
+                confirmation.weight,
+                move |this, cx| this.run_command(force.clone(), cx),
+            );
+            self.ask(confirm, cx);
+        }
     }
 
     pub(super) fn open_ref_menu(

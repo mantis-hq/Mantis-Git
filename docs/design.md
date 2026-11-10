@@ -1,8 +1,8 @@
 # gitclient UI style
 
 Every window, panel, and component in gitclient follows this document. The visual
-reference is the design canvas: [link removed]
-(private to its owner). If the canvas and this file disagree, this file wins until it
+reference is the design canvas, which is kept outside the repository
+and private to its owner. If the canvas and this file disagree, this file wins until it
 is updated.
 
 The look is dark, modern, and minimal: Catppuccin Mocha, one typeface, and as few
@@ -180,6 +180,14 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     `gitclient`), and empty tabs are left out. A path on the command line wins over the
     remembered tabs, and a folder that is gone is skipped. If there is no config folder the
     page says so and the tick box is not drawn.
+    Under "Remotes", a tick box "Fetch in the background" (on by default, `auto_fetch` in the
+    same file) has the front tab fetch every remote every 5 minutes (`EVERY` in
+    `gitclient_core::repo::auto_fetch`), so what is ahead and behind stays true; the graph
+    reloads only if a ref moved. It is a plain `git fetch --all`: no branch moves and none is
+    deleted. It never asks a question, so a key with a passphrase no agent holds, or a login,
+    makes it fail without a word (the Log has what git said) until a fetch by hand answers
+    it. It skips a tab that is busy, still loading or behind another tab, and a fetch with
+    the box clear is only the header's "Fetch".
     Under "Graph", a row of chips picks how many commits the graph loads from a repository
     (100, 500 by default, 1000, 5000, 20000), kept as `commit_limit` in the same file. The
     newest commits by history order come first. Scrolling to within 200 rows of the end
@@ -265,8 +273,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     (`v1.2.3`). The nightly is the one pre-release every push to `main` replaces; all
     nightlies share a version, so one is told from the next by the commit it was built from
     (`GITCLIENT_COMMIT`, set at build time), and is named "nightly 1a2b3c4". Choosing a
-    track looks again at once. Releases are read from one host, Gitea for now, set in one
-    place (`HOST` in `gitclient_core::install::update`), and moving to GitHub is a one-line
+    track looks again at once. Releases are read from one host, GitHub, set in one
+    place (`HOST` in `gitclient_core::install::update`), and moving to another is a one-line
     change.
     A "Licenses" card lists the licenses that have to be shown for what is in the program:
     those that ask for their text to go with a copy, so 0BSD, CC0 and the Unlicense are left
@@ -359,7 +367,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   a word. A worktree whose
   folder is gone is dimmed and says so.
   Right-clicking one opens the usual menu: "Switch to <name>", "Open <name> in a new tab",
-  "Copy path", and in red "Remove worktree <name>", which asks first and gives the
+  "Copy path", "Lock worktree <name>" or, when it is locked, "Unlock worktree <name>" (the
+  main worktree can't be locked), and in red "Remove worktree <name>", which asks first and gives the
   `git worktree add` that brings it back. The main worktree, the one on show and a locked
   one stay, and the menu says why. Git refuses to remove one with uncommitted changes,
   and the app never forces it. With one working tree the section isn't drawn.
@@ -390,14 +399,22 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Push by dropping: a local branch also drops on a remote branch, which tints like a
   local one. The menu holds one line, "Push feat/x to origin/main", only when that
   fast-forwards the remote branch. When the remote branch already has everything, or has
-  commits the branch lacks (a push would need a force, which the app never does), the line
-  says so and can't be used. The band says how to undo a push.
+  commits the branch lacks (a push would need a force, which is only offered after a push
+  fails; see "Force push"), the line says so and can't be used. The band says how to undo a push.
 - Pull and push from the menu: the menu of a local branch that follows a remote branch, checked
   out or not, has "Pull origin/x into x" and "Push 2 commits to origin/x". Pull
   asks the remote and only fast-forwards, so nothing is merged; on a branch that isn't checked
   out the working tree stays as it is. It is always offered, since the counts come from the last fetch. Push is
   offered when the branch is ahead, else it stays and says why. The band says how to undo
   each. A branch that follows nothing gets neither line.
+- Force push: a push is never forced on its own. When git refuses one because the remote
+  branch has commits the branch lacks, a popup follows that
+  says so and that forcing replaces those commits for everyone who uses the remote, and gives
+  the `git push --force-with-lease` that puts them back. Its result is "Force push" and it
+  takes Enter twice (see "Delete confirmation"). It runs `git push --force-with-lease`
+  against the commit the last fetch saw, so a remote that has moved since is refused, not
+  overwritten. Any other failure is said in the toast as before. What is decided lives in
+  core (`branch::push_was_rejected`, `Command::force_after_rejection`).
 - Upstream: a local branch's menu has "Set upstream of <name>", which opens a form popup
   with the remote and the branch on one row, as `origin / main` reads: a "Remote" dropdown
   that starts on the remote holding a branch of the same name (or the first), a `/`, and a
@@ -530,7 +547,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   away. Settings → App adds or removes the launcher from then on. On a window too short for
   it, the panel scrolls.
 - **Toast:** what just happened (and why a step failed, in Peach) is a card over the bottom
-  right of the window, 420 px wide, on Mantle with a Surface 0 border and 8 px radius, and
+  right of the window, 420 px wide, on Mantle with a 1 px Blue outline and 8 px radius, and
   ends in a quiet `×` that closes it. It floats over the graph, so the rows never move.
   There are no bands: nothing in the window pushes the graph down. Where this document
   says "the band says" for an outcome, it means the toast. A card that offers something
@@ -612,6 +629,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   older than what the graph has loaded is dimmed, and clicking it says so in the band.
   `Esc` or "Close" brings the graph back, scrolled to the picked commit. An open diff or
   resolver covers the bar like the rest of the graph.
+- **Back to the top:** once the graph is scrolled down a screen or more, a 28 px quiet button
+  with an up arrow (Mantle fill, Surface 0 border, 6 px radius) floats at the top middle of
+  the list, with the tooltip "Back to the newest commit". Clicking it scrolls to the first
+  row, and it goes away at the top.
 - **Selecting commits:** a click selects one, `Ctrl`-click adds or removes one, and
   `Shift`-click adds the range. Selected rows take the selected-row fill, and the menu
   then acts on all of them.

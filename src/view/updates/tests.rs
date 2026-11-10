@@ -46,7 +46,7 @@ impl Http for Releases {
         if self.broken {
             return Err("Couldn't reach GitHub: offline.".to_owned());
         }
-        let host = "https://git.example.com/o/r";
+        let host = "https://github.com/o/r";
         // Full releases come as a list, the nightly as the one release at its tag.
         let json = if url == HOST.releases_url() {
             let archive = linux().archive_name(&self.tag);

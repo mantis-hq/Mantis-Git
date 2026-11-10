@@ -8,6 +8,7 @@ use gitclient_core::history::avatar::{self, Style as AvatarStyle};
 use gitclient_core::history::lanes::LaneColor;
 use gitclient_core::install::exe_path;
 use gitclient_core::install::update::{self, Track};
+use gitclient_core::repo::auto_fetch;
 
 impl Settings {
     /// Reads how the launcher stands, which is what the page shows. Settings reads the disk
@@ -59,6 +60,47 @@ impl Settings {
             Err(error) => self.feedback = Feedback::Failed(error),
         }
         cx.notify();
+    }
+
+    /// Turns "fetch in the background" on or off, and saves it at once.
+    pub(super) fn set_auto_fetch(&mut self, on: bool, cx: &mut Context<Self>) {
+        let Some(file) = &self.state_file else {
+            return;
+        };
+        match AppState::change(file, |state| state.auto_fetch = on) {
+            Ok(state) => {
+                self.feedback = Feedback::Saved(auto_fetch::saved_message(on).to_owned());
+                self.app = state;
+            }
+            Err(error) => self.feedback = Feedback::Failed(error),
+        }
+        cx.notify();
+    }
+
+    /// The "Remotes" card: whether the app fetches by itself.
+    fn render_remotes_group(&self, cx: &mut Context<Self>) -> AnyElement {
+        let enabled = self.state_file.is_some();
+        let on = self.app.auto_fetch;
+        let switch = div()
+            .px_4()
+            .py_3()
+            .gap_3()
+            .h_flex()
+            .child(self.row_words(
+                "Fetch in the background",
+                if enabled {
+                    auto_fetch::sentence(on)
+                } else {
+                    "gitclient can't find a folder to keep this in."
+                },
+                cx,
+            ))
+            .children(enabled.then(|| {
+                checkbox("auto-fetch", on, false, cx)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_auto_fetch(!on, cx)))
+            }))
+            .into_any_element();
+        self.render_group("Remotes", vec![switch], cx)
     }
 
     /// Chooses full releases or the nightly build, saves it at once and tells the updater,
@@ -835,6 +877,7 @@ impl Settings {
                 cx,
             ))
             .children(self.render_launcher_group(cx))
+            .child(self.render_remotes_group(cx))
             .child(self.render_graph_group(cx))
             .child(self.render_avatars_group(cx))
             .child(self.render_cache_group(cx))

@@ -329,6 +329,25 @@ pub fn worktree_menu(refs: &Refs, path: &Path) -> Vec<Line> {
     ));
     lines.push(Line::Separator);
     lines.push(if tree.is_main {
+        Line::unavailable(format!(
+            "{name} holds the repository, so it can't be locked"
+        ))
+    } else {
+        let lock = !tree.locked;
+        Line::item(
+            if lock {
+                format!("Lock worktree {name}")
+            } else {
+                format!("Unlock worktree {name}")
+            },
+            Command::LockWorktree {
+                path: tree.path.clone(),
+                lock,
+            },
+        )
+    });
+    lines.push(Line::Separator);
+    lines.push(if tree.is_main {
         Line::unavailable(format!("{name} holds the repository, so it stays"))
     } else if tree.is_current {
         Line::unavailable(format!("{name} is on show, so it stays"))
@@ -1223,6 +1242,7 @@ mod tests {
                 "Switch to app-x",
                 "Open app-x in a new tab",
                 "Copy path",
+                "Lock worktree app-x",
                 "Remove worktree app-x",
             ]
         );
