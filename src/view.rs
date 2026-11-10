@@ -260,7 +260,7 @@ impl GraphView {
             commit: Default::default(),
             conflict: Default::default(),
             in_background: false,
-            avatars: Default::default(),
+            avatars: avatars::State::new(),
             caches: shared_caches(cx),
             fingerprint: None,
             _activation: activation,

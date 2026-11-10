@@ -290,6 +290,20 @@ impl AppState {
         )
     }
 
+    /// What the storage row says about the caches' size: against the limit while the disk
+    /// cache is on, or alone while it is off and the limit means nothing.
+    pub fn cache_usage_sentence(&self, used: u64) -> String {
+        if self.disk_cache {
+            format!(
+                "Using {} of {}.",
+                bytes_label(used),
+                cache_size_label(self.cache_mb)
+            )
+        } else {
+            format!("Using {} on disk.", bytes_label(used))
+        }
+    }
+
     /// What the header says after the cache is cleared.
     pub fn cache_cleared_message() -> &'static str {
         "Cleared the cache. Commits are read from git again as you open them."
@@ -410,6 +424,17 @@ mod tests {
             })
             .collect();
         (root, paths)
+    }
+
+    #[test]
+    fn the_storage_row_compares_with_the_limit_only_while_the_cache_is_on() {
+        let on = AppState::default();
+        assert_eq!(on.cache_usage_sentence(98 << 20), "Using 98 MB of 256 MB.");
+        let off = AppState {
+            disk_cache: false,
+            ..AppState::default()
+        };
+        assert_eq!(off.cache_usage_sentence(98 << 20), "Using 98 MB on disk.");
     }
 
     #[test]

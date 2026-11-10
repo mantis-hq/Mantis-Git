@@ -1,4 +1,5 @@
 use super::{Feedback, Match, Page, Scope, Settings, Target, config, identity};
+use gitclient_core::cache::keys::Usage;
 use gitclient_core::settings::state::AppState;
 use gitclient_core::testing::Repo;
 use gpui_kit::component::input::InputEvent;
@@ -494,6 +495,42 @@ fn the_reopen_switch_saves_at_once_and_keeps_the_remembered_tabs(cx: &mut TestAp
 
     view.update(&mut cx, |settings, cx| settings.set_reopen_tabs(true, cx));
     assert!(AppState::load(&file).reopen_tabs);
+}
+
+#[gpui_kit::test]
+fn the_storage_bar_draws_with_the_cache_on_and_off(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("state");
+    AppState::default().save(&file).unwrap();
+    let (view, mut cx) = open(None, Scope::File(dir.path().join("gitconfig")), cx);
+    view.update(&mut cx, |settings, cx| {
+        settings.state_file = Some(file.clone());
+        settings.page = Page::App;
+        settings.cache_usage = Some(vec![
+            Usage {
+                label: "Commit files",
+                bytes: 90 << 20,
+            },
+            Usage {
+                label: "File diffs",
+                bytes: 8 << 20,
+            },
+            Usage {
+                label: "Avatars",
+                bytes: 0,
+            },
+        ]);
+        cx.notify();
+    });
+    // The bar leaves out a cache that holds nothing, but the legend still names it, and
+    // drawing with the disk cache off (no limit to measure against) works as well.
+    draw(&view, &mut cx);
+    view.update(&mut cx, |settings, cx| settings.set_disk_cache(false, cx));
+    draw(&view, &mut cx);
+    // Counting again, which opening the page does, leaves the bar drawable.
+    view.update(&mut cx, |settings, cx| settings.load_cache_size(cx));
+    cx.run_until_parked();
+    draw(&view, &mut cx);
 }
 
 #[gpui_kit::test]

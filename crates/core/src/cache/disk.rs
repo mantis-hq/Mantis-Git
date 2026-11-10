@@ -10,6 +10,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
 const MAGIC: &[u8; 4] = b"GCCE";
@@ -26,26 +27,35 @@ pub fn hash64(bytes: &[u8]) -> u64 {
     })
 }
 
-pub struct DiskStore {
-    dir: PathBuf,
+/// The size limit shared by every cache folder under one root, so that the limit is for
+/// the app's caches as a whole and room one doesn't use is there for the others. When the
+/// folders together are over it, the least recently used entries of any of them go first.
+pub struct Budget {
+    root: PathBuf,
     max_bytes: AtomicU64,
-    /// About how much the folder holds. Writes add to it and a scan corrects it.
+    /// About how much all the folders hold. Writes add to it and a scan corrects it.
     used: AtomicU64,
-    writes: AtomicU64,
+    /// Held while trimming, so that two caches going over at once trim once.
+    trimming: Mutex<()>,
 }
 
-impl DiskStore {
-    /// Touches nothing yet: the folder is made by the first write.
-    pub fn new(dir: PathBuf, max_bytes: u64) -> Self {
-        Self {
-            dir,
+impl Budget {
+    /// Touches nothing yet: the folders are made by their first write.
+    pub fn new(root: PathBuf, max_bytes: u64) -> Arc<Self> {
+        Arc::new(Self {
+            root,
             max_bytes: AtomicU64::new(max_bytes),
             used: AtomicU64::new(0),
-            writes: AtomicU64::new(0),
-        }
+            trimming: Mutex::new(()),
+        })
     }
 
-    /// Changes the size limit, and brings the folder under it if it is over.
+    /// Where the cache called `name` keeps its entries.
+    pub fn folder(&self, name: &str) -> PathBuf {
+        self.root.join(name)
+    }
+
+    /// Changes the limit, and brings the folders under it if they are over.
     pub fn set_max_bytes(&self, max_bytes: u64) {
         self.max_bytes.store(max_bytes, Ordering::Relaxed);
         self.scan();
@@ -56,6 +66,77 @@ impl DiskStore {
 
     fn max_bytes(&self) -> u64 {
         self.max_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Counts everything under the root, and clears out partial writes a crash left behind.
+    pub fn scan(&self) -> u64 {
+        let total = self.files().iter().map(|file| file.size).sum();
+        self.used.store(total, Ordering::Relaxed);
+        total
+    }
+
+    /// Every entry of every cache folder.
+    fn files(&self) -> Vec<Listed> {
+        let Ok(root) = fs::read_dir(&self.root) else {
+            return Vec::new();
+        };
+        root.flatten()
+            .filter(|item| item.file_type().is_ok_and(|kind| kind.is_dir()))
+            .flat_map(|folder| list_folder(&folder.path()))
+            .collect()
+    }
+
+    /// Drops the oldest entries, whichever cache they belong to, until the folders are at
+    /// 90% of the limit, so that the next write doesn't have to do it again.
+    fn evict(&self) {
+        let _one_at_a_time = self.trimming.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut files = self.files();
+        let mut total: u64 = files.iter().map(|file| file.size).sum();
+        files.sort_by_key(|file| file.modified);
+        let target = self.max_bytes() / 10 * 9;
+        for file in files {
+            if total <= target {
+                break;
+            }
+            if fs::remove_file(&file.path).is_ok() {
+                total -= file.size;
+            }
+        }
+        self.used.store(total, Ordering::Relaxed);
+    }
+}
+
+pub struct DiskStore {
+    dir: PathBuf,
+    budget: Arc<Budget>,
+    writes: AtomicU64,
+}
+
+impl DiskStore {
+    /// A store alone under its own limit, with `dir`'s parent as the root of its budget.
+    #[cfg(test)]
+    pub fn new(dir: PathBuf, max_bytes: u64) -> Self {
+        let root = dir.parent().unwrap_or(&dir).to_owned();
+        Self::in_budget(dir, Budget::new(root, max_bytes))
+    }
+
+    /// A store that shares `budget` with the others under the same root. Touches nothing
+    /// yet: the folder is made by the first write.
+    pub fn in_budget(dir: PathBuf, budget: Arc<Budget>) -> Self {
+        Self {
+            dir,
+            budget,
+            writes: AtomicU64::new(0),
+        }
+    }
+
+    /// Changes the limit this store shares with the others.
+    pub fn set_max_bytes(&self, max_bytes: u64) {
+        self.budget.set_max_bytes(max_bytes);
+    }
+
+    fn max_bytes(&self) -> u64 {
+        self.budget.max_bytes()
     }
 
     fn path_for(&self, key: &str) -> PathBuf {
@@ -107,74 +188,55 @@ impl DiskStore {
             let _ = fs::remove_file(&partial);
             return result;
         }
-        if self.used.fetch_add(size, Ordering::Relaxed) + size > self.max_bytes() {
-            self.evict();
+        if self.budget.used.fetch_add(size, Ordering::Relaxed) + size > self.max_bytes() {
+            self.budget.evict();
         }
         Ok(())
     }
 
-    /// Counts what is in the folder, and clears out partial writes a crash left behind.
+    /// Counts what is in this store's folder, and corrects the shared count.
     pub fn scan(&self) -> u64 {
-        let total = self.files().iter().map(|file| file.size).sum();
-        self.used.store(total, Ordering::Relaxed);
-        total
+        self.budget.scan();
+        list_folder(&self.dir).iter().map(|file| file.size).sum()
     }
 
-    /// Removes every entry.
+    /// Removes every entry of this store.
     pub fn clear(&self) -> io::Result<()> {
-        for file in self.files() {
+        for file in list_folder(&self.dir) {
             fs::remove_file(file.path)?;
         }
-        self.used.store(0, Ordering::Relaxed);
+        self.budget.scan();
         Ok(())
     }
+}
 
-    /// Drops the oldest entries until the folder is at 90% of its limit, so that the next
-    /// write doesn't have to do it again.
-    fn evict(&self) {
-        let mut files = self.files();
-        let mut total: u64 = files.iter().map(|file| file.size).sum();
-        files.sort_by_key(|file| file.modified);
-        let target = self.max_bytes() / 10 * 9;
-        for file in files {
-            if total <= target {
-                break;
-            }
-            if fs::remove_file(&file.path).is_ok() {
-                total -= file.size;
-            }
-        }
-        self.used.store(total, Ordering::Relaxed);
-    }
-
-    /// The entries in the folder. Partial writes that went stale are removed on the way.
-    fn files(&self) -> Vec<Listed> {
-        let Ok(dir) = fs::read_dir(&self.dir) else {
-            return Vec::new();
-        };
-        let now = SystemTime::now();
-        let mut found = Vec::new();
-        for item in dir.flatten() {
-            let path = item.path();
-            let Ok(meta) = item.metadata() else { continue };
-            let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-            match path.extension().and_then(|ext| ext.to_str()) {
-                Some(ENTRY) => found.push(Listed {
-                    path,
-                    size: meta.len(),
-                    modified,
-                }),
-                Some(PARTIAL) => {
-                    let age = now.duration_since(modified).unwrap_or_default();
-                    if age > STALE_PARTIAL {
-                        let _ = fs::remove_file(&path);
-                    }
+/// The entries in one cache folder. Partial writes that went stale are removed on the way.
+fn list_folder(dir: &Path) -> Vec<Listed> {
+    let Ok(items) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let now = SystemTime::now();
+    let mut found = Vec::new();
+    for item in items.flatten() {
+        let path = item.path();
+        let Ok(meta) = item.metadata() else { continue };
+        let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        match path.extension().and_then(|ext| ext.to_str()) {
+            Some(ENTRY) => found.push(Listed {
+                path,
+                size: meta.len(),
+                modified,
+            }),
+            Some(PARTIAL) => {
+                let age = now.duration_since(modified).unwrap_or_default();
+                if age > STALE_PARTIAL {
+                    let _ = fs::remove_file(&path);
                 }
-                _ => {}
             }
+            _ => {}
         }
-        found
     }
+    found
 }
 
 struct Listed {

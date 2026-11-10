@@ -8,9 +8,9 @@
 //!
 //! The caches themselves are in [`crate::cache`]; this file only says what goes in them.
 
-use super::{Cache, Config, DiskSettings, hash64};
+use super::{Budget, Cache, Config, DiskSettings, hash64};
 use crate::commit::details::{self, CommitDetails, FileChange};
-use crate::history::avatar::Picture;
+use crate::history::avatar::Gravatar;
 use crate::ops::{self, Cancel};
 use crate::patch::{DiffView, FilePatch};
 use std::path::{Path, PathBuf};
@@ -18,42 +18,38 @@ use std::sync::Arc;
 
 const MEMORY: usize = 64 * 1024 * 1024;
 
+/// What one cache holds on disk, for the settings to show what the space is used by.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Usage {
+    pub label: &'static str,
+    pub bytes: u64,
+}
+
 /// Every cache the app keeps. Clones share entries.
 #[derive(Clone)]
 pub struct Caches {
     details: Cache<CommitDetails>,
     diffs: Cache<FilePatch>,
-    avatars: Cache<Picture>,
+    avatars: Cache<Gravatar>,
 }
 
 impl Caches {
     const DETAILS: Config = Config {
         name: "commit-files",
+        label: "Commit files",
         memory_bytes: MEMORY,
     };
     const DIFFS: Config = Config {
         name: "file-diffs",
+        label: "File diffs",
         memory_bytes: MEMORY,
     };
 
     const AVATARS: Config = Config {
         name: "avatars",
+        label: "Avatars",
         memory_bytes: 4 * 1024 * 1024,
     };
-
-    /// How the disk limit is shared: the avatars, which are a few kilobytes each, get a
-    /// sixteenth, and the details and diffs split the rest.
-    fn shares(disk: DiskSettings) -> (DiskSettings, DiskSettings) {
-        let avatars = DiskSettings {
-            max_bytes: disk.max_bytes / 16,
-            ..disk
-        };
-        let half = DiskSettings {
-            max_bytes: (disk.max_bytes - avatars.max_bytes) / 2,
-            ..disk
-        };
-        (half, avatars)
-    }
 
     /// Caches that keep nothing on disk.
     pub fn memory_only() -> Self {
@@ -64,22 +60,24 @@ impl Caches {
         }
     }
 
-    /// Caches that also keep entries under `root`. The size limit is shared by them.
+    /// Caches that also keep entries under `root`, all within one size limit. Whichever
+    /// cache fills up gets the room the others leave, and the oldest entries of any of
+    /// them go first.
     pub fn on_disk(root: PathBuf, disk: DiskSettings) -> Self {
-        let (half, avatars) = Self::shares(disk);
+        let budget = Budget::new(root, disk.max_bytes);
         Self {
-            details: Cache::new(Self::DETAILS, root.clone(), half),
-            diffs: Cache::new(Self::DIFFS, root.clone(), half),
-            avatars: Cache::new(Self::AVATARS, root, avatars),
+            details: Cache::in_pool(Self::DETAILS, &budget, disk.enabled),
+            diffs: Cache::in_pool(Self::DIFFS, &budget, disk.enabled),
+            avatars: Cache::in_pool(Self::AVATARS, &budget, disk.enabled),
         }
     }
 
     /// Applies new settings at once, to caches already in use.
     pub fn set_disk(&self, disk: DiskSettings) {
-        let (half, avatars) = Self::shares(disk);
-        self.details.set_disk(half);
-        self.diffs.set_disk(half);
-        self.avatars.set_disk(avatars);
+        // The limit is shared, so one of them setting it is the same as all of them.
+        self.details.set_disk(disk);
+        self.diffs.set_enabled(disk.enabled);
+        self.avatars.set_enabled(disk.enabled);
     }
 
     /// Forgets everything, in memory now and on disk soon.
@@ -91,19 +89,47 @@ impl Caches {
 
     /// How much is on disk. Blocks.
     pub fn disk_size(&self) -> u64 {
-        self.details.disk_size() + self.diffs.disk_size() + self.avatars.disk_size()
+        self.usage().iter().map(|part| part.bytes).sum()
     }
 
-    /// An author's Gravatar from the cache, in memory or on disk, if it was fetched before.
-    /// Blocks.
-    pub fn cached_avatar(&self, email: &str) -> Option<Arc<Picture>> {
+    /// How much each cache holds on disk, largest first. Blocks.
+    pub fn usage(&self) -> Vec<Usage> {
+        let mut parts = vec![
+            Usage {
+                label: Self::DETAILS.label,
+                bytes: self.details.disk_size(),
+            },
+            Usage {
+                label: Self::DIFFS.label,
+                bytes: self.diffs.disk_size(),
+            },
+            Usage {
+                label: Self::AVATARS.label,
+                bytes: self.avatars.disk_size(),
+            },
+        ];
+        parts.sort_by_key(|part| std::cmp::Reverse(part.bytes));
+        parts
+    }
+
+    /// What is known of an author's Gravatar from an earlier run: the picture, or that there
+    /// was none. Blocks.
+    pub fn cached_avatar(&self, email: &str) -> Option<Arc<Gravatar>> {
         self.avatars.get(&crate::history::avatar::key(email))
     }
 
     /// Keeps a Gravatar that was just fetched. Doesn't wait on the disk.
     pub fn store_avatar(&self, email: &str, bytes: Vec<u8>) {
+        self.avatars.insert(
+            &crate::history::avatar::key(email),
+            Gravatar::Picture(bytes),
+        );
+    }
+
+    /// Keeps that gravatar.com has no picture for an author, for a week.
+    pub fn store_no_avatar(&self, email: &str) {
         self.avatars
-            .insert(&crate::history::avatar::key(email), Picture(bytes));
+            .insert(&crate::history::avatar::key(email), Gravatar::missing());
     }
 
     /// A commit's details if they are in memory. Safe on the UI thread.
@@ -245,17 +271,27 @@ mod tests {
         let first = Caches::on_disk(root.path().to_owned(), DiskSettings::default());
         assert!(first.cached_avatar("ada@example.com").is_none());
         first.store_avatar("Ada@Example.com ", PNG.to_vec());
-        assert_eq!(
-            first.cached_avatar("ada@example.com").unwrap().0,
-            PNG,
+        assert!(
+            matches!(
+                &*first.cached_avatar("ada@example.com").unwrap(),
+                Gravatar::Picture(bytes) if bytes == &PNG
+            ),
             "the same address in another case is the same author"
         );
         first.avatars.flush();
 
         // A new run: nothing in memory, so it is the disk that answers.
         let second = Caches::on_disk(root.path().to_owned(), DiskSettings::default());
-        assert_eq!(second.cached_avatar("ada@example.com").unwrap().0, PNG);
+        assert!(matches!(
+            &*second.cached_avatar("ada@example.com").unwrap(),
+            Gravatar::Picture(bytes) if bytes == &PNG
+        ));
         assert!(second.cached_avatar("grace@example.com").is_none());
+        second.store_no_avatar("grace@example.com");
+        second.avatars.flush();
+        let after = Caches::on_disk(root.path().to_owned(), DiskSettings::default());
+        let grace = after.cached_avatar("grace@example.com").unwrap();
+        assert!(matches!(&*grace, Gravatar::Missing { .. }) && !grace.is_stale());
 
         second.clear();
         second.avatars.flush();
@@ -264,19 +300,98 @@ mod tests {
     }
 
     #[test]
+    fn the_limit_is_shared_so_one_cache_may_use_what_the_others_leave() {
+        let root = tempfile::tempdir().unwrap();
+        // Room for about twenty of these entries in all.
+        let limit = 20 * 1100;
+        let caches = Caches::on_disk(
+            root.path().to_owned(),
+            DiskSettings {
+                enabled: true,
+                max_bytes: limit,
+            },
+        );
+        let picture = |n: u8| {
+            let mut bytes = PNG.to_vec();
+            bytes.extend(std::iter::repeat_n(n, 1000));
+            bytes
+        };
+        // Only avatars are written, far more than a sixteenth of the limit.
+        for n in 0..15u8 {
+            caches.store_avatar(&format!("a{n}@example.com"), picture(n));
+        }
+        caches.avatars.flush();
+        let usage = caches.usage();
+        let avatars = usage.iter().find(|part| part.label == "Avatars").unwrap();
+        assert!(avatars.bytes > limit / 16 * 4, "it isn't held to a share");
+        assert!(
+            caches.disk_size() <= limit,
+            "the whole stays under the limit"
+        );
+        assert_eq!(usage[0].label, "Avatars", "largest first");
+    }
+
+    #[test]
+    fn the_oldest_entries_of_any_cache_go_first_and_one_clear_empties_all() {
+        let root = tempfile::tempdir().unwrap();
+        let caches = Caches::on_disk(
+            root.path().to_owned(),
+            DiskSettings {
+                enabled: true,
+                max_bytes: 8 * 1100,
+            },
+        );
+        let picture = |n: u8| {
+            let mut bytes = PNG.to_vec();
+            bytes.extend(std::iter::repeat_n(n, 1000));
+            bytes
+        };
+        for n in 0..12u8 {
+            caches.store_avatar(&format!("a{n}@example.com"), picture(n));
+            caches.avatars.flush();
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        assert!(caches.disk_size() <= 8 * 1100);
+        let second = Caches::on_disk(
+            root.path().to_owned(),
+            DiskSettings {
+                enabled: true,
+                max_bytes: 8 * 1100,
+            },
+        );
+        assert!(
+            second.cached_avatar("a0@example.com").is_none(),
+            "the oldest went"
+        );
+        assert!(
+            second.cached_avatar("a11@example.com").is_some(),
+            "the newest stayed"
+        );
+        second.clear();
+        second.avatars.flush();
+        assert_eq!(second.disk_size(), 0);
+    }
+
+    #[test]
     fn a_damaged_cached_gravatar_is_not_used() {
         use crate::cache::Cacheable;
         use crate::cache::codec::{Reader, Writer};
-        use crate::history::avatar::Picture;
+        use crate::history::avatar::Gravatar;
         let decode = |bytes: &[u8]| {
             let mut out = Writer::new();
             out.bytes(bytes);
             let written = out.finish();
-            Picture::decode(&mut Reader::new(&written)).map(|picture| picture.0)
+            let mut tagged = vec![0];
+            tagged.extend_from_slice(&written);
+            Gravatar::decode(&mut Reader::new(&tagged)).is_some()
         };
-        assert_eq!(decode(&PNG), Some(PNG.to_vec()));
-        assert_eq!(decode(b"<html>an error page</html>"), None);
-        assert!(Picture::decode(&mut Reader::new(&[9, 0, 0, 0, 1])).is_none());
+        assert!(decode(&PNG));
+        assert!(!decode(b"<html>an error page</html>"));
+        assert!(Gravatar::decode(&mut Reader::new(&[9, 9, 0, 0, 1])).is_none());
+        assert!(
+            Gravatar::decode(&mut Reader::new(&[1, 1, 2])).is_none(),
+            "a cut-short date"
+        );
     }
 
     #[test]

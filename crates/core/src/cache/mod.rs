@@ -24,6 +24,7 @@ mod lru;
 pub use codec::{Reader, Writer};
 pub use disk::hash64;
 
+pub use disk::Budget;
 use disk::DiskStore;
 use lru::Lru;
 use std::ffi::OsString;
@@ -53,6 +54,8 @@ pub trait Cacheable: Send + Sync + Sized + 'static {
 pub struct Config {
     /// Names the cache's folder on disk.
     pub name: &'static str,
+    /// What the cache is called to the user, where the settings say what uses the space.
+    pub label: &'static str,
     /// The in-memory layer's size, in the units of [`Cacheable::weight`].
     pub memory_bytes: usize,
 }
@@ -123,7 +126,17 @@ impl<V: Cacheable> Cache<V> {
     /// A cache that also keeps entries under `root/<name>`. Nothing is read or written
     /// until it is asked to, and writes happen on a thread of their own.
     pub fn new(config: Config, root: PathBuf, disk: DiskSettings) -> Self {
-        let store = Arc::new(DiskStore::new(root.join(config.name), disk.max_bytes));
+        let budget = Budget::new(root, disk.max_bytes);
+        Self::in_pool(config, &budget, disk.enabled)
+    }
+
+    /// A cache that keeps entries in its own folder under `budget`'s root, within the size
+    /// limit it shares with every other cache in the pool.
+    pub fn in_pool(config: Config, budget: &Arc<Budget>, enabled: bool) -> Self {
+        let store = Arc::new(DiskStore::in_budget(
+            budget.folder(config.name),
+            budget.clone(),
+        ));
         let (jobs, queue) = mpsc::channel::<Job>();
         let worker = store.clone();
         thread::Builder::new()
@@ -141,7 +154,7 @@ impl<V: Cacheable> Cache<V> {
                 disk: Some(Disk {
                     store,
                     jobs,
-                    enabled: AtomicBool::new(disk.enabled),
+                    enabled: AtomicBool::new(enabled),
                 }),
             }),
         }
@@ -162,8 +175,9 @@ impl<V: Cacheable> Cache<V> {
             .filter(|disk| disk.enabled.load(Ordering::Relaxed))
     }
 
-    /// Turns the disk layer on or off and sets its size limit. Off keeps what is on disk
-    /// but neither reads nor writes it. A smaller limit trims the folder in the background.
+    /// Turns the disk layer on or off and sets the size limit it shares. Off keeps what is
+    /// on disk but neither reads nor writes it. A smaller limit trims the folders in the
+    /// background.
     pub fn set_disk(&self, settings: DiskSettings) {
         let Some(disk) = &self.inner.disk else {
             return;
@@ -172,6 +186,13 @@ impl<V: Cacheable> Cache<V> {
         let _ = disk.jobs.send(Box::new(move |store| {
             store.set_max_bytes(settings.max_bytes)
         }));
+    }
+
+    /// Turns the disk layer on or off alone, for a cache whose limit another one sets.
+    pub fn set_enabled(&self, enabled: bool) {
+        if let Some(disk) = &self.inner.disk {
+            disk.enabled.store(enabled, Ordering::Relaxed);
+        }
     }
 
     /// The value for `key` if it is in memory. Never touches the disk.
@@ -302,6 +323,7 @@ mod tests {
 
     const CONFIG: Config = Config {
         name: "notes",
+        label: "Notes",
         memory_bytes: 1000,
     };
 
