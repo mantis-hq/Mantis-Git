@@ -7,7 +7,7 @@ installed `git`.
 
 ![gitclient showing a repository's branches, its history as a lane graph, and the working changes](docs/screenshot.png)
 
-## What it does
+## Project goals & features
 
 - **Built for performance.** The window stays responsive and history opens quickly,
   whatever the size of the repository.
