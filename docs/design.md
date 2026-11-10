@@ -288,8 +288,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     on Base in a pane of its own that scrolls past 320 px. Crates word a license a little
     differently, so a license has one text for each wording that really differs, with a rule
     between them and "Used by" over each, naming the projects or counting them past eight.
-    Wordings that differ only in white space or in their copyright lines are one text, which
-    starts with every one of those lines, so no notice is lost. The texts are inside the
+    Wordings that differ only in white space or in their copyright lines are one text. A
+    copyright line is a line that begins "Copyright" and a year, "(c)" or "©", never one of
+    the license's own sentences that merely say the word. Those lines come before the text,
+    each set with a muted "— " line naming the projects it came with ("Copyright 2023 Jacob
+    Pratt et al." — `deranged`, `powerfmt`), so one project's year and holder is never read
+    as another's; the line is left out when every project of the wording shares it. No line
+    is lost, and a test checks that each project keeps its own. The texts are inside the
     program, so they can't be separated from a copy that is
     passed on: `cargo about` writes them to `THIRD-PARTY-LICENSES.txt` from `Cargo.lock`
     (`about.toml` says which licenses are accepted, `about.hbs` the layout), CI fails when that

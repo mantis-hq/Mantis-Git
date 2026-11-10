@@ -37,15 +37,23 @@ pub struct License {
     pub texts: Vec<Text>,
 }
 
-/// One wording of a license: the copyright lines of those who used it, then the text.
+/// One wording of a license: the text, and the copyright lines of those who used it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Text {
     /// Who used this wording, as "name version".
     pub used_by: Vec<String>,
-    /// The copyright lines that came with it, each once.
-    pub copyrights: Vec<String>,
+    /// Whose copyright it was used under, each set of lines with the projects it came with.
+    pub notices: Vec<Notice>,
     /// The license itself, without those lines.
     pub body: String,
+}
+
+/// Copyright lines, and the projects they came with: "Copyright 2023 Jacob Pratt et al."
+/// belongs to `deranged` and `powerfmt`, not to every crate under the license.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notice {
+    pub copyrights: Vec<String>,
+    pub used_by: Vec<String>,
 }
 
 impl License {
@@ -76,21 +84,28 @@ impl Text {
     /// Whom this wording is for, when the license has more than one: "a 1.0, b 2.0", or
     /// "523 projects" when naming them would fill the page.
     pub fn used_by_line(&self) -> String {
-        if self.used_by.len() > 8 {
-            count(self.used_by.len(), "project")
-        } else {
-            self.used_by.join(", ")
-        }
+        who(&self.used_by)
     }
 
-    /// The copyright lines and the body as they are read, with an empty line between.
-    pub fn to_text(&self) -> String {
-        let mut text = self.copyrights.join("\n");
-        if !text.is_empty() {
-            text.push_str("\n\n");
-        }
-        text.push_str(&self.body);
-        text
+    /// Every copyright line of every notice, as they were written.
+    pub fn copyright_lines(&self) -> impl Iterator<Item = &String> {
+        self.notices.iter().flat_map(|notice| &notice.copyrights)
+    }
+}
+
+impl Notice {
+    /// Which projects these lines came with: "a 1.0, b 2.0", or "12 projects".
+    pub fn used_by_line(&self) -> String {
+        who(&self.used_by)
+    }
+}
+
+/// Names projects, or counts them when naming them would fill the page.
+fn who(used_by: &[String]) -> String {
+    if used_by.len() > 8 {
+        count(used_by.len(), "project")
+    } else {
+        used_by.join(", ")
     }
 }
 
@@ -179,7 +194,17 @@ pub fn combine(entries: Vec<License>) -> Vec<License> {
             {
                 Some(known) => {
                     push_unique(&mut known.used_by, text.used_by);
-                    push_unique(&mut known.copyrights, text.copyrights);
+                    for notice in text.notices {
+                        // The same lines from another project are one notice with both.
+                        match known
+                            .notices
+                            .iter_mut()
+                            .find(|have| have.copyrights == notice.copyrights)
+                        {
+                            Some(have) => push_unique(&mut have.used_by, notice.used_by),
+                            None => known.notices.push(notice),
+                        }
+                    }
                 }
                 None => license.texts.push(text),
             }
@@ -225,16 +250,34 @@ fn text_of(used_by: Vec<String>, text: &str) -> Text {
             .map(|line| line.trim().to_owned())
             .collect(),
     );
+    let notices = if copyrights.is_empty() {
+        Vec::new()
+    } else {
+        vec![Notice {
+            copyrights,
+            used_by: used_by.clone(),
+        }]
+    };
     Text {
         used_by,
-        copyrights,
+        notices,
         body: body.trim().to_owned(),
     }
 }
 
+/// Whether a line is somebody's notice ("Copyright 2023 A", "Copyright (c) B", "© C") and
+/// not a sentence of the license that says the word, such as the Apache License's
+/// "copyright notice that is included in or attached to the work", its "(c) You must
+/// retain…", or its template "Copyright [yyyy] [name of copyright owner]".
 fn is_copyright(line: &str) -> bool {
-    let line = line.trim_start().to_lowercase();
-    line.starts_with("copyright") || line.starts_with("(c)") || line.starts_with('©')
+    let line = line.trim_start();
+    if line.starts_with('©') {
+        return true;
+    }
+    let Some(rest) = line.strip_prefix("Copyright ") else {
+        return false;
+    };
+    rest.starts_with(['(', '©']) || rest.starts_with(|c: char| c.is_ascii_digit())
 }
 
 /// Whether two texts say the same, whatever their line breaks and spacing.
@@ -284,9 +327,14 @@ mod tests {
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].name, "MIT License");
         assert_eq!(all[0].used_by, ["a 1.0.0", "b 2.0.0"]);
-        assert_eq!(all[0].texts[0].copyrights, ["Copyright (c) A"]);
+        assert_eq!(
+            all[0].texts[0].notices,
+            [Notice {
+                copyrights: vec!["Copyright (c) A".to_owned()],
+                used_by: vec!["a 1.0.0".to_owned(), "b 2.0.0".to_owned()],
+            }]
+        );
         assert_eq!(all[0].texts[0].body, "MIT License");
-        assert_eq!(all[0].texts[0].to_text(), "Copyright (c) A\n\nMIT License");
         assert_eq!(all[0].projects(), "2 projects");
         assert_eq!(all[0].used_by_line(), "a 1.0.0, b 2.0.0");
     }
@@ -337,12 +385,14 @@ mod tests {
         assert_eq!(all.len(), 2);
         let mit = &all[0];
         assert_eq!(mit.used_by, ["a 1", "b 2", "c 3"]);
-        // One text, with both lines and all three projects.
+        // One text, with both lines and all three projects, each line with its own.
         assert_eq!(mit.texts.len(), 1);
-        assert_eq!(
-            mit.texts[0].copyrights,
-            ["Copyright (c) A", "Copyright (c) B"]
-        );
+        let notices = &mit.texts[0].notices;
+        assert_eq!(notices.len(), 2);
+        assert_eq!(notices[0].copyrights, ["Copyright (c) A"]);
+        assert_eq!(notices[0].used_by, ["a 1", "c 3"]);
+        assert_eq!(notices[1].copyrights, ["Copyright (c) B"]);
+        assert_eq!(notices[1].used_by, ["b 2"]);
         assert_eq!(mit.texts[0].used_by, ["a 1", "b 2", "c 3"]);
         assert_eq!(mit.texts[0].body, "Permission is granted.");
     }
@@ -358,21 +408,79 @@ mod tests {
     }
 
     #[test]
-    fn no_copyright_line_in_the_file_is_lost() {
+    fn every_project_keeps_its_own_copyright_lines() {
         let raw = parse(CRATES);
         let all = combine(raw.clone());
-        let before: std::collections::HashSet<&String> = raw
+        let mut checked = 0;
+        for entry in &raw {
+            let license = all.iter().find(|l| l.name == entry.name).unwrap();
+            for notice in &entry.texts[0].notices {
+                for project in &notice.used_by {
+                    for line in &notice.copyrights {
+                        // Somewhere under this license, that line is with that project.
+                        assert!(
+                            license.texts.iter().flat_map(|t| &t.notices).any(|n| {
+                                n.copyrights.contains(line) && n.used_by.contains(project)
+                            }),
+                            "{project} lost “{line}” under {}",
+                            entry.name
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 50, "only {checked} lines were checked");
+    }
+
+    #[test]
+    fn a_license_keeps_its_own_sentences_about_copyright() {
+        assert!(is_copyright("Copyright 2023 Jacob Pratt et al."));
+        assert!(is_copyright("  Copyright (c) Microsoft Corporation."));
+        assert!(is_copyright("Copyright © 2020 A"));
+        assert!(is_copyright("© B"));
+        // These are the Apache License's own words, not anybody's notice.
+        assert!(!is_copyright(
+            "copyright notice that is included in or attached to the work"
+        ));
+        assert!(!is_copyright(
+            "copyright license to reproduce, prepare Derivative Works of,"
+        ));
+        assert!(!is_copyright(
+            "(c) You must retain, in the Source form of any Derivative Works"
+        ));
+        assert!(!is_copyright("Copyright [yyyy] [name of copyright owner]"));
+        assert!(!is_copyright("Copyright and related rights"));
+
+        let apache: Vec<&License> = licenses()
             .iter()
-            .flat_map(|l| &l.texts)
-            .flat_map(|t| &t.copyrights)
+            .filter(|l| l.name == "Apache License 2.0")
             .collect();
-        let after: std::collections::HashSet<&String> = all
+        assert_eq!(apache.len(), 1);
+        // The usual wording, which most crates ship, has these sentences whole. A few crates
+        // ship a shorter or reworded one, so this can't be asked of every text.
+        let usual = apache[0]
+            .texts
             .iter()
-            .flat_map(|l| &l.texts)
-            .flat_map(|t| &t.copyrights)
-            .collect();
-        assert_eq!(before, after);
-        assert!(before.len() > 50, "only {} copyright lines", before.len());
+            .filter(|t| {
+                t.body
+                    .contains("copyright notice that is included in or attached to the work")
+                    && t.body.contains("(c) You must retain, in the Source form")
+            })
+            .count();
+        assert!(usual > 0, "no Apache text has its own sentences");
+        // Some crates left the appendix's template as it is, and the others filled in their
+        // own line, which is then a notice with the crate it came from.
+        assert!(apache[0].texts.iter().any(|t| {
+            t.body
+                .contains("Copyright [yyyy] [name of copyright owner]")
+        }));
+        assert!(
+            apache[0]
+                .texts
+                .iter()
+                .any(|t| t.copyright_lines().count() > 0)
+        );
     }
 
     #[test]
