@@ -140,6 +140,8 @@ fn shared_caches(cx: &App) -> Caches {
 }
 
 pub struct GraphView {
+    /// The workspace's dock, drawn under the graph so the side panels keep their height.
+    dock: Option<Entity<dock::Dock>>,
     repo: Option<PathBuf>,
     status: Status,
     entries: Vec<Entry>,
@@ -223,6 +225,7 @@ impl GraphView {
             }
         });
         Self {
+            dock: None,
             repo: None,
             status: Status::NoRepository,
             entries: Vec::new(),
@@ -719,9 +722,19 @@ impl GraphView {
 }
 
 impl GraphView {
+    pub fn set_dock(&mut self, dock: Entity<dock::Dock>) {
+        self.dock = Some(dock);
+    }
+
     fn render_graph(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if self.entries.is_empty() {
-            return self.render_message(cx).into_any_element();
+            return div()
+                .v_flex()
+                .flex_1()
+                .min_h_0()
+                .child(self.render_message(cx))
+                .children(self.dock.clone())
+                .into_any_element();
         }
         let sidebar = self.render_sidebar(cx);
         let inspector = self.render_inspector(cx);
@@ -773,7 +786,8 @@ impl GraphView {
                             .into_any_element(),
                     })
                     .into_any_element(),
-            });
+            })
+            .children(self.dock.clone());
         // The graph keeps at least this much, so no edge can be dragged over it.
         const GRAPH_MIN: f32 = 320.;
 
