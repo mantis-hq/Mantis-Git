@@ -614,7 +614,7 @@ impl GraphView {
                 let branch = self.refs.branches.get(index)?;
                 (
                     lane_color(branch.color, is_dark),
-                    branch.delta(self.refs.default_branch.as_deref()),
+                    String::new(),
                     branch.remote_delta(),
                     branch.is_head,
                 )

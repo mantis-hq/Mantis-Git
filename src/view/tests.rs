@@ -1469,10 +1469,13 @@ fn branch_counts_arrive_after_the_load_without_holding_it_up(cx: &mut TestAppCon
     view.update(&mut cx, |view, cx| view.open(repo.path().to_owned(), cx));
     wait_until_loaded(&view, &mut cx);
 
-    let delta = |view: &GraphView, name: &str| {
-        let default = view.refs.default_branch.as_deref();
-        let branch = view.refs.branches.iter().find(|b| b.name == name).unwrap();
-        branch.delta(default)
+    let counts = |view: &GraphView, name: &str| {
+        view.refs
+            .branches
+            .iter()
+            .find(|b| b.name == name)
+            .unwrap()
+            .ahead_behind
     };
     // A branch level with the default is known at once; the other fills in when counted.
     for _ in 0..500 {
@@ -1484,7 +1487,7 @@ fn branch_counts_arrive_after_the_load_without_holding_it_up(cx: &mut TestAppCon
     }
     view.read_with(&cx, |view, _| {
         assert!(!view.refs.needs_counts());
-        assert_eq!(delta(view, "side"), "+1");
+        assert_eq!(counts(view, "side"), Some((1, 0)));
     });
 }
 

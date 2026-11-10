@@ -97,17 +97,6 @@ impl Branch {
             None => String::new(),
         }
     }
-
-    /// How the branch stands against the default branch, in a few characters.
-    pub fn delta(&self, default_branch: Option<&str>) -> String {
-        match self.ahead_behind {
-            _ if default_branch == Some(self.name.as_str()) => String::new(),
-            Some((0, _)) => "merged".to_owned(),
-            Some((ahead, 0)) => format!("+{ahead}"),
-            Some((ahead, behind)) => format!("+{ahead} −{behind}"),
-            None => String::new(),
-        }
-    }
 }
 
 /// A remote branch or tag, for the sidebar.
