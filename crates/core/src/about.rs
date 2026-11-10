@@ -5,6 +5,11 @@
 //! The crates' licenses are written by `cargo about` into `THIRD-PARTY-LICENSES.txt` at the
 //! repository root (see "Releasing" in the README) and read here. Maple Mono is not a crate,
 //! so its license is added by hand. Everything works without a window.
+//!
+//! `cargo about` writes one entry for each distinct text, so a license that crates word a
+//! little differently (a copyright line, a space) comes out many times. [`licenses`] puts
+//! them together: one [`License`] for each name, and under it one [`Text`] for each body,
+//! with every copyright line of every crate that used it kept.
 
 use crate::install::update::Build;
 use crate::text::count;
@@ -21,14 +26,26 @@ const MAPLE_MONO: &str = include_str!("../../../src/fonts/OFL.txt");
 const RULE: &str =
     "================================================================================";
 
-/// One license text and everything that is under it.
+/// One license, and everything that is under it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct License {
     /// "MIT License".
     pub name: String,
     /// What is under it, as "name version".
     pub used_by: Vec<String>,
-    pub text: String,
+    /// Its text, once for each wording that is really different.
+    pub texts: Vec<Text>,
+}
+
+/// One wording of a license: the copyright lines of those who used it, then the text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Text {
+    /// Who used this wording, as "name version".
+    pub used_by: Vec<String>,
+    /// The copyright lines that came with it, each once.
+    pub copyrights: Vec<String>,
+    /// The license itself, without those lines.
+    pub body: String,
 }
 
 impl License {
@@ -48,6 +65,33 @@ impl License {
             .iter()
             .any(|name| name.split(' ').next() == Some("gitclient"))
     }
+
+    /// Whether passing the program on means passing this license's text on with it.
+    pub fn must_be_shown(&self) -> bool {
+        !NO_NOTICE.contains(&self.name.as_str())
+    }
+}
+
+impl Text {
+    /// Whom this wording is for, when the license has more than one: "a 1.0, b 2.0", or
+    /// "523 projects" when naming them would fill the page.
+    pub fn used_by_line(&self) -> String {
+        if self.used_by.len() > 8 {
+            count(self.used_by.len(), "project")
+        } else {
+            self.used_by.join(", ")
+        }
+    }
+
+    /// The copyright lines and the body as they are read, with an empty line between.
+    pub fn to_text(&self) -> String {
+        let mut text = self.copyrights.join("\n");
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&self.body);
+        text
+    }
 }
 
 /// Licenses that ask nothing of whoever passes the program on: no notice and no text. They
@@ -59,15 +103,8 @@ const NO_NOTICE: [&str; 3] = [
     "The Unlicense",
 ];
 
-impl License {
-    /// Whether passing the program on means passing this license's text on with it.
-    pub fn must_be_shown(&self) -> bool {
-        !NO_NOTICE.contains(&self.name.as_str())
-    }
-}
-
-/// The licenses that have to be shown for everything in this program: gitclient's own
-/// first, then the font, then the crates by license.
+/// The licenses that have to be shown for everything in this program, one for each name:
+/// gitclient's own first, then the font, then the crates' in the order they were written.
 pub fn licenses() -> &'static [License] {
     static ALL: OnceLock<Vec<License>> = OnceLock::new();
     ALL.get_or_init(|| {
@@ -78,18 +115,19 @@ pub fn licenses() -> &'static [License] {
             License {
                 name: "SIL Open Font License 1.1".to_owned(),
                 used_by: vec!["Maple Mono".to_owned()],
-                text: MAPLE_MONO.trim().to_owned(),
+                texts: vec![text_of(vec!["Maple Mono".to_owned()], MAPLE_MONO)],
             },
         );
-        // Stable, so the crates keep the order they were written in.
+        let mut all = combine(all);
+        // Stable, so the others keep the order they were written in.
         all.sort_by_key(|license| !license.is_own());
         all
     })
 }
 
-/// Reads the file `cargo about` writes with `about.hbs`. A line is the start of an entry
-/// only when it is the rule followed by a name, an empty line and "Used by:", so that a
-/// license text with a rule of its own stays in one piece.
+/// Reads the file `cargo about` writes with `about.hbs`, an entry for each distinct text. A
+/// line is the start of an entry only when it is the rule followed by a name, an empty line
+/// and "Used by:", so that a license text with a rule of its own stays in one piece.
 pub fn parse(file: &str) -> Vec<License> {
     let lines: Vec<&str> = file.lines().collect();
     let starts_entry = |at: usize| {
@@ -109,16 +147,99 @@ pub fn parse(file: &str) -> Vec<License> {
                 .iter()
                 .position(|line| line.is_empty())
                 .unwrap_or(body.len());
+            let used_by: Vec<String> = body[..split]
+                .iter()
+                .map(|line| line.trim().to_owned())
+                .collect();
+            let text = text_of(used_by.clone(), &body[split..].join("\n"));
             License {
                 name,
-                used_by: body[..split]
-                    .iter()
-                    .map(|line| line.trim().to_owned())
-                    .collect(),
-                text: body[split..].join("\n").trim().to_owned(),
+                used_by,
+                texts: vec![text],
             }
         })
         .collect()
+}
+
+/// Puts the entries with the same name together, and in each the wordings that differ only
+/// in their copyright lines or in white space. Every copyright line is kept, once.
+pub fn combine(entries: Vec<License>) -> Vec<License> {
+    let mut all: Vec<License> = Vec::new();
+    for entry in entries {
+        let Some(license) = all.iter_mut().find(|l| l.name == entry.name) else {
+            all.push(entry);
+            continue;
+        };
+        push_unique(&mut license.used_by, entry.used_by);
+        for text in entry.texts {
+            match license
+                .texts
+                .iter_mut()
+                .find(|known| same_words(&known.body, &text.body))
+            {
+                Some(known) => {
+                    push_unique(&mut known.used_by, text.used_by);
+                    push_unique(&mut known.copyrights, text.copyrights);
+                }
+                None => license.texts.push(text),
+            }
+        }
+    }
+    all
+}
+
+/// Adds what `from` has that `into` hasn't, in order.
+fn push_unique(into: &mut Vec<String>, from: Vec<String>) {
+    for item in from {
+        if !into.contains(&item) {
+            into.push(item);
+        }
+    }
+}
+
+/// Splits a license text into its copyright lines and the rest.
+fn text_of(used_by: Vec<String>, text: &str) -> Text {
+    let (copyright, rest): (Vec<&str>, Vec<&str>) =
+        text.lines().partition(|line| is_copyright(line));
+    // Taking lines out leaves runs of empty ones, so keep one.
+    let mut body = String::new();
+    let mut blank = true;
+    for line in rest {
+        let line = line.trim_end();
+        if line.is_empty() {
+            if !blank {
+                body.push('\n');
+            }
+            blank = true;
+        } else {
+            body.push_str(line);
+            body.push('\n');
+            blank = false;
+        }
+    }
+    let mut copyrights: Vec<String> = Vec::new();
+    push_unique(
+        &mut copyrights,
+        copyright
+            .iter()
+            .map(|line| line.trim().to_owned())
+            .collect(),
+    );
+    Text {
+        used_by,
+        copyrights,
+        body: body.trim().to_owned(),
+    }
+}
+
+fn is_copyright(line: &str) -> bool {
+    let line = line.trim_start().to_lowercase();
+    line.starts_with("copyright") || line.starts_with("(c)") || line.starts_with('©')
+}
+
+/// Whether two texts say the same, whatever their line breaks and spacing.
+fn same_words(a: &str, b: &str) -> bool {
+    a.split_whitespace().eq(b.split_whitespace())
 }
 
 /// "gitclient 0.1.0", with the commit when the build knows it ("gitclient 0.1.0 (1a2b3c4)").
@@ -163,7 +284,9 @@ mod tests {
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].name, "MIT License");
         assert_eq!(all[0].used_by, ["a 1.0.0", "b 2.0.0"]);
-        assert_eq!(all[0].text, "MIT License\n\nCopyright (c) A");
+        assert_eq!(all[0].texts[0].copyrights, ["Copyright (c) A"]);
+        assert_eq!(all[0].texts[0].body, "MIT License");
+        assert_eq!(all[0].texts[0].to_text(), "Copyright (c) A\n\nMIT License");
         assert_eq!(all[0].projects(), "2 projects");
         assert_eq!(all[0].used_by_line(), "a 1.0.0, b 2.0.0");
     }
@@ -171,7 +294,10 @@ mod tests {
     #[test]
     fn a_rule_inside_a_text_does_not_split_it() {
         let all = parse(&sample());
-        assert_eq!(all[1].text, format!("line one\n{RULE}\nline three"));
+        assert_eq!(
+            all[1].texts[0].body,
+            format!("line one\n{RULE}\nline three")
+        );
     }
 
     #[test]
@@ -179,17 +305,104 @@ mod tests {
         assert!(parse("").is_empty());
     }
 
+    fn entry(name: &str, used_by: &[&str], text: &str) -> License {
+        let used_by: Vec<String> = used_by.iter().map(|s| (*s).to_owned()).collect();
+        License {
+            name: name.to_owned(),
+            texts: vec![text_of(used_by.clone(), text)],
+            used_by,
+        }
+    }
+
+    #[test]
+    fn the_same_license_under_different_copyright_lines_is_one() {
+        let all = combine(vec![
+            entry(
+                "MIT License",
+                &["a 1"],
+                "Copyright (c) A\n\nPermission is granted.",
+            ),
+            entry("Zlib", &["z 1"], "zlib text"),
+            entry(
+                "MIT License",
+                &["b 2"],
+                "Copyright (c) B\n\nPermission is granted.",
+            ),
+            entry(
+                "MIT License",
+                &["c 3"],
+                "Copyright (c) A\n\nPermission  is\ngranted.\n",
+            ),
+        ]);
+        assert_eq!(all.len(), 2);
+        let mit = &all[0];
+        assert_eq!(mit.used_by, ["a 1", "b 2", "c 3"]);
+        // One text, with both lines and all three projects.
+        assert_eq!(mit.texts.len(), 1);
+        assert_eq!(
+            mit.texts[0].copyrights,
+            ["Copyright (c) A", "Copyright (c) B"]
+        );
+        assert_eq!(mit.texts[0].used_by, ["a 1", "b 2", "c 3"]);
+        assert_eq!(mit.texts[0].body, "Permission is granted.");
+    }
+
+    #[test]
+    fn a_wording_that_really_differs_stays_apart() {
+        let all = combine(vec![
+            entry("Apache License 2.0", &["a 1"], "Preamble\n\nTerms."),
+            entry("Apache License 2.0", &["b 2"], "Terms."),
+        ]);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].texts.len(), 2);
+    }
+
+    #[test]
+    fn no_copyright_line_in_the_file_is_lost() {
+        let raw = parse(CRATES);
+        let all = combine(raw.clone());
+        let before: std::collections::HashSet<&String> = raw
+            .iter()
+            .flat_map(|l| &l.texts)
+            .flat_map(|t| &t.copyrights)
+            .collect();
+        let after: std::collections::HashSet<&String> = all
+            .iter()
+            .flat_map(|l| &l.texts)
+            .flat_map(|t| &t.copyrights)
+            .collect();
+        assert_eq!(before, after);
+        assert!(before.len() > 50, "only {} copyright lines", before.len());
+    }
+
     #[test]
     fn the_shipped_file_is_whole() {
         let all = licenses();
-        assert!(all.len() > 100, "only {} licenses", all.len());
         assert!(
-            all.iter()
-                .all(|l| !l.name.is_empty() && !l.used_by.is_empty() && !l.text.is_empty()),
+            all.iter().all(|l| !l.name.is_empty()
+                && !l.used_by.is_empty()
+                && !l.texts.is_empty()
+                && l.texts.iter().all(|t| !t.body.is_empty())),
             "an entry is missing its name, projects or text"
         );
         // HTML escaping would show as &quot; in a license's name.
         assert!(all.iter().all(|l| !l.name.contains('&')));
+        // One row for each name.
+        let mut names: Vec<&String> = all.iter().map(|l| &l.name).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), all.len());
+        assert!(all.len() < 25, "{} licenses is too many to read", all.len());
+        // Every project is under some text of its license.
+        for license in all {
+            for project in &license.used_by {
+                assert!(
+                    license.texts.iter().any(|t| t.used_by.contains(project)),
+                    "{project} has no text under {}",
+                    license.name
+                );
+            }
+        }
     }
 
     #[test]
@@ -200,7 +413,6 @@ mod tests {
             "the generated file has none of them, so this list matches nothing"
         );
         assert!(licenses().iter().all(License::must_be_shown));
-        assert!(licenses().len() < file.len());
     }
 
     #[test]
@@ -212,7 +424,7 @@ mod tests {
             .iter()
             .position(|l| l.used_by == ["Maple Mono"])
             .unwrap();
-        assert!(all[font].text.contains("SIL OPEN FONT LICENSE"));
+        assert!(all[font].texts[0].body.contains("SIL OPEN FONT LICENSE"));
         assert!(all.iter().skip(1).all(|l| !l.is_own()));
     }
 

@@ -278,13 +278,19 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     change.
     A "Licenses" card lists the licenses that have to be shown for what is in the program:
     those that ask for their text to go with a copy, so 0BSD, CC0 and the Unlicense are left
-    out (`License::must_be_shown`). The list is a virtual list of 48 px rows, about six in
-    view with a scrollbar, that draws only the rows in view. A row has the license's name and
-    how many projects are under it, and the projects in Overlay 2 on a line under it. The
-    first is gitclient's own, then Maple Mono's, then the crates'. A click picks one, which
-    takes the selected-row fill and a bold name, and clicking it again puts it down. The
-    picked license's text shows under the list, on Base in a pane of its own that scrolls past
-    320 px. The texts are inside the program, so they can't be separated from a copy that is
+    out (`License::must_be_shown`). There is one row for each license by name, so every
+    crate under "MIT License" is in one row (`combine`). The list is a virtual list of 48 px
+    rows across the card's full width, about six in view with a scrollbar, that draws only
+    the rows in view. A row has the license's name and how many projects are under it, and
+    the projects in Overlay 2 on a line under it. The first is gitclient's own, then Maple
+    Mono's, then the crates'. A click picks one, which takes the selected-row fill and a bold
+    name, and clicking it again puts it down. The picked license's text shows under the list,
+    on Base in a pane of its own that scrolls past 320 px. Crates word a license a little
+    differently, so a license has one text for each wording that really differs, with a rule
+    between them and "Used by" over each, naming the projects or counting them past eight.
+    Wordings that differ only in white space or in their copyright lines are one text, which
+    starts with every one of those lines, so no notice is lost. The texts are inside the
+    program, so they can't be separated from a copy that is
     passed on: `cargo about` writes them to `THIRD-PARTY-LICENSES.txt` from `Cargo.lock`
     (`about.toml` says which licenses are accepted, `about.hbs` the layout), CI fails when that
     file is out of date, and the release attaches it and `LICENSE` too. What the page says and

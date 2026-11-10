@@ -62,6 +62,7 @@ impl Settings {
                 div()
                     .id(("license", index))
                     .v_flex()
+                    .w_full()
                     .justify_center()
                     .h(LICENSE_ROW)
                     .px_4()
@@ -137,6 +138,24 @@ impl Settings {
             .picked_license
             .and_then(|index| all.get(index))
             .map(|license: &License| {
+                // A license worded more than one way shows each wording, with who used it.
+                let several = license.texts.len() > 1;
+                let blocks = license.texts.iter().enumerate().map(|(index, text)| {
+                    div()
+                        .v_flex()
+                        .gap_1()
+                        .when(index > 0, |block| {
+                            block.pt_3().border_t_1().border_color(border)
+                        })
+                        .when(several, |block| {
+                            block.child(
+                                div()
+                                    .text_color(muted)
+                                    .child(format!("Used by {}", text.used_by_line())),
+                            )
+                        })
+                        .child(text.to_text())
+                });
                 div()
                     .id("license-text")
                     .max_h(TEXT_SHOWN)
@@ -145,9 +164,11 @@ impl Settings {
                     .p_3()
                     .rounded(px(6.))
                     .bg(base)
+                    .v_flex()
+                    .gap_3()
                     .text_size(TEXT_SMALL)
                     .line_height(px(20.))
-                    .child(license.text.clone())
+                    .children(blocks)
             });
         let hint = text.is_none().then(|| {
             div()
