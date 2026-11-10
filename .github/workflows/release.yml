@@ -27,7 +27,7 @@ jobs:
   # so no build can ship a stale one, and the jobs below use this copy. A release tag on a
   # commit whose committed copy differs fails, until the licenses pull request is merged.
   licenses:
-    runs-on: docker
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'docker' }}
     container:
       image: rust:1-bookworm
     steps:
@@ -45,20 +45,20 @@ jobs:
       - name: A release must match the committed file
         if: startsWith(github.ref, 'refs/tags/')
         run: git diff --exit-code THIRD-PARTY-LICENSES.txt
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: licenses
           path: THIRD-PARTY-LICENSES.txt
 
   test:
     needs: licenses
-    runs-on: docker
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'docker' }}
     container:
       image: rust:1-trixie
     steps:
       - run: apt-get update && apt-get install -y --no-install-recommends nodejs
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: licenses
           path: .
@@ -75,13 +75,13 @@ jobs:
 
   linux:
     needs: [licenses, test]
-    runs-on: docker
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'docker' }}
     container:
       image: rust:1-bookworm
     steps:
       - run: apt-get update && apt-get install -y --no-install-recommends nodejs
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: licenses
           path: .
@@ -104,20 +104,20 @@ jobs:
           mkdir dist
           tar -czf "dist/gitclient-$tag-x86_64-unknown-linux-gnu.tar.gz" \
             -C target/release gitclient
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: linux
           path: dist/*
 
   windows:
     needs: [licenses, test]
-    runs-on: windows
+    runs-on: ${{ github.server_url == 'https://github.com' && 'windows-latest' || 'windows' }}
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: licenses
           path: .
@@ -130,7 +130,7 @@ jobs:
           esac
           mkdir dist
           powershell -NoProfile -Command "Compress-Archive -Path target/release/gitclient.exe -DestinationPath dist/gitclient-$tag-x86_64-pc-windows-msvc.zip"
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: windows
           path: dist/*
@@ -138,21 +138,23 @@ jobs:
   publish:
     needs: [linux, windows]
     if: github.event_name != 'workflow_dispatch'
-    runs-on: docker
+    permissions:
+      contents: write
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'docker' }}
     container:
       image: rust:1-bookworm
     steps:
       - run: apt-get update && apt-get install -y --no-install-recommends nodejs jq
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: licenses
           path: .
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: linux
           path: dist
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: windows
           path: dist
@@ -164,31 +166,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           TOKEN: ${{ github.token }}
-          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          id=$(curl -fsS -X POST "$API/releases" \
-            -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"$tag\",\"name\":\"$tag\",\"prerelease\":true}" | jq -r .id)
-          for f in dist/*; do
-            curl -fsS -X POST "$API/releases/$id/assets?name=$(basename "$f")" \
-              -H "Authorization: token $TOKEN" -F "attachment=@$f"
-          done
-      # One rolling release: drop the last nightly and its tag, then make it again at this commit.
+        run: sh .github/release-publish.sh release
       - name: Publish nightly
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         env:
           TOKEN: ${{ github.token }}
-          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
-        run: |
-          old=$(curl -s -H "Authorization: token $TOKEN" "$API/releases/tags/nightly" | jq -r '.id // empty')
-          [ -n "$old" ] && curl -fsS -X DELETE -H "Authorization: token $TOKEN" "$API/releases/$old"
-          curl -s -X DELETE -H "Authorization: token $TOKEN" "$API/tags/nightly" || true
-          short=$(echo "$GITHUB_SHA" | cut -c1-7)
-          id=$(curl -fsS -X POST "$API/releases" \
-            -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"nightly\",\"target_commitish\":\"$GITHUB_SHA\",\"name\":\"nightly ($short)\",\"body\":\"Built from $GITHUB_SHA. Replaced on every push to main.\",\"prerelease\":true}" | jq -r .id)
-          for f in dist/*; do
-            curl -fsS -X POST "$API/releases/$id/assets?name=$(basename "$f")" \
-              -H "Authorization: token $TOKEN" -F "attachment=@$f"
-          done
+        run: sh .github/release-publish.sh nightly
