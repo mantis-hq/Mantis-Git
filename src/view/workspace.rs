@@ -458,6 +458,10 @@ impl Workspace {
 
         parts::tab(("tab", index), index == self.active, cx)
             .on_click(cx.listener(move |this, _, window, cx| this.activate(index, window, cx)))
+            .on_mouse_up(
+                MouseButton::Middle,
+                cx.listener(move |this, _, window, cx| this.close_tab(index, window, cx)),
+            )
             .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
             .can_drop(move |dragged, _, _| {
                 dragged
