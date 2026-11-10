@@ -88,11 +88,30 @@ pub fn key(email: &str) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// Whether an address is worth asking about: git writes `unknown` and the like when a
-/// commit has no address, and those would all share one picture.
+/// Whether an address is worth asking about. Git writes `unknown` and the like when a
+/// commit has no address, and those would all share one picture; `noreply` and local
+/// addresses can't have a Gravatar at all.
 pub fn is_askable(email: &str) -> bool {
-    let email = email.trim();
-    email.contains('@') && !email.ends_with(".(none)") && !email.contains(char::is_whitespace)
+    let email = email.trim().to_lowercase();
+    let host = email.rsplit('@').next().unwrap_or_default();
+    let local_only = [
+        "localhost",
+        ".local",
+        ".localdomain",
+        ".lan",
+        ".internal",
+        ".invalid",
+        ".(none)",
+    ]
+    .iter()
+    .any(|end| host == end.trim_start_matches('.') || host.ends_with(end));
+    email.contains('@')
+        && !email.contains(char::is_whitespace)
+        // Nobody can register a Gravatar for an address that receives no mail, such as
+        // GitHub's `1234+ada@users.noreply.github.com`, or one that isn't on the internet.
+        && !email.contains("noreply")
+        && !email.contains("no-reply")
+        && !local_only
 }
 
 /// Downloads the picture for `email`. `Ok(None)` means Gravatar answered that there is
@@ -129,25 +148,76 @@ pub fn fetch(email: &str) -> Result<Option<Vec<u8>>, String> {
     }
 }
 
-/// A Gravatar picture as it is kept in the cache: the file as Gravatar sent it. Only a
-/// picture is kept; "none" and failures are remembered for the session alone.
-pub struct Picture(pub Vec<u8>);
+/// How long "this address has no Gravatar" is believed before gravatar.com is asked again,
+/// in case the author has added one since.
+const MISSING_FOR: u64 = 7 * 24 * 60 * 60;
 
-impl Cacheable for Picture {
-    const FORMAT: u32 = 1;
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
+}
+
+/// What gravatar.com said about one address, as it is kept in the cache, so a later run
+/// doesn't ask again: the picture as sent (kept until the cache is cleared), or that there
+/// is none (kept for a week). A failed request is not kept, as it says nothing about the
+/// author.
+pub enum Gravatar {
+    Picture(Vec<u8>),
+    Missing { checked: u64 },
+}
+
+impl Gravatar {
+    /// "None", as of now.
+    pub fn missing() -> Self {
+        Self::Missing { checked: now() }
+    }
+
+    /// Whether this is an old "none", which is worth asking about again.
+    pub fn is_stale(&self) -> bool {
+        match self {
+            Self::Picture(_) => false,
+            Self::Missing { checked } => now().saturating_sub(*checked) >= MISSING_FOR,
+        }
+    }
+}
+
+impl Cacheable for Gravatar {
+    const FORMAT: u32 = 2;
 
     fn weight(&self) -> usize {
-        self.0.len() + 64
+        match self {
+            Self::Picture(bytes) => bytes.len() + 64,
+            Self::Missing { .. } => 64,
+        }
     }
 
     fn encode(&self, out: &mut Writer) {
-        out.bytes(&self.0);
+        match self {
+            Self::Picture(bytes) => {
+                out.u8(0);
+                out.bytes(bytes);
+            }
+            Self::Missing { checked } => {
+                out.u8(1);
+                out.u64(*checked);
+            }
+        }
     }
 
     fn decode(input: &mut Reader) -> Option<Self> {
-        let bytes = input.bytes()?;
-        // Whatever was read must still be a picture, so a damaged file is read again.
-        (input.is_empty() && sniff(bytes).is_some()).then(|| Picture(bytes.to_vec()))
+        match input.u8()? {
+            // Whatever was read must still be a picture, so a damaged file is read again.
+            0 => {
+                let bytes = input.bytes()?;
+                (input.is_empty() && sniff(bytes).is_some()).then(|| Self::Picture(bytes.to_vec()))
+            }
+            1 => {
+                let checked = input.u64()?;
+                input.is_empty().then_some(Self::Missing { checked })
+            }
+            _ => None,
+        }
     }
 }
 
@@ -245,10 +315,18 @@ pub fn own_email(repo: &Path) -> Option<String> {
 }
 
 /// The addresses Gravatar has been asked about this session, so each is asked once
-/// however many commits it wrote, whatever the answer. Asking again takes a restart.
+/// however many commits it wrote or tabs show it, whatever the answer. Asking again takes
+/// a restart.
 #[derive(Default)]
 pub struct Asked {
     seen: Mutex<HashSet<String>>,
+}
+
+/// The one record for the whole process, so that a second tab, or the same author in
+/// another repository, doesn't ask again.
+pub fn asked() -> std::sync::Arc<Asked> {
+    static ASKED: std::sync::OnceLock<std::sync::Arc<Asked>> = std::sync::OnceLock::new();
+    ASKED.get_or_init(Default::default).clone()
 }
 
 impl Asked {
@@ -287,6 +365,26 @@ mod tests {
         assert!(!is_askable(""));
         assert!(!is_askable("unknown"));
         assert!(!is_askable("ada@host.(none)"));
+        assert!(!is_askable("1234+ada@users.noreply.github.com"));
+        assert!(!is_askable("NoReply@github.com"));
+        assert!(!is_askable("ada@laptop.local"));
+        assert!(!is_askable("ada@localhost"));
+        assert!(is_askable("ada@gmail.com"));
+    }
+
+    #[test]
+    fn a_missing_gravatar_is_believed_for_a_week_and_a_picture_always() {
+        let fresh = Gravatar::missing();
+        assert!(!fresh.is_stale());
+        assert!(Gravatar::Missing { checked: 0 }.is_stale());
+        assert!(!Gravatar::Picture(vec![1]).is_stale());
+    }
+
+    #[test]
+    fn every_caller_shares_one_record_of_who_was_asked() {
+        let (one, two) = (asked(), asked());
+        assert!(one.claim("shared-record@example.com"));
+        assert!(!two.claim("shared-record@example.com"));
     }
 
     #[test]

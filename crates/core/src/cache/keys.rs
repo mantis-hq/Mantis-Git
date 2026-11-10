@@ -10,7 +10,7 @@
 
 use super::{Cache, Config, DiskSettings, hash64};
 use crate::commit::details::{self, CommitDetails, FileChange};
-use crate::history::avatar::Picture;
+use crate::history::avatar::Gravatar;
 use crate::ops::{self, Cancel};
 use crate::patch::{DiffView, FilePatch};
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ const MEMORY: usize = 64 * 1024 * 1024;
 pub struct Caches {
     details: Cache<CommitDetails>,
     diffs: Cache<FilePatch>,
-    avatars: Cache<Picture>,
+    avatars: Cache<Gravatar>,
 }
 
 impl Caches {
@@ -94,16 +94,24 @@ impl Caches {
         self.details.disk_size() + self.diffs.disk_size() + self.avatars.disk_size()
     }
 
-    /// An author's Gravatar from the cache, in memory or on disk, if it was fetched before.
-    /// Blocks.
-    pub fn cached_avatar(&self, email: &str) -> Option<Arc<Picture>> {
+    /// What is known of an author's Gravatar from an earlier run: the picture, or that there
+    /// was none. Blocks.
+    pub fn cached_avatar(&self, email: &str) -> Option<Arc<Gravatar>> {
         self.avatars.get(&crate::history::avatar::key(email))
     }
 
     /// Keeps a Gravatar that was just fetched. Doesn't wait on the disk.
     pub fn store_avatar(&self, email: &str, bytes: Vec<u8>) {
+        self.avatars.insert(
+            &crate::history::avatar::key(email),
+            Gravatar::Picture(bytes),
+        );
+    }
+
+    /// Keeps that gravatar.com has no picture for an author, for a week.
+    pub fn store_no_avatar(&self, email: &str) {
         self.avatars
-            .insert(&crate::history::avatar::key(email), Picture(bytes));
+            .insert(&crate::history::avatar::key(email), Gravatar::missing());
     }
 
     /// A commit's details if they are in memory. Safe on the UI thread.
@@ -245,17 +253,27 @@ mod tests {
         let first = Caches::on_disk(root.path().to_owned(), DiskSettings::default());
         assert!(first.cached_avatar("ada@example.com").is_none());
         first.store_avatar("Ada@Example.com ", PNG.to_vec());
-        assert_eq!(
-            first.cached_avatar("ada@example.com").unwrap().0,
-            PNG,
+        assert!(
+            matches!(
+                &*first.cached_avatar("ada@example.com").unwrap(),
+                Gravatar::Picture(bytes) if bytes == &PNG
+            ),
             "the same address in another case is the same author"
         );
         first.avatars.flush();
 
         // A new run: nothing in memory, so it is the disk that answers.
         let second = Caches::on_disk(root.path().to_owned(), DiskSettings::default());
-        assert_eq!(second.cached_avatar("ada@example.com").unwrap().0, PNG);
+        assert!(matches!(
+            &*second.cached_avatar("ada@example.com").unwrap(),
+            Gravatar::Picture(bytes) if bytes == &PNG
+        ));
         assert!(second.cached_avatar("grace@example.com").is_none());
+        second.store_no_avatar("grace@example.com");
+        second.avatars.flush();
+        let after = Caches::on_disk(root.path().to_owned(), DiskSettings::default());
+        let grace = after.cached_avatar("grace@example.com").unwrap();
+        assert!(matches!(&*grace, Gravatar::Missing { .. }) && !grace.is_stale());
 
         second.clear();
         second.avatars.flush();
@@ -267,16 +285,22 @@ mod tests {
     fn a_damaged_cached_gravatar_is_not_used() {
         use crate::cache::Cacheable;
         use crate::cache::codec::{Reader, Writer};
-        use crate::history::avatar::Picture;
+        use crate::history::avatar::Gravatar;
         let decode = |bytes: &[u8]| {
             let mut out = Writer::new();
             out.bytes(bytes);
             let written = out.finish();
-            Picture::decode(&mut Reader::new(&written)).map(|picture| picture.0)
+            let mut tagged = vec![0];
+            tagged.extend_from_slice(&written);
+            Gravatar::decode(&mut Reader::new(&tagged)).is_some()
         };
-        assert_eq!(decode(&PNG), Some(PNG.to_vec()));
-        assert_eq!(decode(b"<html>an error page</html>"), None);
-        assert!(Picture::decode(&mut Reader::new(&[9, 0, 0, 0, 1])).is_none());
+        assert!(decode(&PNG));
+        assert!(!decode(b"<html>an error page</html>"));
+        assert!(Gravatar::decode(&mut Reader::new(&[9, 9, 0, 0, 1])).is_none());
+        assert!(
+            Gravatar::decode(&mut Reader::new(&[1, 1, 2])).is_none(),
+            "a cut-short date"
+        );
     }
 
     #[test]

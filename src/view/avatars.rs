@@ -5,16 +5,19 @@
 use super::GraphView;
 use crate::theme::lane_color;
 use gitclient_core::history::Commit;
-use gitclient_core::history::avatar::{self, Asked, Kind, Style};
+use gitclient_core::history::avatar::{self, Asked, Gravatar, Kind, Style};
 use gitclient_core::history::lanes::LaneColor;
 use gitclient_core::settings::state::AppState;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
+
+/// The most requests to gravatar.com out at once.
+const MAX_IN_FLIGHT: usize = 4;
 
 /// How wide the mark is. Wider than a lane, but a row holds one commit and is taller, so
 /// no two marks touch, and the neighbouring lanes' lines pass clear of it.
@@ -48,11 +51,26 @@ pub(super) struct State {
     own_requested: Option<PathBuf>,
     /// The repository the user's email was read for, and the email.
     own_email: Option<(PathBuf, Option<String>)>,
+    /// Shared by every tab, so an author is asked about once per session.
     asked: Arc<Asked>,
+    /// Addresses waiting for a turn, and how many requests are out. A long scroll can show
+    /// dozens of new authors at once, which gravatar.com is asked about a few at a time.
+    queue: VecDeque<String>,
+    in_flight: usize,
     /// Whether a failure to reach Gravatar has been said this session.
     failure_shown: bool,
     /// Gravatars that arrived, by `avatar::key`.
     gravatars: HashMap<String, Arc<Image>>,
+}
+
+impl State {
+    /// The state of a new tab, which shares the one record of who was asked.
+    pub(super) fn new() -> Self {
+        Self {
+            asked: avatar::asked(),
+            ..Self::default()
+        }
+    }
 }
 
 fn image_of(kind: Kind, bytes: Vec<u8>) -> Arc<Image> {
@@ -150,6 +168,56 @@ impl GraphView {
         }
     }
 
+    /// Starts as many queued lookups as there is room for. A lookup is the disk cache first,
+    /// which holds pictures and "none" answers from earlier runs, and gravatar.com only for
+    /// an address nobody has asked about lately.
+    fn start_gravatar_requests(&mut self, cx: &mut Context<Self>) {
+        while self.avatars.in_flight < MAX_IN_FLIGHT
+            && let Some(email) = self.avatars.queue.pop_front()
+        {
+            self.avatars.in_flight += 1;
+            let caches = self.caches.clone();
+            Self::spawn_blocking(
+                {
+                    let email = email.clone();
+                    move || -> Result<Option<Vec<u8>>, String> {
+                        match caches.cached_avatar(&email).as_deref() {
+                            Some(Gravatar::Picture(bytes)) => return Ok(Some(bytes.clone())),
+                            Some(known @ Gravatar::Missing { .. }) if !known.is_stale() => {
+                                return Ok(None);
+                            }
+                            _ => {}
+                        }
+                        let answer = avatar::fetch(&email)?;
+                        match &answer {
+                            Some(bytes) => caches.store_avatar(&email, bytes.clone()),
+                            None => caches.store_no_avatar(&email),
+                        }
+                        Ok(answer)
+                    }
+                },
+                move |this, answer, cx| {
+                    this.avatars.in_flight -= 1;
+                    match answer {
+                        Ok(Some(bytes)) => {
+                            if let Some(kind) = avatar::sniff(&bytes) {
+                                this.avatars
+                                    .gravatars
+                                    .insert(avatar::key(&email), image_of(kind, bytes));
+                                cx.notify();
+                            }
+                        }
+                        // Final: this address has no Gravatar, so it keeps its initials.
+                        Ok(None) => {}
+                        Err(error) => this.gravatar_failed(error, cx),
+                    }
+                    this.start_gravatar_requests(cx);
+                },
+                cx,
+            );
+        }
+    }
+
     /// Whether the Gravatar for `email` has arrived. For tests, which can't see the state.
     #[cfg(test)]
     pub(super) fn has_gravatar(&self, email: &str) -> bool {
@@ -177,38 +245,8 @@ impl GraphView {
                 return Face::Picture(image.clone());
             }
             if self.avatars.asked.claim(&commit.email) {
-                let email = commit.email.to_string();
-                Self::spawn_blocking(
-                    {
-                        let email = email.clone();
-                        let caches = self.caches.clone();
-                        move || {
-                            // Asked of Gravatar only when no earlier run kept it.
-                            if let Some(picture) = caches.cached_avatar(&email) {
-                                return Ok(Some(picture.0.clone()));
-                            }
-                            let answer = avatar::fetch(&email)?;
-                            if let Some(bytes) = &answer {
-                                caches.store_avatar(&email, bytes.clone());
-                            }
-                            Ok(answer)
-                        }
-                    },
-                    move |this, answer, cx| match answer {
-                        Ok(Some(bytes)) => {
-                            if let Some(kind) = avatar::sniff(&bytes) {
-                                this.avatars
-                                    .gravatars
-                                    .insert(avatar::key(&email), image_of(kind, bytes));
-                                cx.notify();
-                            }
-                        }
-                        // Final: this address has no Gravatar, so it keeps its initials.
-                        Ok(None) => {}
-                        Err(error) => this.gravatar_failed(error, cx),
-                    },
-                    cx,
-                );
+                self.avatars.queue.push_back(commit.email.to_string());
+                self.start_gravatar_requests(cx);
             }
         }
         Face::Initials {
