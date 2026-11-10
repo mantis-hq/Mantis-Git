@@ -196,7 +196,9 @@ fn a_held_down_enter_never_starts_it(cx: &mut TestAppContext) {
 fn nothing_is_shown_without_a_place_to_remember_it(cx: &mut TestAppContext) {
     let mut app = setup(cx);
     // A state file inside a folder that can't be made: it would come back every start.
-    app.state = PathBuf::from("/nonexistent-gitclient/never/state");
+    let blocker = app.dir.path().join("blocker");
+    std::fs::write(&blocker, "").unwrap();
+    app.state = blocker.join("state");
 
     app.welcome();
 
