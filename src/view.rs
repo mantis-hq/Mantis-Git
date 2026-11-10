@@ -24,6 +24,7 @@ pub use settings::{
 pub use updates::{Updates, install_updates};
 pub use workspace::Workspace;
 
+use crate::icons::Icon;
 use dialog::Dialog;
 use gitclient_core::cache::keys::{self, Caches};
 use gitclient_core::history::columns::ColumnOrder;
@@ -33,6 +34,7 @@ use gitclient_core::history::{self, Entry, LoadEvent};
 use gitclient_core::repo::{auto_fetch, commit_graph};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -765,6 +767,60 @@ impl GraphView {
         self.dock = Some(dock);
     }
 
+    /// A small up arrow at the top middle of the graph once it is scrolled down, which
+    /// brings the newest commits back.
+    fn render_to_top(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        // Past one screen's worth of rows, so it doesn't show for a nudge.
+        let scrolled = -f32::from(self.scroll.0.borrow().base_handle.offset().y);
+        if scrolled < 200. {
+            return None;
+        }
+        let theme = cx.theme();
+        let (fill, border, text, hover) = (
+            theme.list_head,
+            theme.border,
+            theme.secondary_foreground,
+            theme.list_active,
+        );
+        Some(
+            div()
+                .absolute()
+                .top_2()
+                .left_0()
+                .right_0()
+                .h_flex()
+                .justify_center()
+                .child(
+                    div()
+                        .id("scroll-to-top")
+                        .h_flex()
+                        .size(px(28.))
+                        .justify_center()
+                        .rounded(px(6.))
+                        .border_1()
+                        .border_color(border)
+                        .bg(fill)
+                        .cursor_pointer()
+                        .hover(move |style| style.bg(hover))
+                        .tooltip(|window, cx| {
+                            Tooltip::new("Back to the newest commit").build(window, cx)
+                        })
+                        .tooltip_show_delay(std::time::Duration::ZERO)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.scroll.scroll_to_item(0, ScrollStrategy::Top);
+                            cx.notify();
+                        }))
+                        .child(
+                            svg()
+                                .path(Icon::ArrowUp.path())
+                                .size(px(14.))
+                                .text_color(text),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn render_graph(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if self.entries.is_empty() {
             return div()
@@ -820,7 +876,8 @@ impl GraphView {
                                         .track_scroll(&self.scroll)
                                         .size_full(),
                                     )
-                                    .vertical_scrollbar(&self.scroll),
+                                    .vertical_scrollbar(&self.scroll)
+                                    .children(self.render_to_top(cx)),
                             )
                             .into_any_element(),
                     })

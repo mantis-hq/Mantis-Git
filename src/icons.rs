@@ -16,6 +16,7 @@ pub enum Icon {
     Check,
     CloudOff,
     Lock,
+    ArrowUp,
 }
 
 impl Icon {
@@ -29,6 +30,7 @@ impl Icon {
             Self::Check => "icons/check.svg",
             Self::CloudOff => "icons/cloud-off.svg",
             Self::Lock => "icons/lock.svg",
+            Self::ArrowUp => "icons/arrow-up.svg",
         }
     }
 
@@ -41,6 +43,7 @@ impl Icon {
             "icons/check.svg" => include_bytes!("icons/check.svg"),
             "icons/cloud-off.svg" => include_bytes!("icons/cloud-off.svg"),
             "icons/lock.svg" => include_bytes!("icons/lock.svg"),
+            "icons/arrow-up.svg" => include_bytes!("icons/arrow-up.svg"),
             _ => return None,
         })
     }
@@ -63,6 +66,7 @@ impl AssetSource for Icons {
             Icon::Check,
             Icon::CloudOff,
             Icon::Lock,
+            Icon::ArrowUp,
         ];
         Ok(all
             .into_iter()
@@ -89,11 +93,12 @@ mod tests {
             Icon::Check,
             Icon::CloudOff,
             Icon::Lock,
+            Icon::ArrowUp,
         ] {
             let bytes = Icons.load(icon.path()).unwrap().expect("served");
             assert!(bytes.starts_with(b"<svg"), "{}", icon.path());
         }
         assert!(Icons.load("icons/none.svg").unwrap().is_none());
-        assert_eq!(Icons.list("icons/").unwrap().len(), 7);
+        assert_eq!(Icons.list("icons/").unwrap().len(), 8);
     }
 }
