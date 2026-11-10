@@ -1,5 +1,5 @@
-//! The few pictures the interface draws: which forge a line is about, or a question mark
-//! when that isn't known. They are plain shapes that take the colour of the text beside
+//! The few pictures the interface draws: which forge a line is about, a question mark
+//! when that isn't known, and a check and a broken cloud on branch rows. They are plain shapes that take the colour of the text beside
 //! them, so they add no colour of their own. GitHub's mark and the question mark are from
 //! Simple Icons and Lucide (ISC); the other two are drawn here.
 
@@ -13,6 +13,8 @@ pub enum Icon {
     GitLab,
     Gitea,
     Question,
+    Check,
+    CloudOff,
 }
 
 impl Icon {
@@ -23,6 +25,8 @@ impl Icon {
             Self::GitLab => "icons/gitlab.svg",
             Self::Gitea => "icons/gitea.svg",
             Self::Question => "icons/question.svg",
+            Self::Check => "icons/check.svg",
+            Self::CloudOff => "icons/cloud-off.svg",
         }
     }
 
@@ -32,6 +36,8 @@ impl Icon {
             "icons/gitlab.svg" => include_bytes!("icons/gitlab.svg"),
             "icons/gitea.svg" => include_bytes!("icons/gitea.svg"),
             "icons/question.svg" => include_bytes!("icons/question.svg"),
+            "icons/check.svg" => include_bytes!("icons/check.svg"),
+            "icons/cloud-off.svg" => include_bytes!("icons/cloud-off.svg"),
             _ => return None,
         })
     }
@@ -46,7 +52,14 @@ impl AssetSource for Icons {
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        let all = [Icon::GitHub, Icon::GitLab, Icon::Gitea, Icon::Question];
+        let all = [
+            Icon::GitHub,
+            Icon::GitLab,
+            Icon::Gitea,
+            Icon::Question,
+            Icon::Check,
+            Icon::CloudOff,
+        ];
         Ok(all
             .into_iter()
             .map(Icon::path)
@@ -64,11 +77,18 @@ mod tests {
 
     #[test]
     fn every_icon_is_served_and_is_an_svg() {
-        for icon in [Icon::GitHub, Icon::GitLab, Icon::Gitea, Icon::Question] {
+        for icon in [
+            Icon::GitHub,
+            Icon::GitLab,
+            Icon::Gitea,
+            Icon::Question,
+            Icon::Check,
+            Icon::CloudOff,
+        ] {
             let bytes = Icons.load(icon.path()).unwrap().expect("served");
             assert!(bytes.starts_with(b"<svg"), "{}", icon.path());
         }
         assert!(Icons.load("icons/none.svg").unwrap().is_none());
-        assert_eq!(Icons.list("icons/").unwrap().len(), 4);
+        assert_eq!(Icons.list("icons/").unwrap().len(), 6);
     }
 }

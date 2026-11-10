@@ -89,22 +89,40 @@ pub struct Branch {
 }
 
 impl Branch {
+    /// How the branch stands against the default branch: `+2 −1`, or nothing for the
+    /// default itself, a merged branch (see [`Branch::merged_hint`]) or one not counted yet.
+    pub fn delta(&self, default_branch: Option<&str>) -> String {
+        match self.ahead_behind {
+            _ if default_branch == Some(self.name.as_str()) => String::new(),
+            Some((0, _)) | None => String::new(),
+            Some((ahead, 0)) => format!("+{ahead}"),
+            Some((ahead, behind)) => format!("+{ahead} −{behind}"),
+        }
+    }
+
+    /// For a branch the default branch already has every commit of, the sentence for its
+    /// check mark. `None` for the default itself and for a branch not counted yet.
+    pub fn merged_hint(&self, default_branch: Option<&str>) -> Option<String> {
+        let default = default_branch?;
+        match self.ahead_behind {
+            Some((0, _)) if default != self.name => Some(format!("Merged into {default}")),
+            _ => None,
+        }
+    }
+
+    /// For a branch whose remote branch has been deleted, the sentence for its icon.
+    pub fn upstream_gone_hint(&self) -> Option<String> {
+        match (&self.upstream_name, self.upstream) {
+            (Some(name), None) => Some(format!("{name} was deleted on the remote")),
+            _ => None,
+        }
+    }
+
     /// How the branch stands against the remote it tracks: `↑2 ↓1`, or nothing when level
     /// or untracked.
     pub fn remote_delta(&self) -> String {
         match self.upstream {
             Some((ahead, behind)) => crate::text::ahead_behind(ahead, behind),
-            None => String::new(),
-        }
-    }
-
-    /// How the branch stands against the default branch, in a few characters.
-    pub fn delta(&self, default_branch: Option<&str>) -> String {
-        match self.ahead_behind {
-            _ if default_branch == Some(self.name.as_str()) => String::new(),
-            Some((0, _)) => "merged".to_owned(),
-            Some((ahead, 0)) => format!("+{ahead}"),
-            Some((ahead, behind)) => format!("+{ahead} −{behind}"),
             None => String::new(),
         }
     }

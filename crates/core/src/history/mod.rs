@@ -832,15 +832,43 @@ mod tests {
         let names: Vec<_> = refs.branches.iter().map(|b| b.name.as_str()).collect();
         assert_eq!(names, ["alpha", "main", "merged-one", "zebra"]);
 
-        let default = refs.default_branch.as_deref();
-        let delta = |name: &str| {
-            let branch = refs.branches.iter().find(|b| b.name == name).unwrap();
-            branch.delta(default)
+        let counts = |name: &str| {
+            refs.branches
+                .iter()
+                .find(|b| b.name == name)
+                .unwrap()
+                .ahead_behind
         };
-        assert_eq!(delta("main"), "", "the default has nothing to compare with");
-        assert_eq!(delta("alpha"), "+1");
-        assert_eq!(delta("zebra"), "+2 −1");
-        assert_eq!(delta("merged-one"), "merged");
+        assert_eq!(
+            counts("main"),
+            Some((0, 0)),
+            "the default is level with itself"
+        );
+        assert_eq!(counts("alpha"), Some((1, 0)));
+        assert_eq!(counts("zebra"), Some((2, 1)));
+        assert_eq!(counts("merged-one"), Some((0, 1)));
+
+        let default = refs.default_branch.as_deref();
+        let branch = |name: &str| refs.branches.iter().find(|b| b.name == name).unwrap();
+        assert_eq!(branch("zebra").delta(default), "+2 −1");
+        assert_eq!(branch("alpha").delta(default), "+1");
+        assert_eq!(branch("main").delta(default), "");
+        assert_eq!(
+            branch("merged-one").delta(default),
+            "",
+            "merged says it with a check"
+        );
+        assert_eq!(
+            branch("merged-one").merged_hint(default).as_deref(),
+            Some("Merged into main")
+        );
+        assert_eq!(branch("main").merged_hint(default), None);
+        assert_eq!(branch("zebra").merged_hint(default), None);
+        assert_eq!(
+            branch("zebra").upstream_gone_hint(),
+            None,
+            "it tracks nothing"
+        );
     }
 
     #[test]
