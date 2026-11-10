@@ -113,8 +113,11 @@ struct RefRow {
     target: Dragged,
     list: RefList,
     color: Hsla,
+    index: usize,
     /// `+2 −1` against the default branch, drawn only while the pointer is over the row.
     detail: String,
+    /// Whether the pointer is over the row.
+    hovered: bool,
     sync: String,
     /// The words for a check mark on a branch the default branch already has.
     merged: Option<String>,
@@ -137,6 +140,10 @@ pub(super) struct State {
     pub(super) picks: Picks,
     /// The stashes picked in the list, by their number.
     stash_picks: StashPicks,
+    /// The branch, by its place in the list, that the pointer is over. Its row then shows its
+    /// count against the default branch. That changes the row's layout, so it can't be a
+    /// hover style: gpui lays out before it paints, and panics if a style adds an element.
+    pub(super) hovered_branch: Option<usize>,
     expanded: Vec<Section>,
     /// Folders the user closed, as `<list>/<path>`. Folders start open.
     closed_folders: Vec<String>,
@@ -640,6 +647,8 @@ impl GraphView {
         };
         Some(RefRow {
             id: (list.key(), index).into(),
+            index,
+            hovered: list == RefList::Branches && self.sidebar.hovered_branch == Some(index),
             name: label.to_owned(),
             on: self.sidebar.picks.contains(&target),
             target,
@@ -814,7 +823,9 @@ impl GraphView {
             target,
             list,
             color,
+            index,
             detail,
+            hovered,
             sync,
             merged,
             gone,
@@ -832,9 +843,18 @@ impl GraphView {
         };
         let id_for_icons = id.clone();
         let row = panel_row(id, on, cx)
-            .group("ref-row")
             .h(px(30.))
             .pl(indent(depth))
+            .when(list == RefList::Branches, |row| {
+                row.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    let was_here = this.sidebar.hovered_branch == Some(index);
+                    // Leaving a row after another was entered doesn't clear the other.
+                    if *hovered != was_here {
+                        this.sidebar.hovered_branch = hovered.then_some(index);
+                        cx.notify();
+                    }
+                }))
+            })
             .on_click({
                 let target = target.clone();
                 cx.listener(move |this, event: &ClickEvent, _, cx| {
@@ -854,13 +874,11 @@ impl GraphView {
                     .when(strong, |name| name.font_semibold())
                     .child(name),
             )
-            .when(!detail.is_empty(), |row| {
-                // Hidden until the pointer is over the row, so it only takes room from the
-                // name while it is wanted.
+            .when(hovered && !detail.is_empty(), |row| {
+                // Only while the pointer is over the row, so it takes room from the name
+                // only while it is wanted.
                 row.child(
                     div()
-                        .hidden()
-                        .group_hover("ref-row", |style| style.flex())
                         .flex_none()
                         .text_size(TEXT_CHIP)
                         .text_color(muted)

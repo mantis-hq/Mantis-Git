@@ -1837,3 +1837,37 @@ fn a_repository_is_cloned_from_an_address_in_a_tab_with_nothing_open(cx: &mut Te
     assert!(opened[0].join("a").is_file());
     assert_eq!(view.read_with(&cx, |view, cx| view.form_values(cx)), None);
 }
+
+#[gpui_kit::test]
+fn a_hovered_branch_shows_its_count_against_the_default_and_draws(cx: &mut TestAppContext) {
+    let repo = gitclient_core::testing::Repo::new();
+    repo.write("a", "1\n");
+    repo.commit("base");
+    repo.git(&["checkout", "-q", "-b", "side"]);
+    repo.write("b", "2\n");
+    repo.commit("add b");
+    repo.git(&["checkout", "-q", "main"]);
+    let (view, mut cx) = open_view(cx);
+    view.update(&mut cx, |view, cx| view.open(repo.path().to_owned(), cx));
+    wait_until_loaded(&view, &mut cx);
+    for _ in 0..500 {
+        cx.run_until_parked();
+        if view.read_with(&cx, |view, _| !view.refs.needs_counts()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // The count is an element that only a hovered row has, so drawing must not trip over a
+    // row that gained one between frames (gpui panics if a hover style did that).
+    view.update(&mut cx, |view, cx| {
+        view.sidebar.window_is_wide = true;
+        view.sidebar.hovered_branch = view.refs.branches.iter().position(|b| b.name == "side");
+        cx.notify();
+    });
+    cx.run_until_parked();
+    view.update(&mut cx, |view, cx| {
+        view.sidebar.hovered_branch = None;
+        cx.notify();
+    });
+    cx.run_until_parked();
+}
