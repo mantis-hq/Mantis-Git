@@ -120,14 +120,16 @@ pub fn fetch(email: &str) -> Result<Option<Vec<u8>>, String> {
         .limit(MAX_BYTES)
         .read_to_vec()
         .map_err(|error| format!("Couldn't read gravatar.com's answer: {error}"))?;
-    if sniff(&bytes) == Some(Kind::Png) {
+    // Asked for a PNG, but whatever picture comes is drawn, so an account whose picture
+    // Gravatar won't convert isn't left with initials.
+    if sniff(&bytes).is_some() {
         Ok(Some(bytes))
     } else {
-        Err("gravatar.com answered with something that isn't a PNG picture.".to_owned())
+        Err("gravatar.com answered with something that isn't a picture.".to_owned())
     }
 }
 
-/// A Gravatar picture as it is kept in the cache: the PNG as Gravatar sent it. Only a
+/// A Gravatar picture as it is kept in the cache: the file as Gravatar sent it. Only a
 /// picture is kept; "none" and failures are remembered for the session alone.
 pub struct Picture(pub Vec<u8>);
 
@@ -145,7 +147,7 @@ impl Cacheable for Picture {
     fn decode(input: &mut Reader) -> Option<Self> {
         let bytes = input.bytes()?;
         // Whatever was read must still be a picture, so a damaged file is read again.
-        (input.is_empty() && sniff(bytes) == Some(Kind::Png)).then(|| Picture(bytes.to_vec()))
+        (input.is_empty() && sniff(bytes).is_some()).then(|| Picture(bytes.to_vec()))
     }
 }
 
@@ -347,7 +349,7 @@ mod tests {
         let bytes = fetch("beau@dentedreality.com.au")
             .unwrap()
             .expect("a picture");
-        assert_eq!(sniff(&bytes), Some(Kind::Png));
+        assert!(sniff(&bytes).is_some());
         assert_eq!(fetch("nobody-has-this@example.invalid"), Ok(None));
     }
 

@@ -150,6 +150,12 @@ impl GraphView {
         }
     }
 
+    /// Whether the Gravatar for `email` has arrived. For tests, which can't see the state.
+    #[cfg(test)]
+    pub(super) fn has_gravatar(&self, email: &str) -> bool {
+        self.avatars.gravatars.contains_key(&avatar::key(email))
+    }
+
     /// What `commit`'s dot shows. Starts the Gravatar download the first time an address
     /// is seen, and shows initials until it arrives or if there is none.
     pub(super) fn avatar_face(&mut self, commit: &Commit, cx: &mut Context<Self>) -> Face {
@@ -190,10 +196,12 @@ impl GraphView {
                     },
                     move |this, answer, cx| match answer {
                         Ok(Some(bytes)) => {
-                            this.avatars
-                                .gravatars
-                                .insert(avatar::key(&email), image_of(Kind::Png, bytes));
-                            cx.notify();
+                            if let Some(kind) = avatar::sniff(&bytes) {
+                                this.avatars
+                                    .gravatars
+                                    .insert(avatar::key(&email), image_of(kind, bytes));
+                                cx.notify();
+                            }
                         }
                         // Final: this address has no Gravatar, so it keeps its initials.
                         Ok(None) => {}
