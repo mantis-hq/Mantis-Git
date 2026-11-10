@@ -3,7 +3,6 @@
 //! pictures off the UI thread and draws the result.
 
 use super::GraphView;
-use super::parts::TEXT_AVATAR;
 use crate::theme::lane_color;
 use gitclient_core::history::Commit;
 use gitclient_core::history::avatar::{self, Asked, Kind, Style};
@@ -17,8 +16,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-/// How wide the mark is: a lane, so that it covers the dot and touches no neighbour.
-pub(super) const SIZE: f32 = 16.;
+/// How wide the mark is. Wider than a lane, but a row holds one commit and is taller, so
+/// no two marks touch, and the neighbouring lanes' lines pass clear of it.
+pub(super) const SIZE: f32 = 20.;
+const RING: f32 = 2.;
 
 /// What one commit's dot shows.
 pub(super) enum Face {
@@ -29,6 +30,8 @@ pub(super) enum Face {
         tint: u32,
     },
     Picture(Arc<Image>),
+    /// A picture still to be read from this file, for Settings' preview.
+    File(PathBuf),
 }
 
 /// What the view remembers about avatars: the setting as last read, and the pictures
@@ -183,8 +186,45 @@ impl GraphView {
     }
 }
 
-/// The mark itself, a circle with a ring in the lane's colour (blue for HEAD), placed over
-/// the dot. `left` and `top` are where its corner goes in the graph cell.
+/// A round avatar `size` px across with a `ring_width` ring: the picture, or the initials on
+/// their colour. Used on the graph and, larger, in Settings.
+pub(super) fn disc(
+    face: Face,
+    size: f32,
+    ring_width: f32,
+    ring: Hsla,
+    is_dark: bool,
+    on_tint: Hsla,
+) -> Div {
+    let inside = match face {
+        Face::None => div().size_full().into_any_element(),
+        Face::Picture(image) => img(image).size_full().rounded_full().into_any_element(),
+        Face::File(file) => img(file).size_full().rounded_full().into_any_element(),
+        Face::Initials { text, tint } => div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .bg(lane_color(LaneColor::Branch(tint), is_dark))
+            .text_size(px(size * 0.45))
+            .font_semibold()
+            .text_color(on_tint)
+            .child(text)
+            .into_any_element(),
+    };
+    div()
+        .flex_none()
+        .size(px(size))
+        .rounded_full()
+        .border(px(ring_width))
+        .border_color(ring)
+        .overflow_hidden()
+        .child(inside)
+}
+
+/// The mark on a commit's dot, in the lane's colour (blue for HEAD). `left` and `top` are
+/// where its corner goes in the graph cell.
 pub(super) fn avatar_mark(
     face: Face,
     left: f32,
@@ -193,31 +233,12 @@ pub(super) fn avatar_mark(
     is_dark: bool,
     on_tint: Hsla,
 ) -> AnyElement {
-    let inside = match face {
-        Face::None => return div().into_any_element(),
-        Face::Picture(image) => img(image).size_full().rounded_full().into_any_element(),
-        Face::Initials { text, tint } => div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_full()
-            .bg(lane_color(LaneColor::Branch(tint), is_dark))
-            .text_size(TEXT_AVATAR)
-            .font_semibold()
-            .text_color(on_tint)
-            .child(text)
-            .into_any_element(),
-    };
-    div()
+    if matches!(face, Face::None) {
+        return div().into_any_element();
+    }
+    disc(face, SIZE, RING, ring, is_dark, on_tint)
         .absolute()
         .left(px(left))
         .top(px(top))
-        .size(px(SIZE))
-        .rounded_full()
-        .border_1()
-        .border_color(ring)
-        .overflow_hidden()
-        .child(inside)
         .into_any_element()
 }
