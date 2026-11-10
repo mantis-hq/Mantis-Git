@@ -2,6 +2,7 @@
 # Push a tag like v0.2.0 to build Linux and Windows
 # and publish a release here. Every push to main does the same into one "nightly"
 # pre-release that is replaced each time. "Run workflow" builds both without publishing.
+# The tests run first, on Linux, and a failure stops the builds and the release.
 # Linux builds in a rust:1-bookworm container that installs its packages on each run. Windows needs a runner labelled `windows`: gpui compiles its
 # shaders in a build script that only runs on a Windows host, so it can't be cross-built.
 name: Release
@@ -24,7 +25,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Nothing is built or published unless the tests pass. The tests build their own throwaway
+  # repositories and ignore the machine's git config, so this needs nothing but the Linux
+  # GUI libraries. The GPU render test is opt-in and isn't run here.
+  test:
+    runs-on: docker
+    container:
+      image: rust:1-bookworm
+    steps:
+      - run: apt-get update && apt-get install -y --no-install-recommends nodejs
+      - uses: actions/checkout@v7
+      - run: sh .github/ci-setup.sh
+      # Its own cache: a debug build and a release build share nothing, and one key for
+      # both would keep overwriting the other.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
+            target
+          key: test-${{ hashFiles('Cargo.lock') }}
+          restore-keys: test-
+      - run: cargo test --locked --workspace
+
   linux:
+    needs: test
     runs-on: docker
     container:
       image: rust:1-bookworm
@@ -60,6 +85,7 @@ jobs:
           path: dist/*
 
   windows:
+    needs: test
     runs-on: windows
     defaults:
       run:
