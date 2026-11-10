@@ -1,10 +1,10 @@
-//! The band under the header, and the runner for git operations that report through it.
+//! The toasts and cards over the window, and the runner for git operations that report through them.
 //!
 //! Operations that change a repository run off the UI thread, one at a time. Whatever
-//! happens is said here in words, and risky steps wait here for a second click.
+//! happens is said here in words.
 
 use super::GraphView;
-use super::parts::{TEXT_BODY, band};
+use super::parts::{card, card_actions};
 use crate::theme::tokens;
 use gitclient_core::repo::commit_graph;
 use gitclient_core::text;
@@ -16,8 +16,7 @@ use std::path::Path;
 use std::time::Duration;
 
 /// Below the tab strip and the header (36 px and 52 px), with a little air.
-const TOAST_TOP: f32 = 100.;
-const TOAST_WIDTH: f32 = 420.;
+const STACK_TOP: f32 = 100.;
 /// How long a toast waits after the pointer leaves before it closes.
 const HOVER_GRACE: Duration = Duration::from_secs(2);
 
@@ -66,7 +65,6 @@ impl GraphView {
         }
         self.busy = Some(label.into());
         self.notice = None;
-        self.confirm = None;
         cx.notify();
         Self::spawn_blocking(
             move || operation(&workdir),
@@ -105,34 +103,39 @@ impl GraphView {
         }
     }
 
-    /// The band that says counting the branches was slow because there is no commit graph,
-    /// with the button that writes one. It stays out of the way of every other band and is
-    /// drawn only when both are true.
+    /// The card that says counting the branches was slow because there is no commit graph,
+    /// with the button that writes one. It stays until one of its buttons is pressed, and
+    /// is drawn only when both are true.
     pub(super) fn render_graph_hint(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let message = self.graph_hint.clone()?;
         let peach = tokens(cx.theme().is_dark()).peach;
         Some(
-            band("graph-hint", cx)
-                .child(div().flex_1().min_w_0().text_color(peach).child(message))
+            card("graph-hint", cx)
+                .child(div().text_color(peach).child(message))
                 .child(
-                    Button::new("graph-hint-dismiss")
-                        .ghost()
-                        .small()
-                        .label("Dismiss")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(repo) = this.repo.clone() {
-                                this.graph_hint_dismissed.insert(repo);
-                            }
-                            this.graph_hint = None;
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    Button::new("graph-hint-write")
-                        .ghost()
-                        .small()
-                        .label(commit_graph::WRITE_ACTION)
-                        .on_click(cx.listener(|this, _, _, cx| this.write_commit_graph(cx))),
+                    card_actions()
+                        .child(
+                            Button::new("graph-hint-dismiss")
+                                .ghost()
+                                .small()
+                                .label("Dismiss")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if let Some(repo) = this.repo.clone() {
+                                        this.graph_hint_dismissed.insert(repo);
+                                    }
+                                    this.graph_hint = None;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            Button::new("graph-hint-write")
+                                .primary()
+                                .small()
+                                .label(commit_graph::WRITE_ACTION)
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.write_commit_graph(cx)),
+                                ),
+                        ),
                 )
                 .into_any_element(),
         )
@@ -193,91 +196,57 @@ impl GraphView {
         .detach();
     }
 
-    /// What just happened, as a card over the top right of the window with a × to close it.
-    /// It floats, so showing or closing it never moves the graph.
-    pub(super) fn render_toast(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// What just happened, as a card with a × to close it.
+    fn render_toast(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let theme = cx.theme();
         let (message, color) = match self.notice.as_ref()? {
             Notice::Info(message) => (message.clone(), theme.secondary_foreground),
             Notice::Error(message) => (message.clone(), tokens(theme.is_dark()).peach),
         };
         Some(
-            div()
-                .id("notice")
-                .absolute()
-                .top(px(TOAST_TOP))
-                .right_4()
-                .w(px(TOAST_WIDTH))
-                .max_w_full()
-                .occlude()
+            card("notice", cx)
                 .on_hover(cx.listener(|this, hovered: &bool, _, _| this.toast_hovered = *hovered))
-                .h_flex()
-                .items_start()
-                .gap_2()
-                .py_2()
-                .pl_3()
-                .pr_2()
-                .rounded_lg()
-                .border_1()
-                .border_color(theme.border)
-                .bg(theme.title_bar)
-                .text_size(TEXT_BODY)
-                .child(div().flex_1().min_w_0().text_color(color).child(message))
                 .child(
-                    Button::new("notice-dismiss")
-                        .ghost()
-                        .compact()
-                        .label("×")
-                        .tooltip("Close")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.notice = None;
-                            cx.notify();
-                        })),
+                    div()
+                        .h_flex()
+                        .items_start()
+                        .gap_2()
+                        .child(div().flex_1().min_w_0().text_color(color).child(message))
+                        .child(
+                            Button::new("notice-dismiss")
+                                .ghost()
+                                .compact()
+                                .label("×")
+                                .tooltip("Close")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.notice = None;
+                                    cx.notify();
+                                })),
+                        ),
                 )
                 .into_any_element(),
         )
     }
 
-    /// The question that waits for a second click, as a band under the header.
-    pub(super) fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let theme = cx.theme();
-        let peach = tokens(theme.is_dark()).peach;
-
-        if let Some(confirm) = &self.confirm {
-            let run = confirm.run.clone();
-            return Some(
-                band("confirm", cx)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_color(peach)
-                            .child(confirm.message.clone()),
-                    )
-                    .child(
-                        Button::new("confirm-cancel")
-                            .ghost()
-                            .small()
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.confirm = None;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("confirm-run")
-                            .ghost()
-                            .small()
-                            .label(confirm.action.clone())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.confirm = None;
-                                run(this, cx);
-                            })),
-                    )
-                    .into_any_element(),
-            );
+    /// The cards over the top right of the window: what just happened, then what is
+    /// offered. They float, so showing or closing one never moves the graph.
+    pub(super) fn render_cards(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let cards: Vec<AnyElement> = [self.render_toast(cx), self.render_graph_hint(cx)]
+            .into_iter()
+            .flatten()
+            .collect();
+        if cards.is_empty() {
+            return None;
         }
-
-        None
+        Some(
+            div()
+                .absolute()
+                .top(px(STACK_TOP))
+                .right_4()
+                .v_flex()
+                .gap_2()
+                .children(cards)
+                .into_any_element(),
+        )
     }
 }

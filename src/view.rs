@@ -23,7 +23,7 @@ pub use settings::{
 pub use updates::{Updates, install_updates};
 pub use workspace::Workspace;
 
-use dialog::{Confirm, Dialog};
+use dialog::Dialog;
 use gitclient_core::cache::keys::{self, Caches};
 use gitclient_core::history::columns::ColumnOrder;
 use gitclient_core::history::refs::Refs;
@@ -170,8 +170,6 @@ pub struct GraphView {
     graph_hint_dismissed: HashSet<PathBuf>,
     /// When the load under way began, to tell how long its history took to arrive.
     load_started: Option<Instant>,
-    /// A rewrite waiting in the band under the header for a second click.
-    confirm: Option<Confirm>,
     /// The popup over the window: a question before a deletion, or a form.
     dialog: Option<Dialog>,
     /// Whether the key now down is a repeat of one still held.
@@ -239,7 +237,6 @@ impl GraphView {
             graph_hint: None,
             graph_hint_dismissed: HashSet::new(),
             load_started: None,
-            confirm: None,
             dialog: None,
             key_held: false,
             sidebar: sidebar::State::new(),
@@ -816,10 +813,8 @@ impl Render for GraphView {
         self.sync_result_scroll(cx);
         let bar = Some(self.render_toolbar(cx).into_any_element());
         let content = self.render_graph(cx);
-        let notice = self.render_notice(cx);
         self.sync_toast(cx);
-        let toast = self.render_toast(cx);
-        let graph_hint = self.render_graph_hint(cx);
+        let cards = self.render_cards(cx);
         let menu = self.render_menu(cx);
         let dialog = self.render_dialog(window, cx);
 
@@ -877,11 +872,9 @@ impl Render for GraphView {
             )
             .on_action(cx.listener(|this, _: &NextConflict, _, cx| this.go_to_conflict(true, cx)))
             .children(bar)
-            .children(notice)
-            .children(graph_hint)
             .child(content)
             .children(menu)
-            .children(toast)
+            .children(cards)
             .children(dialog)
     }
 }

@@ -271,11 +271,14 @@ fn a_force_push_waits_for_confirmation_and_others_do_not(cx: &mut TestAppContext
         };
         view.start_action(force, cx);
         assert!(view.is_confirming());
-        let band = view.confirm.as_ref().unwrap().message.clone();
+        let Some(super::dialog::Dialog::Confirm(confirm)) = &view.dialog else {
+            panic!("a force push asks in a popup");
+        };
+        let band = confirm.message.clone();
         assert!(band.contains("replaces 2 commits"), "{band}");
         assert!(band.contains("git reflog"), "says how to undo it: {band}");
 
-        view.confirm = None;
+        view.dialog = None;
         view.start_action(NextAction::Push { commits: 1 }, cx);
         assert!(!view.is_confirming());
     });
