@@ -48,11 +48,12 @@ struct TerminalTab {
     pane: Entity<TerminalPane>,
 }
 
-/// The terminals of one repository tab, with the dock tab that was in front there.
+/// The terminals of one repository tab, with the one that was in front there.
 #[derive(Default)]
 struct Group {
-    /// 0 is the log, then one per terminal.
-    active: usize,
+    /// The terminal last in front here, as an index into `terminals`. It is kept while the
+    /// log is in front, so coming back to the terminals finds this one again.
+    terminal: usize,
     terminals: Vec<TerminalTab>,
     /// Numbers terminal tabs, and doesn't reuse a closed one's number.
     opened: usize,
@@ -60,6 +61,10 @@ struct Group {
 
 pub struct Dock {
     open: bool,
+    /// Whether the log is the tab in front. This is the dock's own, and holds across
+    /// repository tabs: the log is the same everywhere, while each tab remembers its own
+    /// terminal (`Group::terminal`).
+    log_in_front: bool,
     /// What the user dragged the body's height and the log's list width to.
     height: Option<f32>,
     log_width: Option<f32>,
@@ -107,6 +112,7 @@ impl Dock {
         });
         Self {
             open: false,
+            log_in_front: true,
             height: None,
             log_width: None,
             window_height: 0.,
@@ -133,7 +139,19 @@ impl Dock {
 
     /// Which tab is showing: 0 is the log.
     pub fn active_tab(&self) -> usize {
-        self.group.active
+        if self.log_in_front || self.group.terminals.is_empty() {
+            return 0;
+        }
+        self.group.terminal.min(self.group.terminals.len() - 1) + 1
+    }
+
+    /// Brings tab `index` to the front, where 0 is the log. A terminal that isn't there
+    /// falls back to the last one.
+    fn select_tab(&mut self, index: usize) {
+        self.log_in_front = index == 0;
+        if let Some(terminal) = index.checked_sub(1) {
+            self.group.terminal = terminal.min(self.group.terminals.len().saturating_sub(1));
+        }
     }
 
     /// New terminals open in this folder.
@@ -167,7 +185,6 @@ impl Dock {
     pub fn ensure_terminal(&mut self, cx: &mut Context<Self>) {
         if self.open && self.group.terminals.is_empty() {
             self.add_terminal(cx);
-            self.group.active = 1;
         }
         cx.notify();
     }
@@ -183,7 +200,7 @@ impl Dock {
     /// Opens the dock on tab `index`.
     pub fn show(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
-        self.group.active = index.min(self.group.terminals.len());
+        self.select_tab(index);
         self.focus_active(window, cx);
         cx.notify();
     }
@@ -212,7 +229,7 @@ impl Dock {
         DockLayout {
             open: self.open,
             terminals: self.group.terminals.len(),
-            tab: self.group.active,
+            tab: self.active_tab(),
         }
     }
 
@@ -224,7 +241,7 @@ impl Dock {
             self.add_terminal(cx);
         }
         self.open = layout.open;
-        self.group.active = layout.tab.min(self.group.terminals.len());
+        self.select_tab(layout.tab);
         cx.notify();
     }
 
@@ -232,12 +249,10 @@ impl Dock {
         if index >= self.group.terminals.len() {
             return;
         }
-        self.group.terminals.remove(index);
         // The tab beside the closed one comes forward, and the log is always there.
-        let closed = index + 1;
-        if self.group.active >= closed {
-            self.group.active = self.group.active.saturating_sub(1);
-        }
+        let (front, closed) = (self.active_tab(), index + 1);
+        self.group.terminals.remove(index);
+        self.select_tab(if front >= closed { front - 1 } else { front });
         self.focus_active(window, cx);
         cx.notify();
     }
@@ -254,7 +269,7 @@ impl Dock {
 
     /// The terminal showing, if a terminal tab is.
     pub fn active_terminal(&self) -> Option<&Entity<TerminalPane>> {
-        let index = self.group.active.checked_sub(1)?;
+        let index = self.active_tab().checked_sub(1)?;
         self.group.terminals.get(index).map(|tab| &tab.pane)
     }
 
@@ -269,7 +284,7 @@ impl Dock {
                 .map(|entry| (entry.command.clone(), entry.summary()))
         });
 
-        let log_tab = parts::tab("dock-log", self.open && self.group.active == 0, cx)
+        let log_tab = parts::tab("dock-log", self.open && self.active_tab() == 0, cx)
             .pr_3()
             .on_click(cx.listener(|this, _, window, cx| this.show(0, window, cx)))
             .child("Log");
@@ -277,7 +292,7 @@ impl Dock {
             let tab = index + 1;
             parts::tab(
                 ("dock-terminal", index),
-                self.open && self.group.active == tab,
+                self.open && self.active_tab() == tab,
                 cx,
             )
             .on_click(cx.listener(move |this, _, window, cx| this.show(tab, window, cx)))
@@ -324,7 +339,7 @@ impl Dock {
                         .child(format!("{command} · {summary}")),
                 )
             })
-            .when(self.open && self.group.active == 0, |bar| {
+            .when(self.open && self.active_tab() == 0, |bar| {
                 bar.child(
                     Button::new("clear-log")
                         .ghost()

@@ -769,6 +769,51 @@ mod tests {
         assert_eq!(dock_state(&view, &cx), (true, 1, 1));
     }
 
+    #[cfg(unix)]
+    #[gpui_kit::test]
+    fn each_tab_remembers_its_terminal_and_the_log_stays_in_front_everywhere(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, mut cx) = open_workspace(cx);
+        let show = |view: &Entity<Workspace>, cx: &mut VisualTestContext, index| {
+            view.update_in(cx, |view, window, cx| {
+                view.dock()
+                    .update(cx, |dock, cx| dock.show(index, window, cx))
+            })
+        };
+        let activate = |view: &Entity<Workspace>, cx: &mut VisualTestContext, tab| {
+            view.update_in(cx, |view, window, cx| view.activate(tab, window, cx))
+        };
+
+        // The first tab has three terminals and is on the second.
+        cx.simulate_keystrokes("ctrl-shift-` ctrl-shift-` ctrl-shift-`");
+        show(&view, &mut cx, 2);
+        // The second has two, and is on the first.
+        view.update_in(&mut cx, |view, window, cx| view.new_tab(window, cx));
+        cx.simulate_keystrokes("ctrl-shift-`");
+        show(&view, &mut cx, 1);
+        assert_eq!(dock_state(&view, &cx), (true, 2, 1));
+
+        activate(&view, &mut cx, 0);
+        assert_eq!(dock_state(&view, &cx), (true, 3, 2), "its own terminal");
+        activate(&view, &mut cx, 1);
+        assert_eq!(dock_state(&view, &cx), (true, 2, 1));
+
+        // The log is in front for every tab, and each still knows its terminal after.
+        show(&view, &mut cx, 0);
+        activate(&view, &mut cx, 0);
+        assert_eq!(dock_state(&view, &cx), (true, 3, 0));
+        show(&view, &mut cx, 3);
+        activate(&view, &mut cx, 1);
+        assert_eq!(
+            dock_state(&view, &cx),
+            (true, 2, 1),
+            "its own, not the first's"
+        );
+        activate(&view, &mut cx, 0);
+        assert_eq!(dock_state(&view, &cx), (true, 3, 3));
+    }
+
     #[gpui_kit::test]
     fn tabs_cycle_in_both_directions(cx: &mut TestAppContext) {
         let (view, mut cx) = open_workspace(cx);
