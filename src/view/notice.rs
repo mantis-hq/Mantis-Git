@@ -4,14 +4,22 @@
 //! happens is said here in words, and risky steps wait here for a second click.
 
 use super::GraphView;
-use super::parts::band;
+use super::parts::{TEXT_BODY, band};
 use crate::theme::tokens;
 use gitclient_core::repo::commit_graph;
+use gitclient_core::text;
 use gpui_kit::component::button::*;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use std::path::Path;
+use std::time::Duration;
+
+/// Below the tab strip and the header (36 px and 52 px), with a little air.
+const TOAST_TOP: f32 = 100.;
+const TOAST_WIDTH: f32 = 420.;
+/// How long a toast waits after the pointer leaves before it closes.
+const HOVER_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Notice {
@@ -141,9 +149,98 @@ impl GraphView {
         );
     }
 
+    /// Starts the closing timer for a notice that has just appeared. Confirmations close
+    /// themselves (core says after how long); failures wait for the ×. While the pointer is
+    /// over the toast the timer starts over, so nothing closes under someone reading it.
+    pub(super) fn sync_toast(&mut self, cx: &mut Context<Self>) {
+        if self.toast_timed == self.notice {
+            return;
+        }
+        self.toast_timed = self.notice.clone();
+        self.toast_hovered = false;
+        let Some(notice) = self.notice.clone() else {
+            return;
+        };
+        let (message, is_error) = match &notice {
+            Notice::Info(message) => (message, false),
+            Notice::Error(message) => (message, true),
+        };
+        let Some(mut wait) = text::toast_lifetime(message, is_error) else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(wait).await;
+                let closed = this
+                    .update(cx, |this, cx| {
+                        if this.notice.as_ref() != Some(&notice) {
+                            return true;
+                        }
+                        if this.toast_hovered {
+                            return false;
+                        }
+                        this.notice = None;
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(true);
+                if closed {
+                    break;
+                }
+                wait = HOVER_GRACE;
+            }
+        })
+        .detach();
+    }
+
+    /// What just happened, as a card over the top right of the window with a × to close it.
+    /// It floats, so showing or closing it never moves the graph.
+    pub(super) fn render_toast(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let theme = cx.theme();
+        let (message, color) = match self.notice.as_ref()? {
+            Notice::Info(message) => (message.clone(), theme.secondary_foreground),
+            Notice::Error(message) => (message.clone(), tokens(theme.is_dark()).peach),
+        };
+        Some(
+            div()
+                .id("notice")
+                .absolute()
+                .top(px(TOAST_TOP))
+                .right_4()
+                .w(px(TOAST_WIDTH))
+                .max_w_full()
+                .occlude()
+                .on_hover(cx.listener(|this, hovered: &bool, _, _| this.toast_hovered = *hovered))
+                .h_flex()
+                .items_start()
+                .gap_2()
+                .py_2()
+                .pl_3()
+                .pr_2()
+                .rounded_lg()
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.title_bar)
+                .text_size(TEXT_BODY)
+                .child(div().flex_1().min_w_0().text_color(color).child(message))
+                .child(
+                    Button::new("notice-dismiss")
+                        .ghost()
+                        .compact()
+                        .label("×")
+                        .tooltip("Close")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.notice = None;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// The question that waits for a second click, as a band under the header.
     pub(super) fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let theme = cx.theme();
-        let text = theme.secondary_foreground;
         let peach = tokens(theme.is_dark()).peach;
 
         if let Some(confirm) = &self.confirm {
@@ -181,24 +278,6 @@ impl GraphView {
             );
         }
 
-        let (message, color) = match self.notice.as_ref()? {
-            Notice::Info(message) => (message.clone(), text),
-            Notice::Error(message) => (message.clone(), peach),
-        };
-        Some(
-            band("notice", cx)
-                .child(div().flex_1().min_w_0().text_color(color).child(message))
-                .child(
-                    Button::new("notice-dismiss")
-                        .ghost()
-                        .small()
-                        .label("Dismiss")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.notice = None;
-                            cx.notify();
-                        })),
-                )
-                .into_any_element(),
-        )
+        None
     }
 }
