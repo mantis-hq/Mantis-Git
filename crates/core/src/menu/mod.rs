@@ -169,7 +169,7 @@ fn sync_lines(refs: &Refs, name: &str) -> Vec<Line> {
             },
         ),
     };
-    vec![pull, push]
+    vec![push, pull]
 }
 
 /// Merge and rebase of a ref into or onto the checked-out branch.
@@ -197,20 +197,27 @@ fn integrate_lines(refs: &Refs, kind: RefKind, name: &str) -> Vec<Line> {
     lines
 }
 
-/// Where a local branch follows: pull and push, then the upstream itself.
+/// Push and pull for a local branch, the push first.
+fn sync_ref_lines(refs: &Refs, kind: RefKind, name: &str) -> Vec<Line> {
+    if kind == RefKind::Branch {
+        sync_lines(refs, name)
+    } else {
+        Vec::new()
+    }
+}
+
+/// The line that says which remote branch a local branch follows.
 fn upstream_lines(refs: &Refs, kind: RefKind, name: &str) -> Vec<Line> {
     if kind != RefKind::Branch {
         return Vec::new();
     }
-    let mut lines = sync_lines(refs, name);
-    lines.push(Line::item(
+    vec![Line::item(
         format!("Set upstream of {name}"),
         Command::Form(Form::Upstream {
             branch: name.to_owned(),
             existing: refs.remotes.iter().map(|r| r.name.clone()).collect(),
         }),
-    ));
-    lines
+    )]
 }
 
 /// The red lines that remove a ref: a local branch or tag, or a remote branch.
@@ -283,9 +290,9 @@ fn push_group(lines: &mut Vec<Line>, group: Vec<Line>) {
 pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
     let Dragged { kind, name } = target.clone();
     let mut lines = vec![Line::Heading(name.clone())];
+    lines.extend(sync_ref_lines(refs, kind, &name));
     lines.extend(check_out_ref_line(refs.head_branch.as_deref(), kind, &name));
     lines.extend(integrate_lines(refs, kind, &name));
-    lines.extend(upstream_lines(refs, kind, &name));
     lines.push(Line::item(
         format!("New branch from {name}"),
         Command::Form(Form::NewBranch {
@@ -293,6 +300,7 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
             label: name.clone(),
         }),
     ));
+    lines.extend(upstream_lines(refs, kind, &name));
     push_group(&mut lines, delete_lines(refs, kind, &name));
     lines
 }
@@ -703,15 +711,20 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
         .filter(|chip| chip.label.kind != RefKind::DetachedHead)
         .collect();
 
+    // Sync: push then pull for each local branch, what is done most often.
+    let sync: Vec<Line> = chips
+        .iter()
+        .flat_map(|chip| sync_ref_lines(refs, chip.label.kind, &chip.label.name))
+        .collect();
+    let has_sync = !sync.is_empty();
+    lines.extend(sync);
+
     // Check out: each ref, then the commit itself.
-    for chip in &chips {
-        lines.extend(check_out_ref_line(
-            current,
-            chip.label.kind,
-            &chip.label.name,
-        ));
-    }
-    lines.push(if !actions.can_check_out && current.is_none() {
+    let mut check_out: Vec<Line> = chips
+        .iter()
+        .filter_map(|chip| check_out_ref_line(current, chip.label.kind, &chip.label.name))
+        .collect();
+    check_out.push(if !actions.can_check_out && current.is_none() {
         Line::unavailable("This commit is already checked out")
     } else {
         Line::item(
@@ -722,8 +735,13 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
             },
         )
     });
+    if has_sync {
+        push_group(&mut lines, check_out);
+    } else {
+        lines.extend(check_out);
+    }
 
-    // Bring in: merge and rebase each ref, else merge the commit; then copy it over.
+    // Bring in: merge and rebase each ref, else merge the commit; then cherry-pick.
     let mut bring_in: Vec<Line> = chips
         .iter()
         .flat_map(|chip| integrate_lines(refs, chip.label.kind, &chip.label.name))
@@ -746,42 +764,19 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
             },
         ));
     }
-    bring_in.push(Line::item(
-        "Revert",
-        Command::Revert {
-            oids: vec![oid.clone()],
-            is_merge: actions.is_merge,
-        },
-    ));
     push_group(&mut lines, bring_in);
 
-    // Branches: where each follows, then a new one from here.
-    let mut branches: Vec<Line> = chips
-        .iter()
-        .flat_map(|chip| upstream_lines(refs, chip.label.kind, &chip.label.name))
-        .collect();
-    branches.push(Line::item(
-        format!("New branch from {short}"),
-        Command::Form(Form::NewBranch {
-            start: Some(oid.clone()),
-            label: short.to_owned(),
-        }),
-    ));
-    push_group(&mut lines, branches);
-
-    // Move the branch to here.
-    if actions.can_check_out {
-        push_group(
-            &mut lines,
-            vec![Line::item(
-                format!("Reset {head} to here, keeping changes"),
-                Command::Reset {
-                    oid: oid.clone(),
-                    hard: false,
-                },
-            )],
-        );
-    }
+    // Start something new from here.
+    push_group(
+        &mut lines,
+        vec![Line::item(
+            format!("New branch from {short}"),
+            Command::Form(Form::NewBranch {
+                start: Some(oid.clone()),
+                label: short.to_owned(),
+            }),
+        )],
+    );
 
     push_group(
         &mut lines,
@@ -790,6 +785,30 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
             Line::item("Copy subject", copy(&commit.subject, "the subject")),
         ],
     );
+
+    // Less common changes near the foot: undo a commit, set upstream, move the branch.
+    let mut rework = vec![Line::item(
+        "Revert",
+        Command::Revert {
+            oids: vec![oid.clone()],
+            is_merge: actions.is_merge,
+        },
+    )];
+    rework.extend(
+        chips
+            .iter()
+            .flat_map(|chip| upstream_lines(refs, chip.label.kind, &chip.label.name)),
+    );
+    if actions.can_check_out {
+        rework.push(Line::item(
+            format!("Reset {head} to here, keeping changes"),
+            Command::Reset {
+                oid: oid.clone(),
+                hard: false,
+            },
+        ));
+    }
+    push_group(&mut lines, rework);
 
     // Everything that removes something comes last, in red.
     let mut danger = Vec::new();
@@ -1203,6 +1222,26 @@ mod tests {
             "{found:?}"
         );
 
+        // Push, then pull, lead the menu, and the commit's menu leads with them too.
+        assert_eq!(
+            found[..2],
+            [
+                "Push 2 commits to origin/feat/x",
+                "Pull origin/feat/x into feat/x"
+            ]
+        );
+        refs.by_commit
+            .insert("bbbbbbbb".into(), vec![named(RefKind::Branch, "feat/x")]);
+        let on_commit = commit_menu(&refs, &[commit("bbbbbbbb", &["cccccccc"])]);
+        assert_eq!(labels(&on_commit)[..2], found[..2]);
+        let on_commit = labels(&on_commit);
+        let at = |label: &str| on_commit.iter().position(|l| *l == label).unwrap();
+        assert!(at("Revert") > at("Copy subject"), "{on_commit:?}");
+        assert!(
+            at("Set upstream of feat/x") > at("Copy subject"),
+            "{on_commit:?}"
+        );
+
         // Level: nothing to push.
         refs.branches[1].upstream = Some((0, 0));
         assert!(
@@ -1450,8 +1489,8 @@ mod tests {
                 "Check out feat/x",
                 "Merge feat/x into main",
                 "Rebase main onto feat/x",
-                "Set upstream of feat/x",
                 "New branch from feat/x",
+                "Set upstream of feat/x",
                 "Delete branch feat/x"
             ]
         );
@@ -1465,7 +1504,7 @@ mod tests {
         let lines = ref_menu(&refs(), &target(RefKind::Branch, "main"));
         assert_eq!(
             labels(&lines),
-            ["Set upstream of main", "New branch from main"]
+            ["New branch from main", "Set upstream of main"]
         );
         assert!(!labels(&lines).iter().any(|l| l.starts_with("Check out")));
     }
@@ -1503,11 +1542,11 @@ mod tests {
             labels(&on_head),
             [
                 "Check out aaaaaaa without a branch",
-                "Revert",
-                "Set upstream of main",
                 "New branch from aaaaaaa",
                 "Copy hash",
-                "Copy subject"
+                "Copy subject",
+                "Revert",
+                "Set upstream of main"
             ]
         );
         let elsewhere = commit_menu(&refs, &[other]);
@@ -1517,11 +1556,11 @@ mod tests {
                 "Check out bbbbbbb without a branch",
                 "Merge into main",
                 "Cherry-pick onto main",
-                "Revert",
                 "New branch from bbbbbbb",
-                "Reset main to here, keeping changes",
                 "Copy hash",
                 "Copy subject",
+                "Revert",
+                "Reset main to here, keeping changes",
                 "Reset main to here, discarding changes"
             ]
         );
