@@ -27,26 +27,36 @@ const FORWARDED: [&str; 3] = ["GIT_OPTIONAL_LOCKS", "GIT_TERMINAL_PROMPT", TOKEN
 
 /// A shell script that runs `git "$@"` with a temporary askpass program installed, unless
 /// the distribution sets its own. The program prints the question on stderr after the
-/// marker and token, and reads `ok:<answer>` or `cancel` from stdin, so a question reaches
+/// marker and token, and reads `ok:<answer>` or `cancel` from a fifo, so a question reaches
 /// the app through git's own output, with no socket and no program from Windows.
+///
+/// The answer comes by fifo and not by the program's stdin because ssh starts it with its
+/// own stdin (the pipe to git, or `/dev/null`), never the one the app writes to. A loop
+/// copies each line of the script's stdin into the fifo.
 ///
 /// The token is made up for each command (see [`new_token`]): without it, a remote could
 /// print a marker of its own among git's output and have the app ask a question it wrote.
 pub const BOOTSTRAP: &str = r#"
 d=$(mktemp -d 2>/dev/null) || exec git "$@"
 f="$d/askpass"
+if mkfifo "$d/reply" 2>/dev/null; then
+exec 3<&0
+( while IFS= read -r line <&3; do printf '%s\n' "$line" > "$d/reply"; done ) &
+relay=$!
+fi
 cat > "$f" <<'ASKPASS'
 #!/bin/sh
 p=$(printf '%s' "$1" | tr '\n\t' '  ')
 printf '\037\037GITCLIENT-ASKPASS:%s\t%s\n' "$GITCLIENT_ASKPASS_TOKEN" "$p" >&2
-IFS= read -r reply || exit 1
+IFS= read -r reply < "${0%/*}/reply" || exit 1
 case "$reply" in ok:*) printf '%s\n' "${reply#ok:}";; *) exit 1;; esac
 ASKPASS
 chmod 700 "$f"
 if [ -z "$SSH_ASKPASS" ]; then SSH_ASKPASS="$f"; SSH_ASKPASS_REQUIRE=force; export SSH_ASKPASS SSH_ASKPASS_REQUIRE; fi
 if [ -z "$GIT_ASKPASS" ]; then GIT_ASKPASS="$f"; export GIT_ASKPASS; fi
-git "$@"
+git "$@" 3<&-
 s=$?
+[ -n "$relay" ] && kill "$relay" 2>/dev/null
 rm -rf "$d"
 exit $s
 "#;
