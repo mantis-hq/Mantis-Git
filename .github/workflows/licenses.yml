@@ -3,7 +3,8 @@
 # After a merge to main, this regenerates the file and, if it changed, pushes it to the
 # branch chore/licenses and opens a pull request for it (main is protected, so it can't
 # be pushed to). Releases don't wait for that pull request: the Release workflow makes
-# its own copy. LICENSES_TOKEN is a token that may push branches and open pull requests.
+# its own copy. LICENSES_TOKEN is a token that may push branches and open pull requests;
+# set it as a secret on both GitHub and Gitea.
 name: Licenses
 
 on:
@@ -49,7 +50,7 @@ jobs:
         if: github.event_name == 'push'
         env:
           TOKEN: ${{ secrets.LICENSES_TOKEN }}
-          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+          API: ${{ github.api_url || format('{0}/api/v1', github.server_url) }}/repos/${{ github.repository }}
         run: |
           git diff --quiet THIRD-PARTY-LICENSES.txt && exit 0
           git config user.name "gitclient licenses"
@@ -58,7 +59,12 @@ jobs:
           git add THIRD-PARTY-LICENSES.txt
           git commit -m "chore: update third-party licenses"
           git push --force origin chore/licenses
-          # An open pull request from this branch answers 409, which is fine.
-          curl -sS -X POST "$API/pulls" \
+          # Gitea and GitHub take the same request here. A pull request from this branch
+          # that is already open is answered with 409 (Gitea) or 422 (GitHub), which is fine.
+          code=$(curl -sS -o "$RUNNER_TEMP/pr.json" -w '%{http_code}' -X POST "$API/pulls" \
             -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
-            -d '{"head":"chore/licenses","base":"main","title":"chore: update third-party licenses"}'
+            -d '{"head":"chore/licenses","base":"main","title":"chore: update third-party licenses"}')
+          case "$code" in
+            201|409|422) ;;
+            *) cat "$RUNNER_TEMP/pr.json"; exit 1 ;;
+          esac
