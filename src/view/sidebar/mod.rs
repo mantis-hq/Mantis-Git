@@ -868,7 +868,7 @@ impl GraphView {
                     this.open_on_double_click(&target, event, cx);
                 })
             });
-        wire_ref(row, target, color, cx)
+        wire_ref(row, target, color, None, cx)
             .child(div().size(px(8.)).flex_none().rounded_full().bg(color))
             .child(
                 div()

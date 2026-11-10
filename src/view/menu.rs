@@ -111,11 +111,13 @@ fn glyph_icon(glyph: Glyph, color: Hsla, peach: Hsla) -> impl IntoElement {
 }
 
 /// Makes a chip or sidebar row of a ref something to right-click and drag, and, for a local
-/// branch, something to drop on.
+/// branch, something to drop on. A chip in the graph passes the `row` of its commit, so
+/// right-clicking it opens that commit's menu, the same as right-clicking the row.
 pub(super) fn wire_ref(
     element: Stateful<Div>,
     target: Dragged,
     color: Hsla,
+    row: Option<usize>,
     cx: &mut Context<GraphView>,
 ) -> Stateful<Div> {
     let menu_target = target.clone();
@@ -125,7 +127,10 @@ pub(super) fn wire_ref(
             cx.listener(move |this, event: &MouseDownEvent, _, cx| {
                 // A row under a chip would otherwise open its own menu on top.
                 cx.stop_propagation();
-                this.open_ref_menu(menu_target.clone(), event.position, cx);
+                match row {
+                    Some(row) => this.open_commit_menu(row, event.position, cx),
+                    None => this.open_ref_menu(menu_target.clone(), event.position, cx),
+                }
             }),
         )
         .on_drag(target.clone(), move |dragged, _, _, cx| {

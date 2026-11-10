@@ -73,14 +73,22 @@ impl GraphView {
             .iter()
             .take(MAX_VISIBLE_REFS)
             .enumerate()
-            .map(|(slot, chip)| chip_element(("chip", index * 1000 + slot), chip, &colors, cx))
+            .map(|(slot, chip)| {
+                chip_element(("chip", index * 1000 + slot), chip, &colors, index, cx)
+            })
             .collect::<Vec<_>>();
         let popover = open.then(|| {
             let all = chips
                 .iter()
                 .enumerate()
                 .map(|(slot, chip)| {
-                    chip_element(("popover-chip", index * 1000 + slot), chip, &colors, cx)
+                    chip_element(
+                        ("popover-chip", index * 1000 + slot),
+                        chip,
+                        &colors,
+                        index,
+                        cx,
+                    )
                 })
                 .collect::<Vec<_>>();
             deferred(
@@ -487,6 +495,7 @@ fn chip_element(
     id: impl Into<ElementId>,
     chip: &Chip,
     colors: &ChipColors,
+    row: usize,
     cx: &mut Context<GraphView>,
 ) -> Stateful<Div> {
     let label = chip.label;
@@ -506,7 +515,7 @@ fn chip_element(
                 name: label.name.clone(),
             };
             let clicked = target.clone();
-            wire_ref(element, target, color, cx).on_click(cx.listener(
+            wire_ref(element, target, color, Some(row), cx).on_click(cx.listener(
                 move |this, event: &ClickEvent, _, cx| {
                     this.open_on_double_click(&clicked, event, cx)
                 },
