@@ -1,6 +1,19 @@
 //! Small pieces of wording shared by the git layer and the views.
 
 use std::fmt::Display;
+use std::time::Duration;
+
+/// How long a toast stays before it closes itself, or `None` when it waits for a click.
+/// A failure always waits, since it says why something didn't happen. A confirmation gets
+/// 4 seconds, and a long one (how to undo a step) 50 ms more for each character past 30,
+/// up to 12 seconds, so it can be read through once.
+pub fn toast_lifetime(message: &str, is_error: bool) -> Option<Duration> {
+    if is_error {
+        return None;
+    }
+    let extra = message.chars().count().saturating_sub(30) as u64;
+    Some(Duration::from_millis((4000 + extra * 50).min(12_000)))
+}
 
 /// A number and its noun: "1 commit", "2 commits".
 pub fn count(number: impl Display, noun: &str) -> String {
@@ -61,6 +74,22 @@ pub fn split_path(path: &str) -> (&str, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn toasts_close_by_themselves_unless_they_failed() {
+        assert_eq!(
+            toast_lifetime("Copied 1a2b3c4", false),
+            Some(Duration::from_secs(4))
+        );
+        assert_eq!(toast_lifetime("Copied 1a2b3c4", true), None);
+        let long = "x".repeat(100);
+        assert_eq!(
+            toast_lifetime(&long, false),
+            Some(Duration::from_millis(7500))
+        );
+        let huge = "x".repeat(1000);
+        assert_eq!(toast_lifetime(&huge, false), Some(Duration::from_secs(12)));
+    }
 
     #[test]
     fn digits_are_grouped_in_threes() {

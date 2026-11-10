@@ -64,22 +64,33 @@ pub(super) fn header_bar(cx: &App) -> Div {
         .border_color(theme.border)
 }
 
-/// A line across the window that says what happened or what is offered, with quiet buttons
-/// at its end: the band under the header, and the one over the window for an update.
-pub(super) fn band(id: &'static str, cx: &App) -> Stateful<Div> {
+/// The width of a card that floats over the window.
+pub(super) const CARD_WIDTH: f32 = 420.;
+
+/// A card that floats over the window to say what happened or to offer something: a toast,
+/// the hint about the commit graph, the update. Its parts go under each other, with its
+/// buttons in a [`card_actions`] row last. It never moves what is under it.
+pub(super) fn card(id: &'static str, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
     div()
         .id(id)
-        .h_flex()
-        .flex_none()
-        .min_h(px(36.))
-        .px_4()
-        .py_1()
-        .gap_3()
-        .text_size(TEXT_BODY)
-        .bg(theme.title_bar)
-        .border_b_1()
+        .v_flex()
+        .gap_2()
+        .w(px(CARD_WIDTH))
+        .max_w_full()
+        .occlude()
+        .py_2()
+        .px_3()
+        .rounded_lg()
+        .border_1()
         .border_color(theme.border)
+        .bg(theme.title_bar)
+        .text_size(TEXT_BODY)
+}
+
+/// The buttons at the foot of a card, at its right: quiet ones, then the one blue one.
+pub(super) fn card_actions() -> Div {
+    div().h_flex().justify_end().gap_1()
 }
 
 // The type scale of docs/design.md. Size text with these, not with literal pixels.

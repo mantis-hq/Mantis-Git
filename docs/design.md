@@ -245,16 +245,19 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     `gc.writeCommitGraph` or `maintenance.commit-graph.enabled` is off, the row says that
     git won't write it on its own. The page reads all this each time it opens. The main
     window says nothing about the commit graph unless it is the reason for a wait (see
-    "Commit graph band"). Both sentences for a missing or behind graph add that in a large
+    "Commit graph card"). Both sentences for a missing or behind graph add that in a large
     repository it makes branch counts, search and loading history slow.
-- Dock: a 36 px Mantle bar along the bottom of the window with a 1 px Surface 0 top
-  border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
+- Dock: a 36 px Mantle bar along the bottom of the graph column, under the graph and
+  between the sidebar and the inspector, which keep their full height, with a 1 px
+  Surface 0 top border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
   under the bar, so history stays in view. `Ctrl \`` shows and hides it, and
   `Ctrl Shift \`` opens a terminal. Closed, the bar still says which command is running
   and for how long, so a slow command is never a silent wait. Terminals belong to the
   repository tab they were opened in, and start in its folder. The dock shows the front
   tab's terminals; switching tabs brings that tab's own back, and with the dock open a tab
-  that has none gets a clean one at once. Closing a tab ends its shells. Whether the dock is
+  that has none gets a clean one at once. Each tab remembers which of its terminals was in front, and the Log is the dock's own
+  choice: when it is in front it stays in front in every tab, and a tab's terminal is
+  found again when a terminal is picked. Closing a tab ends its shells. Whether the dock is
   open, how many terminals the front tab has and which of its tabs is in front are saved with
   the open tabs (see "App") and come back on launch, the terminals as fresh shells in the
   front repository's folder. The keyboard starts with the repository, not a terminal.
@@ -317,7 +320,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   under "Worktrees", open by default, between Remotes and Tags. A row is the folder's
   name, then its branch (or `detached at <hash>`) in Overlay 2, with a dot in that
   branch's colour. The one on show is selected and semibold. Clicking another switches
-  the current tab to it, so the tab strip doesn't grow. A worktree whose
+  the current tab to it, so the tab strip doesn't grow. A locked worktree ends its row in a small lock (Overlay 2) with the tooltip "Locked", not
+  a word. A worktree whose
   folder is gone is dimmed and says so.
   Right-clicking one opens the usual menu: "Switch to <name>", "Open <name> in a new tab",
   "Copy path", and in red "Remove worktree <name>", which asks first and gives the
@@ -441,12 +445,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   cancels too. A held-down key never answers. The answering button is off while git runs.
   Every popup is drawn by one frame (`src/view/dialog/mod.rs`), and there is at most one.
   - **Delete confirmation:** deleting a branch, tag, worktree or remote asks in a popup,
-    never in the band under the header. The sentence says how to undo it and the result is
+    never in a toast. The sentence says how to undo it and the result is
     "Delete". Deleting a branch that is neither merged into the default branch nor pushed
     loses commits nothing else keeps, so `Enter` has to be pressed twice within 600 ms: the
     first press turns the key line Red and says "Press Enter again to delete." Rules for
     which is which live in core (`Weight` in `crates/core/src/menu/command.rs`). Other risky
-    steps (rebase, force push, hard reset) still use the band.
+    steps (rebase, force push, hard reset) ask in the same popup, where `Enter` answers
+    once.
   - **Forms** ask for a few words: a new branch's name, a remote's name and address, or a
     submodule's address and folder. The
     sentence says what the form makes or changes, and each input sits under its section
@@ -480,8 +485,22 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   shown once, whatever the answer, and the band says what was written and how to take it
   away. Settings → App adds or removes the launcher from then on. On a window too short for
   it, the panel scrolls.
-- **Commit graph band:** a band under the header, below the band that says what happened,
-  drawn only when a step took 2 seconds or more (`SLOW_AFTER` in
+- **Toast:** what just happened (and why a step failed, in Peach) is a card over the bottom
+  right of the window, 420 px wide, on Mantle with a Surface 0 border and 8 px radius, and
+  ends in a quiet `×` that closes it. It floats over the graph, so the rows never move.
+  There are no bands: nothing in the window pushes the graph down. Where this document
+  says "the band says" for an outcome, it means the toast. A card that offers something
+  (the commit graph and the update, below) is the same card with its buttons under the
+  text, at its right: quiet ones first, then the one blue button, the thing to do next.
+  Every card stacks in one column against the window's own bottom right corner, 16 px from
+  both edges, over the dock bar and the dock: the update first, then the commit graph, and
+  the toast last, nearest the corner. A card that offers something never closes itself. How
+  long a toast stays follows what it says (`toast_lifetime` in `gitclient_core::text`): a confirmation such as
+  "Copied 1a2b3c4" closes itself after 4 seconds, a longer one that says how to undo a step
+  gets 50 ms more for each character past 30, up to 12 seconds, and a failure stays until
+  its `×` is pressed. Hovering a toast holds it open, and it closes 2 seconds after the
+  pointer leaves. A new one replaces the one showing.
+- **Commit graph card:** a card under the toast, drawn only when a step took 2 seconds or more (`SLOW_AFTER` in
   `gitclient_core::repo::commit_graph`) and the repository has no commit graph that git
   would use (`is_missing`: not a shallow clone, `core.commitGraph` not off, no replace
   refs). The steps are loading the history, timed until its first commits arrive, which is
@@ -489,20 +508,19 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   read after the graph is on screen and fills in when it arrives. It says in Peach what took
   how long and why ("Loading the history took 8 s because this repository has no commit
   graph. Writing one takes about as long, once, and makes this quick."; "Counting the
-  branches took 7 s …"), with quiet buttons "Dismiss" (for that
-  repository, until the window closes) and "Write the commit graph", which runs the same
+  branches took 7 s …"), with a quiet "Dismiss" (for that
+  repository, until the window closes) and the blue "Write the commit graph", which runs the same
   write as Settings → Repository and says what it did in the usual band. A quick count, a
   graph that is only behind, or any other reason for being slow shows nothing. A branch level
   with the default branch is counted without asking git at all.
-- **Update band:** when a newer release is found, a band across the top of the window, above
-  the tabs, in the same style as the band under the header: a blue "Update" pill, "gitclient
-  0.2.0 is available.", and quiet buttons "Later" (hides it until a newer release) and
-  "Update to 0.2.0". Nothing is downloaded until the button is pressed. It then says
+- **Update card:** when a newer release is found, a card in that corner:
+  a blue "Update" pill, "gitclient 0.2.0 is available.", and under it a quiet "Later" (hides
+  it until a newer release) and the blue "Update to 0.2.0". Nothing is downloaded until the button is pressed. It then says
   "Downloading gitclient 0.2.0…", and when the new program is in place "gitclient 0.2.0 is
   installed and starts the next time you open it. To go back, download 0.1.0 from
   github.com/…/releases/tag/v0.1.0." with "Restart now". A failure is said in Peach with
   "Try again". Looking and finding nothing, or failing to look, is only said in Settings.
-  The same band offers a nightly ("gitclient nightly 1a2b3c4 is available.") on that track.
+  The same card offers a nightly ("gitclient nightly 1a2b3c4 is available.") on that track.
   The release archive is checked against the release's `SHA256SUMS.txt` before anything is
   replaced, and a mismatch installs nothing. What is said and decided lives in core
   (`gitclient_core::install`).
@@ -723,8 +741,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   muted `$`, in weight 600 and Text colour, with how it stands at the right in words:
   `running · 12s`, `exit 0 · 0.2s` in Green, `exit 128 · 0.2s` in Red. Its output sits
   under it as it arrives, stdout in Subtext 0, stderr in Overlay 2, and in Red when the
-  command failed. A running command keeps to its newest line unless you scroll up.
-- **Terminal:** code type on Mantle. The cursor is a Blue block with Crust text and shows
+  command failed. A running command keeps to its newest line unless you scroll up. Dragging
+  over the output selects text, tinted 35% Blue, and `Ctrl C` (`Ctrl Shift C` too, `Cmd C` on
+  macOS) copies it; a click clears it, and so does picking another command.
+- **Terminal:** code type on Mantle. Dragging selects text, tinted 35% Blue, and `Ctrl Shift C`
+  (`Cmd C` on macOS, and `Ctrl C` on Windows while something is selected) copies it, so a plain
+  `Ctrl C` still interrupts the shell. Typing, scrolling or a click clears the selection. The cursor is a Blue block with Crust text and shows
   only while the terminal has focus. While it has focus it takes every key, Tab, Ctrl C
   and Ctrl W included, before any shortcut of the app, except `Ctrl \`` and
   `Ctrl Shift \``. Colours the shell asks for by number use Catppuccin's terminal
@@ -732,6 +754,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   white Subtext 1, and the bright set is the same but for Surface 2 as bright black
   and Subtext 0 as bright white. Latte takes the same-named Latte values. The 256-colour
   cube and the grey ramp are the standard ones, since programs rely on them.
+- **Tooltips:** every tooltip opens as soon as the pointer is on its control, with no
+  delay. `show_tooltips_at_once` sets this for the app's buttons, and a tooltip on a plain
+  element sets `tooltip_show_delay(Duration::ZERO)` itself, since gpui times those on its own.
 - **Focus:** every control shows a 2 px blue focus ring, and each action has a key.
 
 ## In code

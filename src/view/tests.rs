@@ -272,11 +272,14 @@ fn a_force_push_waits_for_confirmation_and_others_do_not(cx: &mut TestAppContext
         };
         view.start_action(force, cx);
         assert!(view.is_confirming());
-        let band = view.confirm.as_ref().unwrap().message.clone();
+        let Some(super::dialog::Dialog::Confirm(confirm)) = &view.dialog else {
+            panic!("a force push asks in a popup");
+        };
+        let band = confirm.message.clone();
         assert!(band.contains("replaces 2 commits"), "{band}");
         assert!(band.contains("git reflog"), "says how to undo it: {band}");
 
-        view.confirm = None;
+        view.dialog = None;
         view.start_action(NextAction::Push { commits: 1 }, cx);
         assert!(!view.is_confirming());
     });
@@ -1918,4 +1921,38 @@ fn a_gravatar_replaces_the_initials_once_it_arrives(cx: &mut TestAppContext) {
         cx.run_until_parked();
     }
     assert!(shown, "the Gravatar never replaced the initials");
+}
+
+#[gpui_kit::test]
+fn a_hovered_branch_shows_its_count_against_the_default_and_draws(cx: &mut TestAppContext) {
+    let repo = gitclient_core::testing::Repo::new();
+    repo.write("a", "1\n");
+    repo.commit("base");
+    repo.git(&["checkout", "-q", "-b", "side"]);
+    repo.write("b", "2\n");
+    repo.commit("add b");
+    repo.git(&["checkout", "-q", "main"]);
+    let (view, mut cx) = open_view(cx);
+    view.update(&mut cx, |view, cx| view.open(repo.path().to_owned(), cx));
+    wait_until_loaded(&view, &mut cx);
+    for _ in 0..500 {
+        cx.run_until_parked();
+        if view.read_with(&cx, |view, _| !view.refs.needs_counts()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // The count is an element that only a hovered row has, so drawing must not trip over a
+    // row that gained one between frames (gpui panics if a hover style did that).
+    view.update(&mut cx, |view, cx| {
+        view.sidebar.window_is_wide = true;
+        view.sidebar.hovered_branch = view.refs.branches.iter().position(|b| b.name == "side");
+        cx.notify();
+    });
+    cx.run_until_parked();
+    view.update(&mut cx, |view, cx| {
+        view.sidebar.hovered_branch = None;
+        cx.notify();
+    });
+    cx.run_until_parked();
 }

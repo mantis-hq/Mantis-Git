@@ -332,7 +332,7 @@ impl GraphView {
                 .disabled(self.busy.is_some())
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let target = target.clone();
-                    let confirm = Confirm::banner(
+                    let confirm = Confirm::popup(
                         conflict::rebase_warning(&target),
                         "Rebase",
                         move |this, cx| {

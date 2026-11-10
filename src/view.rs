@@ -24,7 +24,7 @@ pub use settings::{
 pub use updates::{Updates, install_updates};
 pub use workspace::Workspace;
 
-use dialog::{Confirm, Dialog};
+use dialog::Dialog;
 use gitclient_core::cache::keys::{self, Caches};
 use gitclient_core::history::columns::ColumnOrder;
 use gitclient_core::history::refs::Refs;
@@ -120,6 +120,15 @@ struct AppCaches(Caches);
 
 impl Global for AppCaches {}
 
+/// Every tooltip opens as soon as the pointer is on its control, with none of the half
+/// second wait gpui-kit starts with. Tooltips on plain elements, which gpui times itself,
+/// say so with `tooltip_show_delay(Duration::ZERO)` where they are made.
+pub fn show_tooltips_at_once(cx: &mut App) {
+    gpui_kit::component::tooltip::TooltipDefaults::new()
+        .with_show_delay(std::time::Duration::ZERO)
+        .install(cx);
+}
+
 /// Makes `caches` the ones all windows use.
 pub fn install_caches(caches: Caches, cx: &mut App) {
     cx.set_global(AppCaches(caches));
@@ -131,6 +140,8 @@ fn shared_caches(cx: &App) -> Caches {
 }
 
 pub struct GraphView {
+    /// The workspace's dock, drawn under the graph so the side panels keep their height.
+    dock: Option<Entity<dock::Dock>>,
     repo: Option<PathBuf>,
     status: Status,
     entries: Vec<Entry>,
@@ -161,14 +172,16 @@ pub struct GraphView {
     /// The running git operation, in words. Only one runs at a time.
     busy: Option<SharedString>,
     notice: Option<Notice>,
+    /// The notice whose closing timer is running, so a new one starts a timer of its own.
+    toast_timed: Option<Notice>,
+    /// The pointer is over the toast, which keeps it open while it is read.
+    toast_hovered: bool,
     /// Why counting the branches was slow, when a missing commit graph is the reason.
     graph_hint: Option<SharedString>,
     /// Repositories whose hint was dismissed, so it isn't shown again this session.
     graph_hint_dismissed: HashSet<PathBuf>,
     /// When the load under way began, to tell how long its history took to arrive.
     load_started: Option<Instant>,
-    /// A rewrite waiting in the band under the header for a second click.
-    confirm: Option<Confirm>,
     /// The popup over the window: a question before a deletion, or a form.
     dialog: Option<Dialog>,
     /// Whether the key now down is a repeat of one still held.
@@ -212,6 +225,7 @@ impl GraphView {
             }
         });
         Self {
+            dock: None,
             repo: None,
             status: Status::NoRepository,
             entries: Vec::new(),
@@ -232,10 +246,11 @@ impl GraphView {
             load_task: None,
             busy: None,
             notice: None,
+            toast_timed: None,
+            toast_hovered: false,
             graph_hint: None,
             graph_hint_dismissed: HashSet::new(),
             load_started: None,
-            confirm: None,
             dialog: None,
             key_held: false,
             sidebar: sidebar::State::new(),
@@ -707,9 +722,19 @@ impl GraphView {
 }
 
 impl GraphView {
+    pub fn set_dock(&mut self, dock: Entity<dock::Dock>) {
+        self.dock = Some(dock);
+    }
+
     fn render_graph(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if self.entries.is_empty() {
-            return self.render_message(cx).into_any_element();
+            return div()
+                .v_flex()
+                .flex_1()
+                .min_h_0()
+                .child(self.render_message(cx))
+                .children(self.dock.clone())
+                .into_any_element();
         }
         let sidebar = self.render_sidebar(cx);
         let inspector = self.render_inspector(cx);
@@ -761,7 +786,8 @@ impl GraphView {
                             .into_any_element(),
                     })
                     .into_any_element(),
-            });
+            })
+            .children(self.dock.clone());
         // The graph keeps at least this much, so no edge can be dragged over it.
         const GRAPH_MIN: f32 = 320.;
 
@@ -814,8 +840,7 @@ impl Render for GraphView {
         self.sync_result_scroll(cx);
         let bar = Some(self.render_toolbar(cx).into_any_element());
         let content = self.render_graph(cx);
-        let notice = self.render_notice(cx);
-        let graph_hint = self.render_graph_hint(cx);
+        self.sync_toast(cx);
         let menu = self.render_menu(cx);
         let dialog = self.render_dialog(window, cx);
 
@@ -873,8 +898,6 @@ impl Render for GraphView {
             )
             .on_action(cx.listener(|this, _: &NextConflict, _, cx| this.go_to_conflict(true, cx)))
             .children(bar)
-            .children(notice)
-            .children(graph_hint)
             .child(content)
             .children(menu)
             .children(dialog)

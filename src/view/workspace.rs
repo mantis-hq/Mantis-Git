@@ -230,7 +230,11 @@ impl Workspace {
     /// moves to the other working tree in place, keeping its position in the strip.
     fn make_tab(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<GraphView> {
         let view = cx.new(|cx| GraphView::new(window, cx));
-        view.update(cx, |view, _| view.set_state_file(self.state_file.clone()));
+        let dock = self.dock.clone();
+        view.update(cx, |view, _| {
+            view.set_state_file(self.state_file.clone());
+            view.set_dock(dock);
+        });
         cx.subscribe_in(
             &view,
             window,
@@ -454,6 +458,10 @@ impl Workspace {
 
         parts::tab(("tab", index), index == self.active, cx)
             .on_click(cx.listener(move |this, _, window, cx| this.activate(index, window, cx)))
+            .on_mouse_up(
+                MouseButton::Middle,
+                cx.listener(move |this, _, window, cx| this.close_tab(index, window, cx)),
+            )
             .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
             .can_drop(move |dragged, _, _| {
                 dragged
@@ -466,6 +474,7 @@ impl Workspace {
             }))
             .when_some(path, |tab, path| {
                 tab.tooltip(move |window, cx| Tooltip::new(path.clone()).build(window, cx))
+                    .tooltip_show_delay(std::time::Duration::ZERO)
             })
             .child(
                 div()
@@ -498,6 +507,14 @@ impl Render for Workspace {
             .updates
             .as_ref()
             .and_then(|updates| render_band(updates, cx));
+        let cards: Vec<AnyElement> = update
+            .into_iter()
+            .chain(
+                self.active_view()
+                    .clone()
+                    .update(cx, |view, cx| view.cards(cx)),
+            )
+            .collect();
         self.sync_dock_directory(cx);
         div()
             .v_flex()
@@ -539,7 +556,6 @@ impl Render for Workspace {
                         this.active_view()
                             .update(cx, |view, cx| view.open_clone_form(cx))
                     }))
-                    .children(update)
                     .child(strip)
                     .child(
                         div()
@@ -548,7 +564,18 @@ impl Render for Workspace {
                             .child(self.tabs[self.active].clone()),
                     ),
             )
-            .child(self.dock.clone())
+            .child(
+                // Over everything else, anchored to the window's own bottom right corner.
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .right_0()
+                    .p_4()
+                    .v_flex()
+                    .items_end()
+                    .gap_2()
+                    .children(cards),
+            )
     }
 }
 
@@ -744,6 +771,51 @@ mod tests {
         view.update_in(&mut cx, |view, window, cx| view.activate(1, window, cx));
         assert_eq!(front(&view, &cx), Some(second));
         assert_eq!(dock_state(&view, &cx), (true, 1, 1));
+    }
+
+    #[cfg(unix)]
+    #[gpui_kit::test]
+    fn each_tab_remembers_its_terminal_and_the_log_stays_in_front_everywhere(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, mut cx) = open_workspace(cx);
+        let show = |view: &Entity<Workspace>, cx: &mut VisualTestContext, index| {
+            view.update_in(cx, |view, window, cx| {
+                view.dock()
+                    .update(cx, |dock, cx| dock.show(index, window, cx))
+            })
+        };
+        let activate = |view: &Entity<Workspace>, cx: &mut VisualTestContext, tab| {
+            view.update_in(cx, |view, window, cx| view.activate(tab, window, cx))
+        };
+
+        // The first tab has three terminals and is on the second.
+        cx.simulate_keystrokes("ctrl-shift-` ctrl-shift-` ctrl-shift-`");
+        show(&view, &mut cx, 2);
+        // The second has two, and is on the first.
+        view.update_in(&mut cx, |view, window, cx| view.new_tab(window, cx));
+        cx.simulate_keystrokes("ctrl-shift-`");
+        show(&view, &mut cx, 1);
+        assert_eq!(dock_state(&view, &cx), (true, 2, 1));
+
+        activate(&view, &mut cx, 0);
+        assert_eq!(dock_state(&view, &cx), (true, 3, 2), "its own terminal");
+        activate(&view, &mut cx, 1);
+        assert_eq!(dock_state(&view, &cx), (true, 2, 1));
+
+        // The log is in front for every tab, and each still knows its terminal after.
+        show(&view, &mut cx, 0);
+        activate(&view, &mut cx, 0);
+        assert_eq!(dock_state(&view, &cx), (true, 3, 0));
+        show(&view, &mut cx, 3);
+        activate(&view, &mut cx, 1);
+        assert_eq!(
+            dock_state(&view, &cx),
+            (true, 2, 1),
+            "its own, not the first's"
+        );
+        activate(&view, &mut cx, 0);
+        assert_eq!(dock_state(&view, &cx), (true, 3, 3));
     }
 
     #[gpui_kit::test]

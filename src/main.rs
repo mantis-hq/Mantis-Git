@@ -46,6 +46,7 @@ fn main() {
         .run(move |cx| {
             gpui_kit::init(cx);
             theme::init(cx);
+            view::show_tooltips_at_once(cx);
             view::bind_keys(cx);
             view::install_caches(caches, cx);
             let build = update::Build::current(option_env!("GITCLIENT_COMMIT"));
