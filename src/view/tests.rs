@@ -1426,7 +1426,7 @@ fn the_keyboard_walks_a_menu_wraps_and_skips_lines_that_do_nothing(cx: &mut Test
         view.step_menu(-1, cx);
         assert_eq!(
             at(view).as_deref(),
-            Some("Reset HEAD to here, discarding changes"),
+            Some("Reset HEAD to here"),
             "wraps to the end"
         );
 
@@ -1439,6 +1439,34 @@ fn the_keyboard_walks_a_menu_wraps_and_skips_lines_that_do_nothing(cx: &mut Test
         view.open_ref_menu(main, point(px(10.), px(10.)), cx);
         view.step_menu(1, cx);
         assert_eq!(at(view).as_deref(), Some("New branch from main"));
+    });
+}
+
+#[gpui_kit::test]
+fn a_submenu_replaces_the_menu_and_escape_goes_back_before_it_closes(cx: &mut TestAppContext) {
+    let (view, mut cx) = open_view(cx);
+    load(&view, &["a", "b"], &mut cx);
+    view.update(&mut cx, |view, cx| {
+        let at = |view: &GraphView| view.menu.as_ref().unwrap().highlighted_label();
+
+        view.open_commit_menu(0, point(px(10.), px(10.)), cx);
+        view.step_menu(-1, cx);
+        assert_eq!(at(view).as_deref(), Some("Reset HEAD to here"));
+        view.activate_menu(cx);
+        assert_eq!(
+            at(view).as_deref(),
+            Some("Keep changes"),
+            "the menu stays open on the submenu's first choice"
+        );
+
+        view.press_escape(cx);
+        assert_eq!(
+            at(view).as_deref(),
+            Some("Reset HEAD to here"),
+            "Escape goes back to the line it came from"
+        );
+        view.press_escape(cx);
+        assert!(view.menu.is_none(), "and the next one closes the menu");
     });
 }
 
