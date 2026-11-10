@@ -5,6 +5,7 @@
 //! There is no Save button. Toggles and choices apply when clicked, text applies when you
 //! press Enter or leave the field, and the header says what happened.
 
+mod about;
 mod app;
 mod git_config;
 mod identities;
@@ -128,14 +129,16 @@ enum Page {
     Identities,
     App,
     Repository,
+    About,
 }
 
 impl Page {
-    const ALL: [Page; 4] = [
+    const ALL: [Page; 5] = [
         Page::GitConfig,
         Page::Identities,
         Page::App,
         Page::Repository,
+        Page::About,
     ];
 
     fn name(self) -> &'static str {
@@ -144,6 +147,7 @@ impl Page {
             Page::Identities => "Identities",
             Page::App => "App",
             Page::Repository => "Repository",
+            Page::About => "About",
         }
     }
 }
@@ -323,6 +327,8 @@ pub struct Settings {
     writing_graph: bool,
     /// Which forge the open repository is on, once read.
     forge_choice: Option<gitclient_core::repo::forge::choice::Choice>,
+    /// Which license on the About page has its text open.
+    open_license: Option<usize>,
     feedback: Feedback,
     /// Inputs the user has typed in since they were last saved or filled in.
     dirty: std::collections::HashSet<String>,
@@ -461,6 +467,7 @@ impl Settings {
             commit_graph: Default::default(),
             writing_graph: false,
             forge_choice: None,
+            open_license: None,
             feedback: Feedback::None,
             dirty: Default::default(),
             _new_inputs: new_inputs,
@@ -494,7 +501,7 @@ impl Settings {
                 self.load_commit_graph(cx);
                 self.load_forge_choice(cx);
             }
-            Page::GitConfig | Page::Identities => {}
+            Page::GitConfig | Page::Identities | Page::About => {}
         }
         cx.notify();
     }
@@ -803,6 +810,7 @@ impl Settings {
                             .to_owned()
                     }
                     Page::App => "App preferences save as you make them.".to_owned(),
+                    Page::About => "gitclient, and what is in it.".to_owned(),
                     Page::Repository => format!(
                         "Showing {}, the repository in the front tab.",
                         self.repo.as_deref().map(repository_name).unwrap_or_default()
@@ -936,6 +944,7 @@ impl Render for Settings {
             Page::Identities => self.render_identities(cx),
             Page::App => self.render_app(cx),
             Page::Repository => self.render_repository(cx),
+            Page::About => self.render_about(cx),
         };
         let body = div()
             .h_flex()

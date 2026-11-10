@@ -922,3 +922,30 @@ fn the_app_page_draws_for_a_portable_copy_and_for_one_a_package_manager_installe
         assert!(settings.launcher_status.is_none())
     });
 }
+
+#[gpui_kit::test]
+fn the_about_page_opens_one_license_at_a_time(cx: &mut TestAppContext) {
+    let (_dir, scope) = file_scope();
+    let (view, mut cx) = open(None, scope, cx);
+
+    let about = Page::ALL
+        .iter()
+        .position(|page| *page == Page::About)
+        .unwrap();
+    view.update(&mut cx, |settings, cx| settings.show_page(about, cx));
+    view.read_with(&cx, |settings, _| {
+        assert_eq!(settings.page, Page::About);
+        assert_eq!(settings.open_license, None);
+    });
+
+    view.update(&mut cx, |settings, cx| settings.toggle_license(2, cx));
+    view.read_with(&cx, |settings, _| {
+        assert_eq!(settings.open_license, Some(2))
+    });
+    view.update(&mut cx, |settings, cx| settings.toggle_license(5, cx));
+    view.read_with(&cx, |settings, _| {
+        assert_eq!(settings.open_license, Some(5))
+    });
+    view.update(&mut cx, |settings, cx| settings.toggle_license(5, cx));
+    view.read_with(&cx, |settings, _| assert_eq!(settings.open_license, None));
+}
