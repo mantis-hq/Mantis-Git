@@ -255,9 +255,20 @@ pub fn pull_branch(repo: &Path, branch: &str) -> Result<Option<String>, String> 
 /// Sends a local branch to the remote branch it follows, without checking it out.
 pub fn push_branch(repo: &Path, branch: &str) -> Result<Option<String>, String> {
     let (remote, name) = tracked(repo, branch)?;
+    push_to(repo, branch, &remote, &name)
+}
+
+/// Sends a local branch to the branch `name` on `remote`, as a fast-forward only: git
+/// refuses anything else, and the app never forces.
+pub fn push_to(
+    repo: &Path,
+    branch: &str,
+    remote: &str,
+    name: &str,
+) -> Result<Option<String>, String> {
     let before = rev_parse(repo, &format!("refs/remotes/{remote}/{name}")).ok();
     let refspec = format!("refs/heads/{branch}:refs/heads/{name}");
-    ops::run(repo, &["push", &remote, &refspec])?;
+    ops::run(repo, &["push", remote, &refspec])?;
     Ok(Some(match before {
         Some(before) => format!(
             "Pushed {branch} to {remote}/{name}. To undo it, run \

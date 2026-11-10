@@ -143,7 +143,8 @@ pub(super) fn wire_ref(
             move |dragged, _, _| {
                 dragged.downcast_ref::<Dragged>().is_some_and(|source| {
                     source.name != target.name
-                        && (target.kind == RefKind::Branch || source.kind == RefKind::Remote)
+                        && (target.kind == RefKind::Branch
+                            || matches!(source.kind, RefKind::Remote | RefKind::Branch))
                 })
             }
         })
@@ -369,7 +370,8 @@ impl GraphView {
     }
 
     /// Works out what dropping `source` on `target` can mean, then asks. A local branch
-    /// can take it in; a remote branch can only be the base of a request.
+    /// can take it in; a remote branch is the base of a request, or where a
+    /// local branch is pushed.
     pub fn drop_ref(
         &mut self,
         source: Dragged,
@@ -382,7 +384,7 @@ impl GraphView {
         };
         let (from, onto) = (source.name.clone(), target.name.clone());
         let (remotes, chosen) = (self.refs.remote_configs.clone(), self.refs.forge);
-        let proposing = target.kind == RefKind::Remote;
+        let proposing = target.kind == RefKind::Remote && source.kind == RefKind::Remote;
         Self::spawn_blocking(
             move || {
                 // A remote branch is proposed on its forge, which a self-hosted server may
@@ -394,6 +396,9 @@ impl GraphView {
             },
             move |this, relation: Result<Relation, String>, cx| {
                 let lines = match target.kind {
+                    RefKind::Remote if source.kind == RefKind::Branch => {
+                        menu::push_drop_menu(&this.refs, &source, &target, relation)
+                    }
                     RefKind::Remote => {
                         menu::request_drop_menu(&this.refs, &source, &target, relation)
                     }

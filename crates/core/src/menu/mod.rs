@@ -843,6 +843,43 @@ pub fn request_drop_menu(
     vec![heading, line]
 }
 
+/// The menu a drop opens when a local branch lands on a remote branch: it can be pushed
+/// there, but only when that is a fast-forward of the remote branch. `relation` is how the
+/// two histories stand, the local branch being the source.
+pub fn push_drop_menu(
+    refs: &Refs,
+    source: &Dragged,
+    target: &Dragged,
+    relation: Result<Relation, String>,
+) -> Vec<Line> {
+    let heading = Line::Heading(format!("{} onto {}", source.name, target.name));
+    let said = |message: String| vec![heading.clone(), Line::unavailable(message)];
+    let Some((remote, name)) = remote::split_branch(&refs.remote_configs, &target.name) else {
+        return said("That branch isn't on a known remote.".to_owned());
+    };
+    let (branch, to) = (&source.name, &target.name);
+    match relation {
+        Err(message) => said(message),
+        Ok(Relation::Same | Relation::Contained) => {
+            said(format!("Nothing to push: {to} has all of {branch}."))
+        }
+        Ok(Relation::Diverged) => said(format!(
+            "{to} has commits {branch} lacks, so pushing would need a force. Pull or rebase first."
+        )),
+        Ok(Relation::FastForward) => vec![
+            heading,
+            Line::item(
+                format!("Push {branch} to {to}"),
+                Command::PushTo {
+                    branch: branch.clone(),
+                    remote: remote.name.clone(),
+                    name: name.to_owned(),
+                },
+            ),
+        ],
+    }
+}
+
 /// The menu of one pull or merge request in the sidebar.
 pub fn request_menu(site: &Site, number: u64) -> Vec<Line> {
     let label = site.label(number);
@@ -1545,6 +1582,32 @@ mod tests {
             })
             .collect();
         refs
+    }
+
+    #[test]
+    fn dropping_a_local_branch_on_a_remote_one_offers_a_push_only_when_it_fast_forwards() {
+        let refs = refs_on(&[("origin", "git@github.com:octo/cat.git")]);
+        let (from, onto) = (
+            target(RefKind::Branch, "feat/x"),
+            target(RefKind::Remote, "origin/main"),
+        );
+        let push = push_drop_menu(&refs, &from, &onto, Ok(Relation::FastForward));
+        assert_eq!(labels(&push), ["Push feat/x to origin/main"]);
+        assert_eq!(
+            push[1].command(),
+            Some(&Command::PushTo {
+                branch: "feat/x".into(),
+                remote: "origin".into(),
+                name: "main".into()
+            })
+        );
+        for relation in [Relation::Same, Relation::Contained, Relation::Diverged] {
+            let lines = push_drop_menu(&refs, &from, &onto, Ok(relation));
+            assert!(
+                lines.iter().all(|line| line.command().is_none()),
+                "{relation:?}"
+            );
+        }
     }
 
     #[test]
