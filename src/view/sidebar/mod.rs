@@ -706,7 +706,8 @@ impl GraphView {
                         .flex_1()
                         .min_h_0()
                         .w_full()
-                        .px_2()
+                        .pl_2()
+                        .pr_0p5()
                         .pt_3()
                         .pb_2()
                         .child(

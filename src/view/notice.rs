@@ -15,8 +15,6 @@ use gpui_kit::*;
 use std::path::Path;
 use std::time::Duration;
 
-/// Below the tab strip and the header (36 px and 52 px), with a little air.
-const STACK_TOP: f32 = 100.;
 /// How long a toast waits after the pointer leaves before it closes.
 const HOVER_GRACE: Duration = Duration::from_secs(2);
 
@@ -228,25 +226,12 @@ impl GraphView {
         )
     }
 
-    /// The cards over the top right of the window: what just happened, then what is
-    /// offered. They float, so showing or closing one never moves the graph.
-    pub(super) fn render_cards(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let cards: Vec<AnyElement> = [self.render_toast(cx), self.render_graph_hint(cx)]
+    /// This tab's cards, what is offered first and what just happened last. The workspace
+    /// draws them in the bottom right corner of the window, where the toast is nearest.
+    pub(super) fn cards(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        [self.render_graph_hint(cx), self.render_toast(cx)]
             .into_iter()
             .flatten()
-            .collect();
-        if cards.is_empty() {
-            return None;
-        }
-        Some(
-            div()
-                .absolute()
-                .top(px(STACK_TOP))
-                .right_4()
-                .v_flex()
-                .gap_2()
-                .children(cards)
-                .into_any_element(),
-        )
+            .collect()
     }
 }

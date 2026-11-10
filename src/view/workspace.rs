@@ -503,6 +503,14 @@ impl Render for Workspace {
             .updates
             .as_ref()
             .and_then(|updates| render_band(updates, cx));
+        let cards: Vec<AnyElement> = update
+            .into_iter()
+            .chain(
+                self.active_view()
+                    .clone()
+                    .update(cx, |view, cx| view.cards(cx)),
+            )
+            .collect();
         self.sync_dock_directory(cx);
         div()
             .v_flex()
@@ -544,7 +552,6 @@ impl Render for Workspace {
                         this.active_view()
                             .update(cx, |view, cx| view.open_clone_form(cx))
                     }))
-                    .children(update)
                     .child(strip)
                     .child(
                         div()
@@ -552,6 +559,18 @@ impl Render for Workspace {
                             .min_h_0()
                             .child(self.tabs[self.active].clone()),
                     ),
+            )
+            .child(
+                // Over everything else, anchored to the window's own bottom right corner.
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .right_0()
+                    .p_4()
+                    .v_flex()
+                    .items_end()
+                    .gap_2()
+                    .children(cards),
             )
     }
 }
