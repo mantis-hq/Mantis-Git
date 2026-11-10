@@ -14,8 +14,8 @@ installed `git`.
   whatever the size of the repository.
 - **Understand a repository at a glance.** Your branch is the straight line down the
   graph, and a plain sentence says where you are and what is waiting.
-- **Conventional Commits built in.** If you tag releases like `v1.2.3`, the commit form
-  shows what landing the commit would do to the version.
+- **Conventional Commits built in.** Pick `feat`, `fix`, `docs` and the other kinds of
+  change in the commit form, and it writes the commit line for you.
 - **Pull and merge requests** for GitHub, GitLab and Gitea remotes are listed using git
   alone, with no sign-in and no API token.
 - **A clean UI.** Few controls, one typeface, and nothing on screen that the task doesn't
