@@ -26,13 +26,15 @@ installed `git`.
 ## Installing
 
 Download the archive for your system from the
-[releases](https://github.com/pretext8335/gitclient/releases) page (`.tar.gz` for Linux,
-`.zip` for Windows), unpack it anywhere and run `gitclient`. You need `git` on your `PATH`;
-a recent version is recommended, since some features, such as the sidebar's branch counts,
-need it.
+[releases](https://github.com/pretext8335/gitclient/releases) page, unpack it and run
+`gitclient`.
 
-On first run it offers to add itself to the application menu. It checks for a newer
-release on start and asks before installing one.
+## Dependencies
+
+- `git` on your `PATH`. Version 2.41 or newer is recommended, as the sidebar's branch
+  counts need it.
+- On Windows, repositories inside WSL2 open like any other. Git runs inside the
+  distribution.
 
 ## Building from source
 
