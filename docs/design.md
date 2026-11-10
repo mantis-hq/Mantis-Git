@@ -510,6 +510,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   A commit's menu starts with a check-out line for each of its refs, as its chips show
   them ("Check out feat/x", "Check out origin/y as a local branch", "Check out v1.0.0
   without a branch"), then "Check out 1a2b3c4 without a branch" for the commit itself.
+  A commit's menu holds every option of each branch, tag and remote branch at it, in groups
+  split by a rule: check out (each ref, then the commit); bring in (merge and rebase each
+  ref, or merge the commit when there is none, then cherry-pick and revert); branches (pull,
+  push and set upstream for each local branch, then a new branch from the commit); reset
+  keeping changes; copy; and last, in red, the hard reset and the deletion of each ref.
 - **Popups:** a 420 px card centred over the window, on Mantle with a 1 px Blue outline
   and 8 px radius. It holds a sentence, then any inputs, then a line naming the keys
   ("Press Enter to create feat/x, or Esc to cancel.", in Overlay 2), and "Cancel" as a

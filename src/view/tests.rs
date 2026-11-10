@@ -1407,7 +1407,7 @@ fn the_keyboard_walks_a_menu_wraps_and_skips_lines_that_do_nothing(cx: &mut Test
         view.step_menu(-1, cx);
         assert_eq!(
             at(view).as_deref(),
-            Some("Copy subject"),
+            Some("Reset HEAD to here, discarding changes"),
             "wraps to the end"
         );
 
@@ -1419,7 +1419,7 @@ fn the_keyboard_walks_a_menu_wraps_and_skips_lines_that_do_nothing(cx: &mut Test
         };
         view.open_ref_menu(main, point(px(10.), px(10.)), cx);
         view.step_menu(1, cx);
-        assert_eq!(at(view).as_deref(), Some("New branch from main"));
+        assert_eq!(at(view).as_deref(), Some("Set upstream of main"));
     });
 }
 
