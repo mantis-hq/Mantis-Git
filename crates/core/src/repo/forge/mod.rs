@@ -12,7 +12,7 @@ pub mod probe;
 
 use super::remote::Remote;
 use crate::ops;
-use crate::text::{count, short_oid};
+use crate::text::short_oid;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -339,29 +339,6 @@ pub struct Requests {
     pub newest: Vec<Request>,
     /// How many the remote has, shown or not.
     pub total: usize,
-    /// Whether closed requests were left out, which only some hosts let git see.
-    pub open_only: bool,
-}
-
-impl Requests {
-    /// A sentence under the list, saying what it leaves out.
-    pub fn caveat(&self, forge: Forge) -> String {
-        let noun = forge.noun();
-        let rest = if self.open_only {
-            "Open ones only; one that conflicts with its base isn't listed."
-        } else {
-            "Git can't say which are still open."
-        };
-        if self.total > self.newest.len() {
-            format!(
-                "The newest {} of {}. {rest}",
-                self.newest.len(),
-                count(self.total, noun)
-            )
-        } else {
-            rest.to_owned()
-        }
-    }
 }
 
 /// Reads `git ls-remote`'s answer: an object name, a tab and a ref. Anything that isn't a
@@ -416,8 +393,7 @@ pub fn list(repo: &Path, remote: &Remote, site: &Site) -> Result<Requests, Strin
             format!("Couldn't ask {} for its requests. {reason}", remote.name)
         })?;
     let mut found = parse_listing(&listing);
-    let open_only = site.forge.tells_open_by_merge_ref();
-    if open_only {
+    if site.forge.tells_open_by_merge_ref() {
         found.retain(|listed| listed.has_merge_ref);
     }
     let total = found.len();
@@ -434,11 +410,7 @@ pub fn list(repo: &Path, remote: &Remote, site: &Site) -> Result<Requests, Strin
     for request in &mut newest {
         request.subject = subjects.get(&request.tip).cloned();
     }
-    Ok(Requests {
-        newest,
-        total,
-        open_only,
-    })
+    Ok(Requests { newest, total })
 }
 
 /// The subject of each commit that this repository has. A request from a fork usually
@@ -640,32 +612,6 @@ mod tests {
                     has_merge_ref: false
                 },
             ]
-        );
-    }
-
-    #[test]
-    fn the_caveat_says_what_the_list_leaves_out() {
-        let some = |total| Requests {
-            newest: vec![Request {
-                number: 1,
-                tip: "a".into(),
-                subject: None,
-            }],
-            total,
-            open_only: false,
-        };
-        assert_eq!(
-            some(1).caveat(Forge::GitHub),
-            "Git can't say which are still open."
-        );
-        let open = Requests {
-            open_only: true,
-            ..some(1)
-        };
-        assert!(open.caveat(Forge::GitHub).starts_with("Open ones only"));
-        assert_eq!(
-            some(40).caveat(Forge::GitLab),
-            "The newest 1 of 40 merge requests. Git can't say which are still open."
         );
     }
 
