@@ -379,14 +379,22 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Push by dropping: a local branch also drops on a remote branch, which tints like a
   local one. The menu holds one line, "Push feat/x to origin/main", only when that
   fast-forwards the remote branch. When the remote branch already has everything, or has
-  commits the branch lacks (a push would need a force, which the app never does), the line
-  says so and can't be used. The band says how to undo a push.
+  commits the branch lacks (a push would need a force, which is only offered after a push
+  fails; see "Force push"), the line says so and can't be used. The band says how to undo a push.
 - Pull and push from the menu: the menu of a local branch that follows a remote branch, checked
   out or not, has "Pull origin/x into x" and "Push 2 commits to origin/x". Pull
   asks the remote and only fast-forwards, so nothing is merged; on a branch that isn't checked
   out the working tree stays as it is. It is always offered, since the counts come from the last fetch. Push is
   offered when the branch is ahead, else it stays and says why. The band says how to undo
   each. A branch that follows nothing gets neither line.
+- Force push: a push is never forced on its own. When git refuses one because the remote
+  branch has commits the branch lacks, a popup follows that
+  says so and that forcing replaces those commits for everyone who uses the remote, and gives
+  the `git push --force-with-lease` that puts them back. Its result is "Force push" and it
+  takes Enter twice (see "Delete confirmation"). It runs `git push --force-with-lease`
+  against the commit the last fetch saw, so a remote that has moved since is refused, not
+  overwritten. Any other failure is said in the toast as before. What is decided lives in
+  core (`branch::push_was_rejected`, `Command::force_after_rejection`).
 - Upstream: a local branch's menu has "Set upstream of <name>", which opens a form popup
   with the remote and the branch on one row, as `origin / main` reads: a "Remote" dropdown
   that starts on the remote holding a branch of the same name (or the first), a `/`, and a

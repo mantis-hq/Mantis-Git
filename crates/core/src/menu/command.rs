@@ -42,6 +42,14 @@ pub enum Command {
         remote: String,
         name: String,
     },
+    /// Sends a local branch over a remote branch that has commits it lacks, after asking.
+    ForcePushTo {
+        branch: String,
+        remote: String,
+        name: String,
+        /// What forcing does and how to undo it, worked out when git refused the push.
+        warning: String,
+    },
     Drop {
         action: DropAction,
         source: String,
@@ -245,6 +253,7 @@ impl Command {
             Self::MergeIntoCurrent { .. } => "Merging",
             Self::PullBranch { .. } => "Pulling",
             Self::PushBranch { .. } | Self::PushTo { .. } => "Pushing",
+            Self::ForcePushTo { .. } => "Force pushing",
             Self::Drop {
                 action: DropAction::FastForward,
                 ..
@@ -304,6 +313,11 @@ impl Command {
                 action: "Delete",
                 weight: deletion_weight(*at_risk),
             }),
+            Self::ForcePushTo { warning, .. } => Some(Confirmation {
+                message: warning.clone(),
+                action: "Force push",
+                weight: Weight::DoublePress,
+            }),
             Self::DeleteRemote { remote, name, tip } => Some(Confirmation {
                 message: branch::delete_remote_warning(remote, name, tip.as_deref()),
                 action: "Delete",
@@ -362,6 +376,34 @@ impl Command {
         }
     }
 
+    /// The force push to offer when this command is a push that git refused with `error`
+    /// because the remote branch has commits the pushed one lacks. Blocks, so call it off
+    /// the UI thread.
+    pub fn force_after_rejection(&self, repo: &Path, error: &str) -> Option<Command> {
+        if !branch::push_was_rejected(error) {
+            return None;
+        }
+        let (branch, remote, name) = match self {
+            Self::PushBranch { branch } => {
+                let (remote, name) = branch::push_target(repo, branch).ok()?;
+                (branch.clone(), remote, name)
+            }
+            Self::PushTo {
+                branch,
+                remote,
+                name,
+            } => (branch.clone(), remote.clone(), name.clone()),
+            _ => return None,
+        };
+        let warning = branch::force_push_warning(repo, &branch, &remote, &name);
+        Some(Self::ForcePushTo {
+            branch,
+            remote,
+            name,
+            warning,
+        })
+    }
+
     /// What to say after copying.
     pub fn copied_notice(&self) -> Option<String> {
         match self {
@@ -417,6 +459,12 @@ impl Command {
                 remote,
                 name,
             } => branch::push_to(repo, branch, remote, name),
+            Self::ForcePushTo {
+                branch,
+                remote,
+                name,
+                ..
+            } => branch::force_push_to(repo, branch, remote, name),
             Self::Drop {
                 action,
                 source,
