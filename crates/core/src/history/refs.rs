@@ -101,11 +101,14 @@ impl Branch {
     }
 
     /// For a branch the default branch already has every commit of, the sentence for its
-    /// check mark. `None` for the default itself and for a branch not counted yet.
+    /// check mark. `None` for the default itself, a branch not counted yet, and a branch
+    /// level with the default, which has no commits of its own to have merged.
     pub fn merged_hint(&self, default_branch: Option<&str>) -> Option<String> {
         let default = default_branch?;
         match self.ahead_behind {
-            Some((0, _)) if default != self.name => Some(format!("Merged into {default}")),
+            Some((0, behind)) if behind > 0 && default != self.name => {
+                Some(format!("Merged into {default}"))
+            }
             _ => None,
         }
     }

@@ -868,6 +868,9 @@ mod tests {
             Some("Merged into main")
         );
         assert_eq!(branch("main").merged_hint(default), None);
+        let mut level = branch("alpha").clone();
+        level.ahead_behind = Some((0, 0));
+        assert_eq!(level.merged_hint(default), None, "no commits of its own");
         assert_eq!(branch("zebra").merged_hint(default), None);
         assert_eq!(
             branch("zebra").upstream_gone_hint(),
