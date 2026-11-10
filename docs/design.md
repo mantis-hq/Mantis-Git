@@ -724,6 +724,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   white Subtext 1, and the bright set is the same but for Surface 2 as bright black
   and Subtext 0 as bright white. Latte takes the same-named Latte values. The 256-colour
   cube and the grey ramp are the standard ones, since programs rely on them.
+- **Tooltips:** every tooltip opens as soon as the pointer is on its control, with no
+  delay. `show_tooltips_at_once` sets this for the app's buttons, and a tooltip on a plain
+  element sets `tooltip_show_delay(Duration::ZERO)` itself, since gpui times those on its own.
 - **Focus:** every control shows a 2 px blue focus ring, and each action has a key.
 
 ## In code

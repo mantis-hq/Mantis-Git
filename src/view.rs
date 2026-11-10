@@ -119,6 +119,15 @@ struct AppCaches(Caches);
 
 impl Global for AppCaches {}
 
+/// Every tooltip opens as soon as the pointer is on its control, with none of the half
+/// second wait gpui-kit starts with. Tooltips on plain elements, which gpui times itself,
+/// say so with `tooltip_show_delay(Duration::ZERO)` where they are made.
+pub fn show_tooltips_at_once(cx: &mut App) {
+    gpui_kit::component::tooltip::TooltipDefaults::new()
+        .with_show_delay(std::time::Duration::ZERO)
+        .install(cx);
+}
+
 /// Makes `caches` the ones all windows use.
 pub fn install_caches(caches: Caches, cx: &mut App) {
     cx.set_global(AppCaches(caches));
