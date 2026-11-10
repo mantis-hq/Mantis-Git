@@ -9,6 +9,7 @@ use super::menu::wire_ref;
 use super::parts::{TEXT_CHIP, TEXT_SMALL};
 use super::parts::{panel_row, section_label};
 use super::{GraphView, OpenWorktreeInTab, SwitchWorktree};
+use crate::icons::Icon;
 use crate::theme::{lane_color, tokens};
 use gitclient_core::history::picks::{Click, Picks, tip_of};
 use gitclient_core::history::refs::RefKind;
@@ -20,6 +21,7 @@ use gitclient_core::repo::submodule::{self, State as SubmoduleState};
 use gitclient_core::tree::branches::{self, Folder};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -111,8 +113,13 @@ struct RefRow {
     target: Dragged,
     list: RefList,
     color: Hsla,
+    /// `+2 −1` against the default branch, drawn only while the pointer is over the row.
     detail: String,
     sync: String,
+    /// The words for a check mark on a branch the default branch already has.
+    merged: Option<String>,
+    /// The words for the icon on a branch whose remote branch was deleted.
+    gone: Option<String>,
     on: bool,
     strong: bool,
     depth: usize,
@@ -609,12 +616,16 @@ impl GraphView {
         let target = self.ref_target(list, index)?;
         let theme = cx.theme();
         let is_dark = theme.is_dark();
+        let (mut merged, mut gone) = (None, None);
         let (color, detail, sync, strong) = match list {
             RefList::Branches => {
                 let branch = self.refs.branches.get(index)?;
+                let default = self.refs.default_branch.as_deref();
+                merged = branch.merged_hint(default);
+                gone = branch.upstream_gone_hint();
                 (
                     lane_color(branch.color, is_dark),
-                    String::new(),
+                    branch.delta(default),
                     branch.remote_delta(),
                     branch.is_head,
                 )
@@ -636,6 +647,8 @@ impl GraphView {
             color,
             detail,
             sync,
+            merged,
+            gone,
             strong,
             depth,
         })
@@ -803,18 +816,23 @@ impl GraphView {
             color,
             detail,
             sync,
+            merged,
+            gone,
             on,
             strong,
             depth,
         } = row;
         let theme = cx.theme();
         let muted = theme.muted_foreground;
+        let peach = tokens(theme.is_dark()).peach;
         let text = if strong || on {
             theme.foreground
         } else {
             theme.secondary_foreground
         };
+        let id_for_icons = id.clone();
         let row = panel_row(id, on, cx)
+            .group("ref-row")
             .h(px(30.))
             .pl(indent(depth))
             .on_click({
@@ -836,13 +854,25 @@ impl GraphView {
                     .when(strong, |name| name.font_semibold())
                     .child(name),
             )
-            .child(
-                div()
-                    .flex_none()
-                    .text_size(TEXT_CHIP)
-                    .text_color(muted)
-                    .child(detail),
-            )
+            .when(!detail.is_empty(), |row| {
+                // Hidden until the pointer is over the row, so it only takes room from the
+                // name while it is wanted.
+                row.child(
+                    div()
+                        .hidden()
+                        .group_hover("ref-row", |style| style.flex())
+                        .flex_none()
+                        .text_size(TEXT_CHIP)
+                        .text_color(muted)
+                        .child(detail),
+                )
+            })
+            .children(merged.map(|hint| {
+                status_icon((id_for_icons.clone(), "merged"), Icon::Check, hint, muted)
+            }))
+            .children(gone.map(|hint| {
+                status_icon((id_for_icons.clone(), "gone"), Icon::CloudOff, hint, peach)
+            }))
             .when(!sync.is_empty(), |row| {
                 row.child(
                     div()
@@ -1049,4 +1079,18 @@ impl GraphView {
                     .child(count.to_string()),
             )
     }
+}
+
+/// A 14 px picture at the end of a branch row, with its words as a tooltip.
+fn status_icon(
+    id: (ElementId, &'static str),
+    icon: Icon,
+    hint: String,
+    color: Hsla,
+) -> Stateful<Div> {
+    div()
+        .id(ElementId::from(id))
+        .flex_none()
+        .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx))
+        .child(svg().path(icon.path()).size(px(14.)).text_color(color))
 }

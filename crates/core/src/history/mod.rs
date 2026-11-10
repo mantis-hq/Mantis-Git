@@ -846,6 +846,28 @@ mod tests {
         assert_eq!(counts("alpha"), Some((1, 0)));
         assert_eq!(counts("zebra"), Some((2, 1)));
         assert_eq!(counts("merged-one"), Some((0, 1)));
+
+        let default = refs.default_branch.as_deref();
+        let branch = |name: &str| refs.branches.iter().find(|b| b.name == name).unwrap();
+        assert_eq!(branch("zebra").delta(default), "+2 −1");
+        assert_eq!(branch("alpha").delta(default), "+1");
+        assert_eq!(branch("main").delta(default), "");
+        assert_eq!(
+            branch("merged-one").delta(default),
+            "",
+            "merged says it with a check"
+        );
+        assert_eq!(
+            branch("merged-one").merged_hint(default).as_deref(),
+            Some("Merged into main")
+        );
+        assert_eq!(branch("main").merged_hint(default), None);
+        assert_eq!(branch("zebra").merged_hint(default), None);
+        assert_eq!(
+            branch("zebra").upstream_gone_hint(),
+            None,
+            "it tracks nothing"
+        );
     }
 
     #[test]

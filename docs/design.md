@@ -363,7 +363,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   A remote on no known forge has no section. What each host's pages are called and where
   they live is in core (`gitclient_core::repo::forge`).
 - A branch row ends with its count against the remote branch it tracks (`↑1 ↓2`: to push,
-  to pull). Level or untracked shows nothing. It doesn't count against the default branch.
+  to pull). Level or untracked shows nothing. Its count against the default branch (`+2 −1`)
+  shows only while the pointer is over the row, so it takes room from the name only then.
+  A branch the default branch already has every commit of shows a check (Overlay 2) with the
+  tooltip "Merged into main", and one whose remote branch was deleted shows a broken cloud
+  (Peach) with the tooltip "origin/x was deleted on the remote". Both are pictures served by
+  the app (`src/icons.rs`), and their words live in core (`Branch::merged_hint`,
+  `Branch::upstream_gone_hint`).
 
 ## Components
 
