@@ -29,12 +29,13 @@ Download the archive for your system from the
 [releases](https://github.com/pretext8335/gitclient/releases) page, unpack it and run
 `gitclient`.
 
-## Dependencies
+It needs `git` on your `PATH`. Version 2.41 or newer is recommended, as the sidebar's
+branch counts need it.
 
-- `git` on your `PATH`. Version 2.41 or newer is recommended, as the sidebar's branch
-  counts need it.
-- To build from source: a recent stable Rust toolchain.
-- To build on Linux: the GUI libraries below.
+## Building from source
+
+To build you need a recent stable Rust toolchain, `git` as above, and on Linux the GUI
+libraries below.
 
 <details>
 <summary>Install the Linux build packages</summary>
@@ -61,7 +62,7 @@ sudo dnf install pkgconf-pkg-config libxcb-devel libxkbcommon-devel \
 
 </details>
 
-## Building from source
+Then:
 
 ```sh
 cargo run --release
