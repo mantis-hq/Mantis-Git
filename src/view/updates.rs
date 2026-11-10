@@ -261,9 +261,6 @@ pub(super) fn render_band(updates: &Entity<Updates>, cx: &App) -> Option<AnyElem
     };
     Some(
         card("update", cx)
-            .absolute()
-            .bottom_4()
-            .right_4()
             .child(
                 div()
                     .h_flex()

@@ -827,7 +827,6 @@ impl Render for GraphView {
         let bar = Some(self.render_toolbar(cx).into_any_element());
         let content = self.render_graph(cx);
         self.sync_toast(cx);
-        let cards = self.render_cards(cx);
         let menu = self.render_menu(cx);
         let dialog = self.render_dialog(window, cx);
 
@@ -887,7 +886,6 @@ impl Render for GraphView {
             .children(bar)
             .child(content)
             .children(menu)
-            .children(cards)
             .children(dialog)
     }
 }

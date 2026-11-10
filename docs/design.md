@@ -477,17 +477,17 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   shown once, whatever the answer, and the band says what was written and how to take it
   away. Settings → App adds or removes the launcher from then on. On a window too short for
   it, the panel scrolls.
-- **Toast:** what just happened (and why a step failed, in Peach) is a card over the top
+- **Toast:** what just happened (and why a step failed, in Peach) is a card over the bottom
   right of the window, 420 px wide, on Mantle with a Surface 0 border and 8 px radius, and
   ends in a quiet `×` that closes it. It floats over the graph, so the rows never move.
   There are no bands: nothing in the window pushes the graph down. Where this document
   says "the band says" for an outcome, it means the toast. A card that offers something
   (the commit graph and the update, below) is the same card with its buttons under the
   text, at its right: quiet ones first, then the one blue button, the thing to do next.
-  Cards from one repository tab stack under each other at the top right, the toast first;
-  the update is the window's, not a tab's, and sits at the bottom right. A card that offers
-  something never closes itself. How long it stays
-  follows what it says (`toast_lifetime` in `gitclient_core::text`): a confirmation such as
+  Every card stacks in one column against the window's own bottom right corner, 16 px from
+  both edges, over the dock bar and the dock: the update first, then the commit graph, and
+  the toast last, nearest the corner. A card that offers something never closes itself. How
+  long a toast stays follows what it says (`toast_lifetime` in `gitclient_core::text`): a confirmation such as
   "Copied 1a2b3c4" closes itself after 4 seconds, a longer one that says how to undo a step
   gets 50 ms more for each character past 30, up to 12 seconds, and a failure stays until
   its `×` is pressed. Hovering a toast holds it open, and it closes 2 seconds after the
@@ -505,7 +505,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   write as Settings → Repository and says what it did in the usual band. A quick count, a
   graph that is only behind, or any other reason for being slow shows nothing. A branch level
   with the default branch is counted without asking git at all.
-- **Update card:** when a newer release is found, a card at the bottom right of the window:
+- **Update card:** when a newer release is found, a card in that corner:
   a blue "Update" pill, "gitclient 0.2.0 is available.", and under it a quiet "Later" (hides
   it until a newer release) and the blue "Update to 0.2.0". Nothing is downloaded until the button is pressed. It then says
   "Downloading gitclient 0.2.0…", and when the new program is in place "gitclient 0.2.0 is
