@@ -1,10 +1,6 @@
-# One workflow for both hosts. Gitea runs it from here when it has no .gitea/workflows folder.
-# Push a tag like v0.2.0 to build Linux and Windows
-# and publish a release here. Every push to main does the same into one "nightly"
-# pre-release that is replaced each time. "Run workflow" builds both without publishing.
-# The tests run first, on Linux, and a failure stops the builds and the release.
-# Linux builds in a rust:1-bookworm container that installs its packages on each run. Windows needs a runner labelled `windows`: gpui compiles its
-# shaders in a build script that only runs on a Windows host, so it can't be cross-built.
+# Push a tag like v0.2.0 to build Linux and Windows and publish a release. Every push to
+# main does the same into one "nightly" pre-release that is replaced each time. "Run
+# workflow" builds both without publishing.
 name: Release
 
 on:
@@ -16,7 +12,6 @@ on:
       - "docs/**"
       - "**.md"
       - "LICENSE"
-      # Pull request checks, not part of the program.
       - ".github/workflows/ci.yml"
       - ".github/workflows/licenses.yml"
   workflow_dispatch:
@@ -28,9 +23,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Nothing is built or published unless the tests pass. The tests build their own throwaway
-  # repositories and ignore the machine's git config, so this needs nothing but the Linux
-  # GUI libraries. The GPU render test is opt-in and isn't run here.
   test:
     runs-on: docker
     container:
@@ -39,8 +31,6 @@ jobs:
       - run: apt-get update && apt-get install -y --no-install-recommends nodejs
       - uses: actions/checkout@v7
       - run: sh .github/ci-setup.sh
-      # Its own cache: a debug build and a release build share nothing, and one key for
-      # both would keep overwriting the other.
       - uses: actions/cache@v4
         with:
           path: |
@@ -57,13 +47,9 @@ jobs:
     container:
       image: rust:1-bookworm
     steps:
-      # The Rust image has no Node, which the JavaScript actions below need.
       - run: apt-get update && apt-get install -y --no-install-recommends nodejs
       - uses: actions/checkout@v7
       - run: sh .github/ci-setup.sh
-      # Kept by the runner's cache server, on the runner's own disk: the downloaded crates
-      # and the build output. A changed Cargo.lock starts from the newest older cache and
-      # rebuilds only what moved.
       - uses: actions/cache@v4
         with:
           path: |
@@ -95,8 +81,6 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      # The runner needs Rust (rustup) and Git for Windows. gpui finds fxc.exe in the Windows
-      # SDK that Visual Studio's C++ build tools install.
       - run: cargo build --release --locked
       - name: Package
         run: |

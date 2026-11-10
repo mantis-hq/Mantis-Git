@@ -1,12 +1,7 @@
-# What a pull request that changes code has to pass before it can be merged. The release
-# workflow runs the tests again before it builds anything, so a change that reaches main has
-# been through both. Gitea runs it from here when it has no .gitea/workflows folder.
 name: CI
 
 on:
   pull_request:
-    # Only what can change the result. A pull request that touches docs or the README alone
-    # runs nothing. The licenses have a workflow of their own.
     paths:
       - "crates/**"
       - "src/**"
@@ -20,7 +15,6 @@ on:
       - ".github/actions/**"
   workflow_dispatch:
 
-# A newer push to the same pull request stops the run still going for it.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -31,13 +25,10 @@ jobs:
     container:
       image: rust:1-trixie
     steps:
-      # The Rust image has no Node, which the JavaScript actions below need.
       - run: apt-get update && apt-get install -y --no-install-recommends nodejs
       - uses: actions/checkout@v7
       - run: sh .github/ci-setup.sh
-      # The image carries only the compiler.
       - run: rustup component add rustfmt clippy
-      # The same cache as the release workflow's test job.
       - uses: actions/cache@v4
         with:
           path: |
@@ -46,7 +37,6 @@ jobs:
             target
           key: test-${{ hashFiles('Cargo.lock') }}
           restore-keys: test-
-      # Plain `cargo fmt` skips crates/core.
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --locked --workspace
