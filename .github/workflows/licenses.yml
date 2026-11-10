@@ -52,6 +52,9 @@ jobs:
           TOKEN: ${{ secrets.LICENSES_TOKEN }}
           API: ${{ github.api_url || format('{0}/api/v1', github.server_url) }}/repos/${{ github.repository }}
         run: |
+          # The checkout trusts the folder only in its own temporary HOME, and this step runs
+          # as another user than the folder's owner, so git calls it "not a git repository".
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git diff --quiet THIRD-PARTY-LICENSES.txt && exit 0
           git config user.name "gitclient licenses"
           git config user.email "licenses@users.noreply.invalid"
