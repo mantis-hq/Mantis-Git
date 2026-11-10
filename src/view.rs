@@ -30,7 +30,7 @@ use gitclient_core::history::columns::ColumnOrder;
 use gitclient_core::history::refs::Refs;
 use gitclient_core::history::selection::Selection;
 use gitclient_core::history::{self, Entry, LoadEvent};
-use gitclient_core::repo::commit_graph;
+use gitclient_core::repo::{auto_fetch, commit_graph};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::*;
@@ -201,6 +201,8 @@ pub struct GraphView {
     /// until it has been read, and the caches go unused until then.
     fingerprint: Option<Arc<str>>,
     _activation: Subscription,
+    /// Fetches the remotes every few minutes while this tab is in front.
+    _auto_fetch: Task<()>,
 }
 
 /// Asks whoever holds this view to show another working tree of the same repository: the
@@ -222,6 +224,17 @@ impl GraphView {
         let activation = cx.observe_window_activation(window, |this, window, cx| {
             if window.is_window_active() && !this.in_background {
                 this.catch_up(cx);
+            }
+        });
+        let auto_fetch = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(auto_fetch::EVERY).await;
+                if this
+                    .update(cx, |this, cx| this.fetch_in_background(cx))
+                    .is_err()
+                {
+                    break;
+                }
             }
         });
         Self {
@@ -264,6 +277,7 @@ impl GraphView {
             caches: shared_caches(cx),
             fingerprint: None,
             _activation: activation,
+            _auto_fetch: auto_fetch,
         }
     }
 
@@ -387,6 +401,31 @@ impl GraphView {
                 let moved = !matches!(&refs, Ok(refs) if refs.fingerprint() == current);
                 if moved {
                     this.reload(cx);
+                }
+            },
+            cx,
+        );
+    }
+
+    /// Fetches the remotes without being asked, then reloads if that moved a ref. It leaves
+    /// the tab alone while anything else is going on, and says nothing when it fails: the
+    /// Log has what git said, and a fetch by hand asks the questions this one can't.
+    fn fetch_in_background(&mut self, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        if self.in_background
+            || self.busy.is_some()
+            || self.status != Status::Loaded
+            || !self.auto_fetch_on()
+        {
+            return;
+        }
+        Self::spawn_blocking(
+            move || auto_fetch::fetch(&repo),
+            |this, fetched, cx| {
+                if fetched.is_ok() {
+                    this.reload_if_refs_moved(cx);
                 }
             },
             cx,

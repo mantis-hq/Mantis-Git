@@ -180,6 +180,14 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     `gitclient`), and empty tabs are left out. A path on the command line wins over the
     remembered tabs, and a folder that is gone is skipped. If there is no config folder the
     page says so and the tick box is not drawn.
+    Under "Remotes", a tick box "Fetch in the background" (on by default, `auto_fetch` in the
+    same file) has the front tab fetch every remote every 5 minutes (`EVERY` in
+    `gitclient_core::repo::auto_fetch`), so what is ahead and behind stays true; the graph
+    reloads only if a ref moved. It is a plain `git fetch --all`: no branch moves and none is
+    deleted. It never asks a question, so a key with a passphrase no agent holds, or a login,
+    makes it fail without a word (the Log has what git said) until a fetch by hand answers
+    it. It skips a tab that is busy, still loading or behind another tab, and a fetch with
+    the box clear is only the header's "Fetch".
     Under "Graph", a row of chips picks how many commits the graph loads from a repository
     (100, 500 by default, 1000, 5000, 20000), kept as `commit_limit` in the same file. The
     newest commits by history order come first. Scrolling to within 200 rows of the end
