@@ -134,7 +134,7 @@ impl GraphView {
     /// A card on Mantle in the middle of the window, over a backdrop that cancels on a click.
     fn render_frame(&self, frame: Frame, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let (panel, border) = (theme.title_bar, theme.border);
+        let (panel, border) = (theme.title_bar, theme.primary);
         let card = div()
             .id("dialog")
             .v_flex()
