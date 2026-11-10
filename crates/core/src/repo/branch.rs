@@ -488,6 +488,31 @@ pub fn set_upstream(
     }))
 }
 
+/// What deleting a branch on a remote does, and how to put it back. It is the one
+/// deletion that reaches other people, so it says so.
+pub fn delete_remote_warning(remote: &str, name: &str, tip: Option<&str>) -> String {
+    let undo = tip.map_or(String::new(), |tip| {
+        format!(
+            " To undo it, run `git push {remote} {}:refs/heads/{name}`.",
+            short_oid(tip)
+        )
+    });
+    format!(
+        "This deletes the branch {name} on {remote}, for everyone who uses it. Your local \
+         branches stay.{undo}"
+    )
+}
+
+/// Deletes a branch on its remote, which also drops the local copy of it.
+pub fn delete_remote_branch(
+    repo: &Path,
+    remote: &str,
+    name: &str,
+) -> Result<Option<String>, String> {
+    ops::run(repo, &["push", remote, "--delete", name])
+        .map(|_| Some(format!("Deleted {name} on {remote}.")))
+}
+
 pub fn delete_tag(repo: &Path, name: &str) -> Result<Option<String>, String> {
     ops::run(repo, &["tag", "-d", name]).map(|_| Some(format!("Deleted the tag {name}.")))
 }

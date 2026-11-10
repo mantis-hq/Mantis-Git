@@ -59,6 +59,12 @@ pub enum Command {
         /// Whether deleting it loses commits that nothing else keeps.
         at_risk: bool,
     },
+    /// A branch on a remote, which is removed there with `git push --delete`.
+    DeleteRemote {
+        remote: String,
+        name: String,
+        tip: Option<String>,
+    },
     /// Several branches and tags at once.
     DeleteMany {
         refs: Vec<Doomed>,
@@ -249,7 +255,7 @@ impl Command {
             }
             | Self::Rebase { .. } => "Rebasing",
             Self::Drop { .. } => "Merging",
-            Self::Delete { .. } | Self::DeleteMany { .. } => "Deleting",
+            Self::Delete { .. } | Self::DeleteMany { .. } | Self::DeleteRemote { .. } => "Deleting",
             Self::CherryPick { .. } => "Cherry-picking",
             Self::Revert { .. } => "Reverting",
             Self::Reset { .. } => "Resetting",
@@ -297,6 +303,11 @@ impl Command {
                 message: branch::delete_warning(*kind, name, tip.as_deref()),
                 action: "Delete",
                 weight: deletion_weight(*at_risk),
+            }),
+            Self::DeleteRemote { remote, name, tip } => Some(Confirmation {
+                message: branch::delete_remote_warning(remote, name, tip.as_deref()),
+                action: "Delete",
+                weight: Weight::Popup,
             }),
             Self::RemoveWorktree { warning, .. } => Some(Confirmation {
                 message: warning.clone(),
@@ -412,6 +423,9 @@ impl Command {
                 RefKind::Tag => branch::delete_tag(repo, name),
                 _ => branch::delete_branch(repo, name),
             },
+            Self::DeleteRemote { remote, name, .. } => {
+                branch::delete_remote_branch(repo, remote, name)
+            }
             Self::DeleteMany { refs } => branch::delete_many(repo, refs),
             Self::CherryPick { oids } => match oids.as_slice() {
                 [oid] => actions::cherry_pick(repo, oid),
