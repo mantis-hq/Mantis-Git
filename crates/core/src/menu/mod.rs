@@ -246,18 +246,38 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
                 Command::Delete {
                     kind,
                     at_risk: branch::loses_commits(refs, kind, &name),
-                    name,
+                    name: name.clone(),
                     tip: tip.map(|tip| tip.to_string()),
                 },
             )
             .danger(),
         );
     }
+    if kind == RefKind::Remote {
+        if let Some((remote, branch_name)) = remote::split_branch(&refs.remote_configs, &name) {
+            lines.push(Line::Separator);
+            lines.push(
+                Line::item(
+                    format!("Delete {name} on {}", remote.name),
+                    Command::DeleteRemote {
+                        remote: remote.name.clone(),
+                        name: branch_name.to_owned(),
+                        tip: refs
+                            .remotes
+                            .iter()
+                            .find(|r| r.name == name)
+                            .map(|r| r.tip.to_string()),
+                    },
+                )
+                .danger(),
+            );
+        }
+    }
     lines
 }
 
 /// Whether a ref can be deleted from the menu: a local branch that isn't checked out, or
-/// a tag. A remote branch is somebody else's to remove.
+/// a tag. A remote branch is deleted one at a time, from its own menu.
 fn why_not_deletable(refs: &Refs, target: &Dragged) -> Option<String> {
     let name = &target.name;
     match target.kind {
@@ -1582,6 +1602,20 @@ mod tests {
             })
             .collect();
         refs
+    }
+
+    #[test]
+    fn a_remote_branch_can_be_deleted_from_its_menu_after_asking() {
+        let refs = refs_on(&[("origin", "git@github.com:octo/cat.git")]);
+        let lines = ref_menu(&refs, &target(RefKind::Remote, "origin/feat/x"));
+        let delete = lines.last().unwrap();
+        assert!(matches!(
+            delete.command(),
+            Some(Command::DeleteRemote { remote, name, .. })
+                if remote == "origin" && name == "feat/x"
+        ));
+        let ask = delete.command().unwrap().confirmation().unwrap();
+        assert!(ask.message.contains("on origin"));
     }
 
     #[test]

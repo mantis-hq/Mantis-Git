@@ -353,6 +353,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   that can't be used stays and says why. Checking out the recorded commit in a submodule
   that is on another one asks first, and gives the `git -C <path> checkout <hash>` that
   goes back. The app never forces anything.
+- Deleting a remote branch: right-clicking one (one at a time, not in a picked set) ends its
+  menu in red "Delete origin/feat/x on origin". It asks first in a popup, which says it
+  removes the branch for everyone who uses the remote and gives the `git push origin
+  <hash>:refs/heads/feat/x` that brings it back, and runs `git push origin --delete`.
 - Push by dropping: a local branch also drops on a remote branch, which tints like a
   local one. The menu holds one line, "Push feat/x to origin/main", only when that
   fast-forwards the remote branch. When the remote branch already has everything, or has
