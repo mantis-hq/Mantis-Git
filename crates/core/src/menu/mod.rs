@@ -1222,6 +1222,18 @@ mod tests {
             panic!("the last line deletes");
         };
         assert_eq!(indexes, [0, 1], "numbers that don't exist are dropped");
+        let delete = both
+            .last()
+            .unwrap()
+            .command()
+            .unwrap()
+            .confirmation()
+            .unwrap();
+        assert_eq!(
+            delete.weight,
+            Weight::DoublePress,
+            "a deleted stash is hard to find"
+        );
         assert!(stash_menu(&refs, &[7]).is_empty());
     }
 
