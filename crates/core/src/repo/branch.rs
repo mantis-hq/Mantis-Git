@@ -279,6 +279,73 @@ pub fn push_to(
     }))
 }
 
+/// Whether git turned a push away because the remote branch has commits the pushed one
+/// lacks, which only a force can get past. `error` is what git said.
+pub fn push_was_rejected(error: &str) -> bool {
+    error.contains("[rejected]")
+        && [
+            "non-fast-forward",
+            "fetch first",
+            "stale info",
+            "tip is behind",
+        ]
+        .iter()
+        .any(|reason| error.contains(reason))
+}
+
+/// Sends a local branch to the branch `name` on `remote`, replacing what is there. The
+/// push only goes through if the remote branch is still where the last fetch saw it, so
+/// someone else's newer commits are never overwritten without the app knowing.
+pub fn force_push_to(
+    repo: &Path,
+    branch: &str,
+    remote: &str,
+    name: &str,
+) -> Result<Option<String>, String> {
+    let before = rev_parse(repo, &format!("refs/remotes/{remote}/{name}")).ok();
+    // No `+` here: it would make the push unconditional and the lease would not be checked.
+    let refspec = format!("refs/heads/{branch}:refs/heads/{name}");
+    let lease = match &before {
+        Some(before) => format!("--force-with-lease=refs/heads/{name}:{before}"),
+        None => format!("--force-with-lease=refs/heads/{name}"),
+    };
+    ops::run(repo, &["push", &lease, remote, &refspec])?;
+    Ok(Some(match before {
+        Some(before) => format!(
+            "Force pushed {branch} to {remote}/{name}. To undo it, run \
+             `git push --force-with-lease {remote} {}:refs/heads/{name}`.",
+            short_oid(&before)
+        ),
+        None => format!("Force pushed {branch} to {remote}/{name}."),
+    }))
+}
+
+/// What a force push does, for the confirmation. It says how to undo it when the remote
+/// branch is known locally.
+pub fn force_push_warning(repo: &Path, branch: &str, remote: &str, name: &str) -> String {
+    let undo = rev_parse(repo, &format!("refs/remotes/{remote}/{name}"))
+        .map(|before| {
+            format!(
+                " To undo it, run `git push --force-with-lease {remote} {}:refs/heads/{name}`.",
+                short_oid(&before)
+            )
+        })
+        .unwrap_or_else(|_| {
+            " The commits it replaces aren't in this repository, so fetch first if you want a \
+             way back."
+                .into()
+        });
+    format!(
+        "Git refused the push because {remote}/{name} has commits {branch} lacks. Forcing it \
+         replaces them for everyone who uses the remote.{undo}"
+    )
+}
+
+/// The remote and branch a plain push of `branch` goes to, which is where it follows.
+pub fn push_target(repo: &Path, branch: &str) -> Result<(String, String), String> {
+    tracked(repo, branch)
+}
+
 /// What deleting a ref loses, so the confirmation can say it. `tip` is where the ref points.
 pub fn delete_warning(kind: RefKind, name: &str, tip: Option<&str>) -> String {
     let undo = tip.map_or(String::new(), |tip| {
@@ -686,6 +753,59 @@ mod tests {
         repo.commit("add e");
         repo.git(&["checkout", "-q", "main"]);
         push_branch(repo.path(), "side").unwrap();
+        assert_eq!(
+            remote.git(&["rev-parse", "side"]),
+            repo.git(&["rev-parse", "side"])
+        );
+    }
+
+    #[test]
+    fn a_rejected_push_can_be_forced_and_says_how_to_undo_it() {
+        let repo = ahead();
+        let remote = Repo::new();
+        repo.git(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
+        remote.git(&["config", "receive.denyCurrentBranch", "ignore"]);
+        set_upstream(repo.path(), "side", "origin", "side").unwrap();
+
+        // Another clone puts a commit on the remote's `side` that this one lacks.
+        let other = Repo::new();
+        other.git(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
+        other.git(&["fetch", "-q", "origin", "side"]);
+        other.git(&["checkout", "-q", "-b", "side", "FETCH_HEAD"]);
+        other.write("d", "4\n");
+        other.commit("add d");
+        other.git(&["push", "-q", "origin", "side"]);
+
+        // This clone commits on `side` too, so the two have diverged.
+        repo.git(&["checkout", "-q", "side"]);
+        repo.write("e", "5\n");
+        repo.commit("add e");
+        repo.git(&["checkout", "-q", "main"]);
+
+        let error = push_branch(repo.path(), "side").unwrap_err();
+        assert!(push_was_rejected(&error), "{error}");
+        assert!(!push_was_rejected("fatal: could not read from remote"));
+
+        let warning = force_push_warning(repo.path(), "side", "origin", "side");
+        assert!(
+            warning.contains("origin/side has commits side lacks"),
+            "{warning}"
+        );
+
+        // The lease is what the last fetch saw, so a remote that moved since is not forced.
+        repo.git(&["fetch", "-q", "origin"]);
+        other.write("f", "6\n");
+        other.commit("add f");
+        other.git(&["push", "-q", "origin", "side"]);
+        assert!(force_push_to(repo.path(), "side", "origin", "side").is_err());
+        repo.git(&["fetch", "-q", "origin"]);
+        let said = force_push_to(repo.path(), "side", "origin", "side")
+            .unwrap()
+            .unwrap();
+        assert!(
+            said.contains("git push --force-with-lease origin"),
+            "{said}"
+        );
         assert_eq!(
             remote.git(&["rev-parse", "side"]),
             repo.git(&["rev-parse", "side"])
