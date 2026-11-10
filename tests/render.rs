@@ -687,7 +687,12 @@ mod render {
             cx.run_until_parked();
             std::thread::sleep(Duration::from_millis(10));
         }
-        for (index, name) in [(0, "git-config"), (1, "identities"), (3, "repository")] {
+        for (index, name) in [
+            (0, "git-config"),
+            (1, "identities"),
+            (3, "repository"),
+            (4, "about"),
+        ] {
             cx.update_window(handle, |_, _, cx| {
                 view.update(cx, |view, cx| view.show_page(index, cx));
             })

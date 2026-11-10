@@ -49,6 +49,25 @@ fn open_view(cx: &mut TestAppContext) -> (Entity<GraphView>, VisualTestContext) 
 }
 
 #[gpui_kit::test]
+fn an_old_git_is_said_in_a_toast_that_never_covers_another_message(cx: &mut TestAppContext) {
+    use super::notice::Notice;
+    use gitclient_core::settings::config::Version;
+    let (view, mut cx) = open_view(cx);
+    view.update(&mut cx, |view, cx| {
+        view.say_if_git_is_old(&Ok(Version(2, 56)), cx);
+        assert_eq!(view.notice, None, "a recent git says nothing");
+
+        view.say_if_git_is_old(&Ok(Version(2, 39)), cx);
+        assert!(matches!(&view.notice, Some(Notice::Info(text)) if text.contains("2.39")));
+
+        let copied = Notice::Info("Copied 1a2b3c4".into());
+        view.notice = Some(copied.clone());
+        view.say_if_git_is_old(&Ok(Version(2, 39)), cx);
+        assert_eq!(view.notice, Some(copied));
+    });
+}
+
+#[gpui_kit::test]
 fn the_way_files_are_listed_is_saved_for_every_repository(cx: &mut TestAppContext) {
     use gitclient_core::settings::state::AppState;
     use gitclient_core::tree::FileView;
