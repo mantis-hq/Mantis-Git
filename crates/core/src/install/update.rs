@@ -1,6 +1,6 @@
 //! Updating a portable copy from the project's releases.
 //!
-//! The steps: ask the host ([`HOST`], Gitea for now) for the newest release on the chosen
+//! The steps: ask the host ([`HOST`], GitHub) for the newest release on the chosen
 //! [`Track`], and if it is newer, download the archive built for this system, check it
 //! against the release's `SHA256SUMS.txt`, take the program out of it, and swap it in for
 //! the running one. The new version starts the next time the app does. Nothing is installed

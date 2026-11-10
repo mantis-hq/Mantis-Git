@@ -3,10 +3,10 @@
 //! The rest of the updater reads one JSON shape that Gitea and GitHub share (`tag_name`,
 //! `draft`, `body`, and `assets` with a `name` and `browser_download_url`).
 //!
-//! To move releases to GitHub, change [`HOST`] to `Host::github("pretext8335/gitclient")`.
+//! To update from a Gitea server instead, change [`HOST`] to `Host::gitea(site, "owner/name")`.
 
 /// The forge this copy updates from.
-pub const HOST: Host = Host::gitea("https://git.example.com", "example/gitclient");
+pub const HOST: Host = Host::github("pretext8335/gitclient");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {

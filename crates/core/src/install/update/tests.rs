@@ -1,4 +1,7 @@
 use super::*;
+
+/// The tests run against a Gitea-shaped host, whose URLs are easy to tell apart.
+const HOST: Host = Host::gitea("https://git.example.com", "example/gitclient");
 use std::collections::HashMap;
 use std::io::Cursor;
 

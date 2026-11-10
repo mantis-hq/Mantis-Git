@@ -1,8 +1,8 @@
 # gitclient UI style
 
 Every window, panel, and component in gitclient follows this document. The visual
-reference is the design canvas: [link removed]
-(private to its owner). If the canvas and this file disagree, this file wins until it
+reference is the design canvas, which is kept outside the repository
+and private to its owner. If the canvas and this file disagree, this file wins until it
 is updated.
 
 The look is dark, modern, and minimal: Catppuccin Mocha, one typeface, and as few
@@ -243,8 +243,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     version (`v1.2.3`). The nightly is the one pre-release every push to `main` replaces; all
     nightlies share a version, so one is told from the next by the commit it was built from
     (`GITCLIENT_COMMIT`, set at build time), and is named "nightly 1a2b3c4". Choosing a
-    track looks again at once. Releases are read from one host, Gitea for now, set in one place
-    (`HOST` in `gitclient_core::install::update`), and moving to GitHub is a one-line change.
+    track looks again at once. Releases are read from one host, GitHub, set in one place
+    (`HOST` in `gitclient_core::install::update`), and moving to another is a one-line change.
   - **Repository** holds what belongs to the open repository alone, apart from its git
     config, and is only in the side panel while a repository is open. The header says which
     one. Under "Hosting", a "Forge" row says which forge the remote is on ("gitclient can tell
