@@ -57,7 +57,7 @@ impl Results {
 }
 
 const FIELD: char = '\u{1f}';
-const FORMAT: &str = "--format=%H%x1f%an%x1f%at%x1f%s";
+const FORMAT: &str = "--format=%H%x1f%an%x1f%ae%x1f%at%x1f%s";
 
 /// Lists the commits matching `query`, newest first. An empty query matches nothing.
 pub fn search(repo: &Path, query: &str, mode: Mode, cancel: &Cancel) -> Result<Results, String> {
@@ -116,15 +116,17 @@ fn by_hash(repo: &Path, query: &str, cancel: &Cancel) -> Option<Commit> {
 }
 
 fn parse(line: &str) -> Option<Commit> {
-    let mut fields = line.splitn(4, FIELD);
+    let mut fields = line.splitn(5, FIELD);
     let oid = fields.next()?;
     let author = fields.next()?;
+    let email = fields.next()?;
     let time = fields.next()?.parse().ok()?;
     let subject = fields.next()?;
     Some(Commit {
         oid: oid.into(),
         parents: Box::default(),
         author: author.into(),
+        email: email.into(),
         time,
         subject: subject.into(),
     })

@@ -7,6 +7,7 @@
 //! missing or broken file is the same as a fresh install.
 
 use crate::cache::{DEFAULT_DISK_MB, DiskSettings};
+use crate::history::avatar::Style as AvatarStyle;
 use crate::history::columns::ColumnOrder;
 use crate::install::update::Track;
 use crate::text::count;
@@ -36,6 +37,10 @@ pub struct AppState {
     pub files_view: FileView,
     /// The order of the commit graph's columns, left to right.
     pub graph_columns: ColumnOrder,
+    /// What the graph draws on commit dots to say who wrote them.
+    pub avatars: AvatarStyle,
+    /// A picture the user chose for their own commits, which beats a Gravatar.
+    pub own_avatar: Option<PathBuf>,
     /// How the dock along the bottom of the window was left.
     pub dock: DockLayout,
     /// Whether the welcome panel has been shown. It shows once, and holds the choice of
@@ -85,6 +90,8 @@ impl Default for AppState {
             commit_limit: DEFAULT_COMMIT_LIMIT,
             files_view: FileView::List,
             graph_columns: ColumnOrder::default(),
+            avatars: AvatarStyle::default(),
+            own_avatar: None,
             dock: DockLayout::default(),
             welcome_seen: false,
             check_updates: true,
@@ -152,6 +159,10 @@ impl AppState {
                 }
                 "files_view" => state.files_view = FileView::from_key(value),
                 "graph_columns" => state.graph_columns = ColumnOrder::parse(value),
+                "avatars" => state.avatars = AvatarStyle::from_key(value),
+                "own_avatar" if !value.trim().is_empty() => {
+                    state.own_avatar = Some(PathBuf::from(value.trim()));
+                }
                 "welcome_seen" => state.welcome_seen = value.trim() == "true",
                 "check_updates" => state.check_updates = value.trim() != "false",
                 "update_track" => state.update_track = Track::from_key(value),
@@ -179,6 +190,12 @@ impl AppState {
         text.push_str(&format!("commit_limit={}\n", self.commit_limit));
         text.push_str(&format!("files_view={}\n", self.files_view.key()));
         text.push_str(&format!("graph_columns={}\n", self.graph_columns.render()));
+        text.push_str(&format!("avatars={}\n", self.avatars.key()));
+        if let Some(file) = self.own_avatar.as_deref().and_then(Path::to_str)
+            && !file.contains('\n')
+        {
+            text.push_str(&format!("own_avatar={file}\n"));
+        }
         text.push_str(&format!("welcome_seen={}\n", self.welcome_seen));
         text.push_str(&format!("check_updates={}\n", self.check_updates));
         text.push_str(&format!("update_track={}\n", self.update_track.key()));
@@ -396,6 +413,32 @@ mod tests {
     }
 
     #[test]
+    fn avatars_are_initials_unless_the_file_says_otherwise() {
+        assert_eq!(AppState::default().avatars, AvatarStyle::Initials);
+        assert_eq!(
+            AppState::parse("avatars=gravatar\n").avatars,
+            AvatarStyle::Gravatar
+        );
+        assert_eq!(AppState::parse("avatars=off\n").avatars, AvatarStyle::Off);
+        assert_eq!(
+            AppState::parse("avatars=what\n").avatars,
+            AvatarStyle::Initials
+        );
+        assert_eq!(AppState::default().own_avatar, None);
+    }
+
+    #[test]
+    fn the_chosen_avatar_survives_a_round_trip() {
+        let state = AppState {
+            avatars: AvatarStyle::Gravatar,
+            own_avatar: Some(PathBuf::from("/home/ada/me.png")),
+            ..AppState::default()
+        };
+        assert_eq!(AppState::parse(&state.render()), state);
+        assert_eq!(AppState::parse("own_avatar=\n").own_avatar, None);
+    }
+
+    #[test]
     fn the_commit_limit_is_500_unless_the_file_says_otherwise() {
         assert_eq!(AppState::default().commit_limit, 500);
         assert_eq!(AppState::parse("commit_limit=1000\n").commit_limit, 1000);
@@ -439,6 +482,8 @@ mod tests {
             commit_limit: 1000,
             files_view: FileView::Tree,
             graph_columns: ColumnOrder::parse("date,subject"),
+            avatars: AvatarStyle::Gravatar,
+            own_avatar: Some("/home/ada/me.png".into()),
             dock: DockLayout {
                 open: true,
                 terminals: 2,
