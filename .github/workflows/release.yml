@@ -72,6 +72,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: dist
@@ -84,5 +85,8 @@ jobs:
           TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
           sha256sum gitclient-* > SHA256SUMS.txt
-          gh release upload "$TAG" gitclient-* SHA256SUMS.txt --clobber
+          # The same licenses are inside the program (Settings, About), and are here too
+          # for anyone who reads the release page first.
+          cp "$GITHUB_WORKSPACE/LICENSE" "$GITHUB_WORKSPACE/THIRD-PARTY-LICENSES.txt" .
+          gh release upload "$TAG" gitclient-* SHA256SUMS.txt LICENSE THIRD-PARTY-LICENSES.txt --clobber
           gh release edit "$TAG" --draft=false --latest

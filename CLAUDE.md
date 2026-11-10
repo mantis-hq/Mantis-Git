@@ -38,6 +38,7 @@ Where things go in `crates/core/src`:
 - `settings/`: git config, identities, SSH suggestions, and what the app remembers.
 - `menu/`: what each menu offers, in `command.rs` what its lines run, and in `form.rs`
   what the popups that ask for a name say and do.
+- `about.rs`: which build this is and the licenses inside it, read from `THIRD-PARTY-LICENSES.txt`.
 - `cache/`, `patch.rs`, `tree.rs`, `log.rs`, `terminal.rs`, `ops.rs` and `text.rs` stand
   alone.
 

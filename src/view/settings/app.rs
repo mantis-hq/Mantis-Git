@@ -123,7 +123,7 @@ impl Settings {
     }
 
     /// A title over a muted sentence, the left side of a row in a card.
-    fn row_words(&self, title: &str, note: &str, cx: &App) -> Div {
+    pub(super) fn row_words(&self, title: &str, note: &str, cx: &App) -> Div {
         div()
             .v_flex()
             .flex_1()

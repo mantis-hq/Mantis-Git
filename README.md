@@ -156,3 +156,10 @@ it, including commercially, as long as anything you distribute stays under the s
 license with its source.
 
 Maple Mono is bundled under the SIL Open Font License; see `src/fonts/OFL.txt`.
+
+The licenses of everything compiled into gitclient are in the program itself, under
+Settings → About, and in [THIRD-PARTY-LICENSES.txt](THIRD-PARTY-LICENSES.txt). That file is
+written from `Cargo.lock`; after a dependency changes, run
+`cargo install --locked cargo-about --features cli` once, then
+`cargo about generate --locked about.hbs -o THIRD-PARTY-LICENSES.txt`. CI fails while it is
+out of date, and when a dependency has a license `about.toml` doesn't accept.

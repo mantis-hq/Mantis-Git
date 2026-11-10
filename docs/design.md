@@ -270,6 +270,19 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     window says nothing about the commit graph unless it is the reason for a wait (see
     "Commit graph card"). Both sentences for a missing or behind graph add that in a large
     repository it makes branch counts, search and loading history slow.
+  - **About** is the last page, always in the side panel. A "Version" card says which build
+    this is ("gitclient 0.1.0", with the commit in brackets for a nightly), what gitclient is
+    licensed under and that it contains so many projects by others, with a quiet "Open the
+    source on GitHub" button. A "Licenses" card lists every license text in the program, one
+    row each: an arrow, the license's name, how many projects are under it, and the projects
+    in Overlay 2 on a line under it. A click opens that text under its row, on Base in a card
+    of its own, and opens no more than one at a time. The first is gitclient's own, then Maple
+    Mono's, then the crates'. The list is about 200 rows and doesn't grow, so it isn't
+    drawn as a virtual list. The texts are inside the program, so they can't be separated from
+    a copy that is passed on: `cargo about` writes them to `THIRD-PARTY-LICENSES.txt` from
+    `Cargo.lock` (`about.toml` says which licenses are accepted, `about.hbs` the layout), CI
+    fails when that file is out of date, and the release attaches it and `LICENSE` too. What
+    the page says and how the file is read lives in `gitclient_core::about`.
 - Dock: a 36 px Mantle bar along the bottom of the graph column, under the graph and
   between the sidebar and the inspector, which keep their full height, with a 1 px
   Surface 0 top border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
