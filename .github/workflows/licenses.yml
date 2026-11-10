@@ -1,3 +1,9 @@
+# THIRD-PARTY-LICENSES.txt is compiled into the program, so it has to match Cargo.lock.
+# A pull request only checks that every dependency's license is accepted (about.toml).
+# After a merge to main, this regenerates the file and, if it changed, pushes it to the
+# branch chore/licenses and opens a pull request for it (main is protected, so it can't
+# be pushed to). Releases don't wait for that pull request: the Release workflow makes
+# its own copy. LICENSES_TOKEN is a token that may push branches and open pull requests.
 name: Licenses
 
 on:
@@ -6,13 +12,19 @@ on:
       - "Cargo.lock"
       - "about.toml"
       - "about.hbs"
-      - "THIRD-PARTY-LICENSES.txt"
+      - ".github/workflows/licenses.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "about.toml"
+      - "about.hbs"
       - ".github/workflows/licenses.yml"
   workflow_dispatch:
 
 concurrency:
   group: licenses-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   licenses:
@@ -22,6 +34,8 @@ jobs:
     steps:
       - run: apt-get update && apt-get install -y --no-install-recommends nodejs
       - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.LICENSES_TOKEN || github.token }}
       - uses: actions/cache@v4
         with:
           path: |
@@ -30,5 +44,21 @@ jobs:
           key: licenses-${{ hashFiles('Cargo.lock') }}
           restore-keys: licenses-
       - run: command -v cargo-about >/dev/null || cargo install --locked cargo-about --features cli
-      - run: cargo about generate --locked about.hbs -o "$RUNNER_TEMP/licenses.txt"
-      - run: diff -u THIRD-PARTY-LICENSES.txt "$RUNNER_TEMP/licenses.txt"
+      - run: cargo about generate --locked about.hbs -o THIRD-PARTY-LICENSES.txt
+      - name: Open a pull request for the new file
+        if: github.event_name == 'push'
+        env:
+          TOKEN: ${{ secrets.LICENSES_TOKEN }}
+          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+        run: |
+          git diff --quiet THIRD-PARTY-LICENSES.txt && exit 0
+          git config user.name "gitclient licenses"
+          git config user.email "licenses@users.noreply.invalid"
+          git switch -c chore/licenses
+          git add THIRD-PARTY-LICENSES.txt
+          git commit -m "chore: update third-party licenses"
+          git push --force origin chore/licenses
+          # An open pull request from this branch answers 409, which is fine.
+          curl -sS -X POST "$API/pulls" \
+            -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+            -d '{"head":"chore/licenses","base":"main","title":"chore: update third-party licenses"}'

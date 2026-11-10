@@ -85,9 +85,9 @@ layout rules and the commands. PRs are squash-merged, so give yours a
 [Conventional Commit](https://www.conventionalcommits.org) title such as `fix: ...` or
 `feat: ...`.
 
-`THIRD-PARTY-LICENSES.txt` is written from `Cargo.lock`, and CI fails while it is out of
-date. After a dependency changes, run `cargo install --locked cargo-about --features cli`
-once, then `cargo about generate --locked about.hbs -o THIRD-PARTY-LICENSES.txt`.
+`THIRD-PARTY-LICENSES.txt` is generated from `Cargo.lock`. After a change to dependencies
+lands on `main`, CI opens a pull request that updates it, so there is nothing to run by
+hand.
 
 ## License
 

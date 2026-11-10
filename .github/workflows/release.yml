@@ -23,13 +23,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # THIRD-PARTY-LICENSES.txt is compiled into the program. It is made here from Cargo.lock
+  # so no build can ship a stale one, and the jobs below use this copy. A release tag on a
+  # commit whose committed copy differs fails, until the licenses pull request is merged.
+  licenses:
+    runs-on: docker
+    container:
+      image: rust:1-bookworm
+    steps:
+      - run: apt-get update && apt-get install -y --no-install-recommends nodejs
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/bin/cargo-about
+          key: licenses-${{ hashFiles('Cargo.lock') }}
+          restore-keys: licenses-
+      - run: command -v cargo-about >/dev/null || cargo install --locked cargo-about --features cli
+      - run: cargo about generate --locked about.hbs -o THIRD-PARTY-LICENSES.txt
+      - name: A release must match the committed file
+        if: startsWith(github.ref, 'refs/tags/')
+        run: git diff --exit-code THIRD-PARTY-LICENSES.txt
+      - uses: actions/upload-artifact@v3
+        with:
+          name: licenses
+          path: THIRD-PARTY-LICENSES.txt
+
   test:
+    needs: licenses
     runs-on: docker
     container:
       image: rust:1-trixie
     steps:
       - run: apt-get update && apt-get install -y --no-install-recommends nodejs
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v3
+        with:
+          name: licenses
+          path: .
       - run: sh .github/ci-setup.sh
       - uses: actions/cache@v4
         with:
@@ -42,13 +74,17 @@ jobs:
       - run: cargo test --locked --workspace
 
   linux:
-    needs: test
+    needs: [licenses, test]
     runs-on: docker
     container:
       image: rust:1-bookworm
     steps:
       - run: apt-get update && apt-get install -y --no-install-recommends nodejs
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v3
+        with:
+          name: licenses
+          path: .
       - run: sh .github/ci-setup.sh
       - uses: actions/cache@v4
         with:
@@ -74,13 +110,17 @@ jobs:
           path: dist/*
 
   windows:
-    needs: test
+    needs: [licenses, test]
     runs-on: windows
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v3
+        with:
+          name: licenses
+          path: .
       - run: cargo build --release --locked
       - name: Package
         run: |
@@ -104,6 +144,10 @@ jobs:
     steps:
       - run: apt-get update && apt-get install -y --no-install-recommends nodejs jq
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v3
+        with:
+          name: licenses
+          path: .
       - uses: actions/download-artifact@v3
         with:
           name: linux
