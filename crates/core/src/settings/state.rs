@@ -7,6 +7,7 @@
 //! missing or broken file is the same as a fresh install.
 
 use crate::cache::{DEFAULT_DISK_MB, DiskSettings};
+use crate::history::columns::ColumnOrder;
 use crate::install::update::Track;
 use crate::text::count;
 use crate::tree::FileView;
@@ -33,6 +34,8 @@ pub struct AppState {
     pub commit_limit: u32,
     /// How the commit screen lists changed files, for every repository.
     pub files_view: FileView,
+    /// The order of the commit graph's columns, left to right.
+    pub graph_columns: ColumnOrder,
     /// How the dock along the bottom of the window was left.
     pub dock: DockLayout,
     /// Whether the welcome panel has been shown. It shows once, and holds the choice of
@@ -81,6 +84,7 @@ impl Default for AppState {
             cache_mb: DEFAULT_DISK_MB,
             commit_limit: DEFAULT_COMMIT_LIMIT,
             files_view: FileView::List,
+            graph_columns: ColumnOrder::default(),
             dock: DockLayout::default(),
             welcome_seen: false,
             check_updates: true,
@@ -147,6 +151,7 @@ impl AppState {
                     };
                 }
                 "files_view" => state.files_view = FileView::from_key(value),
+                "graph_columns" => state.graph_columns = ColumnOrder::parse(value),
                 "welcome_seen" => state.welcome_seen = value.trim() == "true",
                 "check_updates" => state.check_updates = value.trim() != "false",
                 "update_track" => state.update_track = Track::from_key(value),
@@ -173,6 +178,7 @@ impl AppState {
         text.push_str(&format!("cache_mb={}\n", self.cache_mb));
         text.push_str(&format!("commit_limit={}\n", self.commit_limit));
         text.push_str(&format!("files_view={}\n", self.files_view.key()));
+        text.push_str(&format!("graph_columns={}\n", self.graph_columns.render()));
         text.push_str(&format!("welcome_seen={}\n", self.welcome_seen));
         text.push_str(&format!("check_updates={}\n", self.check_updates));
         text.push_str(&format!("update_track={}\n", self.update_track.key()));
@@ -432,6 +438,7 @@ mod tests {
             cache_mb: 1024,
             commit_limit: 1000,
             files_view: FileView::Tree,
+            graph_columns: ColumnOrder::parse("date,subject"),
             dock: DockLayout {
                 open: true,
                 terminals: 2,

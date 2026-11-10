@@ -5,6 +5,7 @@
 //! Going through the CLI keeps this working with everything the user's git understands
 //! (reftables, SHA-256, partial clones, the commit-graph cache) without a libgit2 build.
 
+pub mod columns;
 pub mod lanes;
 pub mod picks;
 pub mod refs;

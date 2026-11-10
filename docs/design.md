@@ -247,8 +247,18 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   the open tabs (see "App") and come back on launch, the terminals as fresh shells in the
   front repository's folder. The keyboard starts with the repository, not a terminal.
 - Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide. Rows have no
-  column headings or hash: the refs column, the graph, the subject, then author and a short time
+  hash: by default the refs column, the graph, the subject, then author and a short time
   ("12m", "3h", "Tue", "Oct 30"). The full hash belongs to the inspector.
+- Column headings: a 28 px row on Mantle with a Surface 0 bottom border sits over the commits,
+  with one heading per column ("Refs", "Graph", "Subject", "Author", "Date") in the section
+  label type, Overlay 2, and the same width as its column. A heading drags onto another to
+  take its place, the columns between shifting over by one, and the heading under the
+  pointer tints with 14% Blue, as tabs do. The order is kept for every repository as
+  `graph_columns` in the `state` file, a comma separated list of `refs`, `graph`, `subject`,
+  `author` and `date`. A list that is damaged, repeats a column or leaves one out is mended
+  when read, so every column always shows once (`ColumnOrder` in
+  `gitclient_core::history::columns`). The headings stay over the graph, not over search
+  results, which are a list of their own.
 - Resizing: every panel edge drags, so a panel can be made smaller or bigger. These are
   the sidebar, inspector, dock and its log list, and the settings side panel. The pointer shows a resize cursor
   over a 4 px strip on the edge, which tints 50% Blue. A panel stops at a minimum, and at
