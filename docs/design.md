@@ -529,10 +529,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   revert, set upstream for each local branch and "Reset main to here", a submenu of "Keep
   changes" and, in red, "Discard changes"; and last, in red, the deletion of each ref. A
   branch's own menu follows the same order.
-  A line that ends in `›` opens a submenu in the card's place, under its own heading and a
-  "Back" line, and the keyboard starts on its first choice. `Esc` goes back to the line it
-  came from, and a second `Esc` or a click outside closes the menu. `Enter` on a submenu
-  opens it, and the confirmations of what it holds are the same as anywhere else.
+  A line that ends in `›` has a submenu, a card of the same kind that pops out against its
+  right edge, level with the line (240 px wide at least). The pointer opens it by resting on
+  the line and another line takes it back in; a click or `Right` opens it with the keys in
+  it, on its first choice, where `Up`/`Down` move and `Enter` chooses. `Left` takes it back
+  in, and so does `Esc` before a second `Esc`, or a click outside, closes the menu. The
+  confirmations of what a submenu holds are the same as anywhere else.
 - **Popups:** a 420 px card centred over the window, on Mantle with a 1 px Blue outline
   and 8 px radius. It holds a sentence, then any inputs, then a line naming the keys
   ("Press Enter to create feat/x, or Esc to cancel.", in Overlay 2), and "Cancel" as a

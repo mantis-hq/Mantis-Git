@@ -30,8 +30,18 @@ pub(super) struct Menu {
     lines: Vec<Line>,
     /// The line the keyboard is on.
     highlighted: Option<usize>,
-    /// The menus this one was opened from, each with the line that was on.
-    parents: Vec<(Vec<Line>, Option<usize>)>,
+    /// The submenu that is out beside its line, if one is.
+    sub: Option<Sub>,
+}
+
+/// A menu that pops out to the right of the line that opens it.
+struct Sub {
+    /// The line of the main menu that opened it.
+    at: usize,
+    lines: Vec<Line>,
+    highlighted: Option<usize>,
+    /// Whether the keyboard is in it. One the pointer opened leaves the keys on the main menu.
+    keys: bool,
 }
 
 impl Menu {
@@ -40,44 +50,56 @@ impl Menu {
             position,
             lines,
             highlighted: None,
-            parents: Vec::new(),
+            sub: None,
         }
     }
 
-    /// Shows a submenu in this one's place, under its heading and a way back.
-    fn enter(&mut self, heading: String, lines: Vec<Line>) {
-        let mut shown = vec![Line::Heading(heading), Line::back()];
-        shown.extend(lines);
-        let previous = std::mem::replace(&mut self.lines, shown);
-        self.parents.push((previous, self.highlighted));
-        self.highlighted = None;
-        // The keyboard starts on the first real choice, not on the way back.
-        self.step(1);
-        self.step(1);
+    /// Pops the submenu of line `at` out, if that line has one. `keys` puts the keyboard in it.
+    fn open_sub(&mut self, at: usize, keys: bool) {
+        if self.sub.as_ref().is_some_and(|sub| sub.at == at) {
+            if let Some(sub) = &mut self.sub {
+                sub.keys |= keys;
+            }
+        } else {
+            self.sub = self
+                .lines
+                .get(at)
+                .and_then(Line::submenu_lines)
+                .map(|lines| Sub {
+                    at,
+                    lines: lines.to_vec(),
+                    highlighted: None,
+                    keys,
+                });
+        }
+        if let Some(sub) = self.sub.as_mut().filter(|sub| sub.keys) {
+            self.highlighted = Some(sub.at);
+            if sub.highlighted.is_none() {
+                sub.highlighted = first_choice(&sub.lines);
+            }
+        }
     }
 
-    /// Goes back to the menu this one was opened from. False when it is the first.
-    fn leave(&mut self) -> bool {
-        let Some((lines, highlighted)) = self.parents.pop() else {
-            return false;
-        };
-        self.lines = lines;
-        self.highlighted = highlighted;
-        true
+    /// Takes the submenu back in. False when none was out.
+    fn close_sub(&mut self) -> bool {
+        self.sub.take().is_some()
     }
 
     /// Moves the keyboard highlight to the next or previous line with a command, wrapping.
     fn step(&mut self, delta: isize) {
-        let len = self.lines.len() as isize;
-        let mut at = self
-            .highlighted
-            .map_or(if delta > 0 { -1 } else { len }, |index| index as isize);
-        for _ in 0..len {
-            at = (at + delta).rem_euclid(len);
-            if self.lines[at as usize].command().is_some() {
-                self.highlighted = Some(at as usize);
-                return;
-            }
+        if let Some(sub) = self.sub.as_mut().filter(|sub| sub.keys) {
+            step_in(&sub.lines, &mut sub.highlighted, delta);
+        } else {
+            self.sub = None;
+            step_in(&self.lines, &mut self.highlighted, delta);
+        }
+    }
+
+    /// The line a key press would choose.
+    fn current(&self) -> Option<&Line> {
+        match self.sub.as_ref().filter(|sub| sub.keys) {
+            Some(sub) => sub.lines.get(sub.highlighted?),
+            None => self.lines.get(self.highlighted?),
         }
     }
 
@@ -88,9 +110,32 @@ impl Menu {
 
     #[cfg(test)]
     pub(super) fn highlighted_label(&self) -> Option<String> {
-        match self.lines.get(self.highlighted?)? {
+        match self.current()? {
             Line::Item { label, .. } => Some(label.clone()),
             _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_submenu_out(&self) -> bool {
+        self.sub.is_some()
+    }
+}
+
+/// The first line that does something.
+fn first_choice(lines: &[Line]) -> Option<usize> {
+    lines.iter().position(|line| line.command().is_some())
+}
+
+/// Moves `highlighted` to the next or previous line that does something, wrapping.
+fn step_in(lines: &[Line], highlighted: &mut Option<usize>, delta: isize) {
+    let len = lines.len() as isize;
+    let mut at = highlighted.map_or(if delta > 0 { -1 } else { len }, |index| index as isize);
+    for _ in 0..len {
+        at = (at + delta).rem_euclid(len);
+        if lines[at as usize].command().is_some() {
+            *highlighted = Some(at as usize);
+            return;
         }
     }
 }
@@ -185,13 +230,61 @@ pub(super) fn wire_ref(
 }
 
 impl GraphView {
-    /// Escape in a menu: back out of a submenu, else close it.
+    /// Escape in a menu: take a submenu back in, else close the menu.
     pub(super) fn back_menu(&mut self, cx: &mut Context<Self>) {
-        if self.menu.as_mut().is_some_and(Menu::leave) {
+        if self.menu.as_mut().is_some_and(Menu::close_sub) {
             cx.notify();
         } else {
             self.close_menu(cx);
         }
+    }
+
+    /// Right: pops out the submenu of the line the keyboard is on. Returns whether it took
+    /// the key.
+    pub(super) fn open_menu_line(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(menu) = &mut self.menu else {
+            return false;
+        };
+        if let Some(at) = menu
+            .highlighted
+            .filter(|&at| menu.lines[at].opens_submenu())
+        {
+            menu.open_sub(at, true);
+            cx.notify();
+        }
+        true
+    }
+
+    /// A click on a line that has a submenu pops it out, with the keys in it.
+    fn open_menu_at(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(menu) = &mut self.menu {
+            menu.open_sub(index, true);
+            cx.notify();
+        }
+    }
+
+    /// Left: takes a submenu back in without closing the menu. Returns whether it took the key.
+    pub(super) fn close_menu_sub(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(menu) = &mut self.menu else {
+            return false;
+        };
+        if menu.close_sub() {
+            cx.notify();
+        }
+        true
+    }
+
+    /// The pointer is on line `index`: its submenu pops out, and another line's goes in.
+    fn hover_menu_line(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(menu) = &mut self.menu else {
+            return;
+        };
+        if menu.lines[index].opens_submenu() {
+            menu.open_sub(index, false);
+        } else if !menu.close_sub() {
+            return;
+        }
+        cx.notify();
     }
 
     pub(super) fn close_menu(&mut self, cx: &mut Context<Self>) {
@@ -211,10 +304,20 @@ impl GraphView {
     }
 
     pub(super) fn activate_menu(&mut self, cx: &mut Context<Self>) {
-        let command = self.menu.as_ref().and_then(|menu| {
-            let line = menu.lines.get(menu.highlighted?)?;
-            line.command().cloned()
-        });
+        // Enter on a line with a submenu pops it out instead.
+        if self.menu.as_ref().is_some_and(|menu| {
+            menu.sub.as_ref().is_none_or(|sub| !sub.keys)
+                && menu
+                    .highlighted
+                    .is_some_and(|at| menu.lines[at].opens_submenu())
+        }) {
+            self.open_menu_line(cx);
+            return;
+        }
+        let command = self
+            .menu
+            .as_ref()
+            .and_then(|menu| menu.current()?.command().cloned());
         if let Some(command) = command {
             self.choose(command, cx);
         }
@@ -236,18 +339,6 @@ impl GraphView {
 
     /// Closes the menu and does what the chosen line says, asking first when it must.
     pub(super) fn choose(&mut self, command: Command, cx: &mut Context<Self>) {
-        // Opening or leaving a submenu keeps the menu on screen.
-        match command {
-            Command::Submenu { heading, lines } => {
-                if let Some(menu) = &mut self.menu {
-                    menu.enter(heading, lines);
-                    cx.notify();
-                }
-                return;
-            }
-            Command::Back => return self.back_menu(cx),
-            _ => {}
-        }
         self.menu = None;
         if let Command::SwitchWorktree { path } = &command {
             cx.emit(SwitchWorktree(path.clone()));
@@ -529,8 +620,15 @@ impl GraphView {
         self.show_menu(position, lines, cx);
     }
 
-    pub(super) fn render_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let menu = self.menu.as_ref()?;
+    /// The card of one menu: its lines, and for the main menu the submenu beside its line.
+    fn menu_card(
+        &self,
+        lines: &[Line],
+        highlighted: Option<usize>,
+        sub: Option<&Sub>,
+        main: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let theme = cx.theme();
         let (panel, border, text, muted) = (
             theme.title_bar,
@@ -540,9 +638,11 @@ impl GraphView {
         );
         let (hover, active, danger) = (theme.list_hover, selected_row(theme), theme.danger);
         let peach = tokens(theme.is_dark()).peach;
+        // Rows of the main menu and of a submenu both count from 0.
+        let scope = if main { "menu-item" } else { "menu-sub-item" };
 
-        let mut items = Vec::with_capacity(menu.lines.len());
-        for (index, line) in menu.lines.iter().enumerate() {
+        let mut items = Vec::with_capacity(lines.len());
+        for (index, line) in lines.iter().enumerate() {
             items.push(match line {
                 Line::Separator => div().h(px(1.)).my_1().mx_1().bg(border).into_any_element(),
                 Line::Heading(label) => div()
@@ -560,7 +660,7 @@ impl GraphView {
                     danger: is_danger,
                     glyph,
                 } => {
-                    let highlighted = menu.highlighted == Some(index);
+                    let highlighted = highlighted == Some(index);
                     let color = match (command, is_danger) {
                         (None, _) => muted,
                         (_, true) => danger,
@@ -569,8 +669,10 @@ impl GraphView {
                     // A line that does something is one row, cut short if it must be. One
                     // that only explains is read in full, so it takes as many rows as it needs.
                     let explains = command.is_none();
+                    let opens = line.opens_submenu();
                     let row = div()
-                        .id(("menu-item", index))
+                        .id((scope, index))
+                        .relative()
                         .h_flex()
                         .gap_2()
                         .when(explains, |row| row.min_h(ITEM_HEIGHT).py_1())
@@ -588,14 +690,39 @@ impl GraphView {
                                 .when(!explains, |label| label.truncate())
                                 .child(label.clone()),
                         )
-                        .when(line.opens_submenu(), |row| row.child(div().child("›")));
+                        .when(opens, |row| row.child(div().child("›")));
+                    // The submenu pops out on the right of the line that opens it.
+                    let row = match sub.filter(|sub| sub.at == index) {
+                        Some(open) => {
+                            let inside = open.keys.then_some(open.highlighted).flatten();
+                            row.child(
+                                self.menu_card(&open.lines, inside, None, false, cx)
+                                    .absolute()
+                                    .top(px(-5.))
+                                    .left(relative(1.))
+                                    .min_w(px(240.)),
+                            )
+                        }
+                        None => row,
+                    };
                     match command.clone() {
                         Some(command) => row
                             .cursor_pointer()
                             .when(!highlighted, |row| row.hover(|style| style.bg(hover)))
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.choose(command.clone(), cx)),
-                            )
+                            .when(main, |row| {
+                                row.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                                    if *hovered {
+                                        this.hover_menu_line(index, cx)
+                                    }
+                                }))
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if opens {
+                                    this.open_menu_at(index, cx)
+                                } else {
+                                    this.choose(command.clone(), cx)
+                                }
+                            }))
                             .into_any_element(),
                         None => row.into_any_element(),
                     }
@@ -603,11 +730,7 @@ impl GraphView {
             });
         }
 
-        let close = |this: &mut Self,
-                     _: &MouseDownEvent,
-                     _: &mut Window,
-                     cx: &mut Context<Self>| { this.close_menu(cx) };
-        let panel = div()
+        div()
             .v_flex()
             // As wide as its longest line, so a line names its whole result, up to a limit.
             .min_w(MENU_WIDTH)
@@ -619,7 +742,16 @@ impl GraphView {
             .border_color(border)
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .children(items);
+            .children(items)
+    }
+
+    pub(super) fn render_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let menu = self.menu.as_ref()?;
+        let close = |this: &mut Self,
+                     _: &MouseDownEvent,
+                     _: &mut Window,
+                     cx: &mut Context<Self>| { this.close_menu(cx) };
+        let panel = self.menu_card(&menu.lines, menu.highlighted, menu.sub.as_ref(), true, cx);
 
         Some(
             deferred(
