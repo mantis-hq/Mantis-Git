@@ -18,14 +18,10 @@ use std::path::{Path, PathBuf};
 /// What a menu line does when chosen.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
-    /// Opens a menu of its own in place of this one. Nothing runs.
+    /// Opens a menu of its own beside this one. Nothing runs.
     Submenu {
-        /// What the submenu applies to, shown as its heading.
-        heading: String,
         lines: Vec<Line>,
     },
-    /// Goes back from a submenu to the menu it came from.
-    Back,
     CheckOutRef {
         kind: RefKind,
         name: String,
@@ -294,7 +290,7 @@ impl Command {
             Self::Copy { .. } => "Copying",
             Self::RevealPath { .. } => "Opening",
             Self::OpenUrl { .. } | Self::AskForge { .. } => "Opening",
-            Self::Submenu { .. } | Self::Back => "Opening",
+            Self::Submenu { .. } => "Opening",
             Self::StashStaged { .. } => "Stashing",
             Self::ApplyStashes { .. } => "Applying",
             Self::PopStashes { .. } => "Popping",
@@ -536,7 +532,6 @@ impl Command {
             | Self::RevealPath { .. }
             | Self::AskForge { .. }
             | Self::Submenu { .. }
-            | Self::Back
             | Self::Copy { .. } => Ok(None),
         }
     }

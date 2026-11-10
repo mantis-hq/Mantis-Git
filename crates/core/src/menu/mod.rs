@@ -77,20 +77,17 @@ impl Line {
         }
     }
 
-    /// A line that opens `lines` as a menu of its own, under `heading`.
-    fn submenu(label: impl Into<String>, heading: impl Into<String>, lines: Vec<Line>) -> Self {
-        Self::item(
-            label,
-            Command::Submenu {
-                heading: heading.into(),
-                lines,
-            },
-        )
+    /// A line that opens `lines` as a menu of its own beside this one.
+    fn submenu(label: impl Into<String>, lines: Vec<Line>) -> Self {
+        Self::item(label, Command::Submenu { lines })
     }
 
-    /// The first line of a submenu, which goes back.
-    pub fn back() -> Self {
-        Self::item("Back", Command::Back)
+    /// The lines of a submenu, for a line that opens one.
+    pub fn submenu_lines(&self) -> Option<&[Line]> {
+        match self.command() {
+            Some(Command::Submenu { lines }) => Some(lines),
+            _ => None,
+        }
     }
 
     /// Whether choosing the line opens another menu.
@@ -758,7 +755,7 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
     });
     // Several ways to check out fold into one line; a lone one stays as it is.
     let check_out = if check_out.len() > 1 {
-        vec![Line::submenu("Check out", "Check out", check_out)]
+        vec![Line::submenu("Check out", check_out)]
     } else {
         check_out
     };
@@ -827,10 +824,8 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
             .flat_map(|chip| upstream_lines(refs, chip.label.kind, &chip.label.name)),
     );
     if actions.can_check_out {
-        let heading = format!("Reset {head} to here");
         rework.push(Line::submenu(
-            heading.clone(),
-            heading,
+            format!("Reset {head} to here"),
             vec![
                 Line::item(
                     "Keep changes",

@@ -62,6 +62,8 @@ actions!(
         ToggleSidebar,
         CloseMenu,
         ActivateMenu,
+        MenuLeft,
+        MenuRight,
         ToggleChoice,
         NextField,
         PreviousField,
@@ -99,6 +101,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(find, FindCommits, context),
         KeyBinding::new("escape", CloseMenu, context),
         KeyBinding::new("enter", ActivateMenu, context),
+        KeyBinding::new("left", MenuLeft, letters),
+        KeyBinding::new("right", MenuRight, letters),
         KeyBinding::new("space", ToggleChoice, letters),
         KeyBinding::new("tab", NextField, context),
         KeyBinding::new("shift-tab", PreviousField, context),
@@ -970,6 +974,12 @@ impl Render for GraphView {
             .on_action(cx.listener(|this, _: &SelectFirst, _, cx| this.select(0, cx)))
             .on_action(cx.listener(|this, _: &SelectLast, _, cx| {
                 this.select(this.entries.len().saturating_sub(1), cx)
+            }))
+            .on_action(cx.listener(|this, _: &MenuLeft, _, cx| {
+                this.close_menu_sub(cx);
+            }))
+            .on_action(cx.listener(|this, _: &MenuRight, _, cx| {
+                this.open_menu_line(cx);
             }))
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.reload(cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| this.toggle_sidebar(cx)))
