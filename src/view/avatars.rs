@@ -49,6 +49,8 @@ pub(super) struct State {
     /// The repository the user's email was read for, and the email.
     own_email: Option<(PathBuf, Option<String>)>,
     asked: Arc<Asked>,
+    /// Whether a failure to reach Gravatar has been said this session.
+    failure_shown: bool,
     /// Gravatars that arrived, by `avatar::key`.
     gravatars: HashMap<String, Arc<Image>>,
 }
@@ -117,6 +119,16 @@ impl GraphView {
         }
     }
 
+    /// Says once why Gravatar couldn't be asked. The address isn't asked again until the
+    /// app restarts, so a failing connection isn't hammered.
+    fn gravatar_failed(&mut self, error: String, cx: &mut Context<Self>) {
+        if !self.avatars.failure_shown {
+            self.avatars.failure_shown = true;
+            self.notice = Some(super::notice::Notice::Error(error.into()));
+            cx.notify();
+        }
+    }
+
     fn refresh_avatar_prefs(&mut self) {
         let Some(file) = self.state_file().map(std::path::Path::to_path_buf) else {
             return;
@@ -163,17 +175,29 @@ impl GraphView {
                 Self::spawn_blocking(
                     {
                         let email = email.clone();
-                        move || avatar::fetch(&email)
+                        let caches = self.caches.clone();
+                        move || {
+                            // Asked of Gravatar only when no earlier run kept it.
+                            if let Some(picture) = caches.cached_avatar(&email) {
+                                return Ok(Some(picture.0.clone()));
+                            }
+                            let answer = avatar::fetch(&email)?;
+                            if let Some(bytes) = &answer {
+                                caches.store_avatar(&email, bytes.clone());
+                            }
+                            Ok(answer)
+                        }
                     },
-                    move |this, bytes, cx| {
-                        if let Some(bytes) = bytes
-                            && avatar::sniff(&bytes) == Some(Kind::Png)
-                        {
+                    move |this, answer, cx| match answer {
+                        Ok(Some(bytes)) => {
                             this.avatars
                                 .gravatars
                                 .insert(avatar::key(&email), image_of(Kind::Png, bytes));
                             cx.notify();
                         }
+                        // Final: this address has no Gravatar, so it keeps its initials.
+                        Ok(None) => {}
+                        Err(error) => this.gravatar_failed(error, cx),
                     },
                     cx,
                 );

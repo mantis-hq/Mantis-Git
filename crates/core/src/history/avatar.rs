@@ -6,6 +6,8 @@
 //! but the hash still tells it which authors a repository has. That is why it is off
 //! unless chosen, and why the setting says so.
 
+use crate::cache::Cacheable;
+use crate::cache::codec::{Reader, Writer};
 use crate::ops;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -93,24 +95,58 @@ pub fn is_askable(email: &str) -> bool {
     email.contains('@') && !email.ends_with(".(none)") && !email.contains(char::is_whitespace)
 }
 
-/// Downloads the picture for `email`, or `None` when there is none or Gravatar can't be
-/// reached.
-pub fn fetch(email: &str) -> Option<Vec<u8>> {
+/// Downloads the picture for `email`. `Ok(None)` means Gravatar answered that there is
+/// none; `Err` says why it couldn't be asked or answered oddly.
+pub fn fetch(email: &str) -> Result<Option<Vec<u8>>, String> {
     if !is_askable(email) {
-        return None;
+        return Ok(None);
     }
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(PATIENCE))
         .user_agent("gitclient")
         .build()
         .into();
-    let mut response = agent.get(&url(email)).call().ok()?;
-    response
+    let mut response = match agent.get(&url(email)).call() {
+        Ok(response) => response,
+        Err(ureq::Error::StatusCode(404)) => return Ok(None),
+        Err(ureq::Error::StatusCode(code)) => {
+            return Err(format!("gravatar.com answered with an error ({code})."));
+        }
+        Err(error) => return Err(format!("Couldn't reach gravatar.com: {error}")),
+    };
+    let bytes = response
         .body_mut()
         .with_config()
         .limit(MAX_BYTES)
         .read_to_vec()
-        .ok()
+        .map_err(|error| format!("Couldn't read gravatar.com's answer: {error}"))?;
+    if sniff(&bytes) == Some(Kind::Png) {
+        Ok(Some(bytes))
+    } else {
+        Err("gravatar.com answered with something that isn't a PNG picture.".to_owned())
+    }
+}
+
+/// A Gravatar picture as it is kept in the cache: the PNG as Gravatar sent it. Only a
+/// picture is kept; "none" and failures are remembered for the session alone.
+pub struct Picture(pub Vec<u8>);
+
+impl Cacheable for Picture {
+    const FORMAT: u32 = 1;
+
+    fn weight(&self) -> usize {
+        self.0.len() + 64
+    }
+
+    fn encode(&self, out: &mut Writer) {
+        out.bytes(&self.0);
+    }
+
+    fn decode(input: &mut Reader) -> Option<Self> {
+        let bytes = input.bytes()?;
+        // Whatever was read must still be a picture, so a damaged file is read again.
+        (input.is_empty() && sniff(bytes) == Some(Kind::Png)).then(|| Picture(bytes.to_vec()))
+    }
 }
 
 /// The first letter of the first and of the last word of a name, in capitals ("Ada
@@ -207,7 +243,7 @@ pub fn own_email(repo: &Path) -> Option<String> {
 }
 
 /// The addresses Gravatar has been asked about this session, so each is asked once
-/// however many commits it wrote. Nothing is written to disk.
+/// however many commits it wrote, whatever the answer. Asking again takes a restart.
 #[derive(Default)]
 pub struct Asked {
     seen: Mutex<HashSet<String>>,
@@ -301,6 +337,18 @@ mod tests {
         std::fs::write(&png, [0x89, b'P', b'N', b'G', 1, 2]).unwrap();
         assert_eq!(read_own(&png).unwrap().0, Kind::Png);
         assert!(read_own(&dir.path().join("gone.png")).is_err());
+    }
+
+    /// Reaches the real gravatar.com with the address its own documentation uses, so it
+    /// needs a network and is run by hand: `cargo test -p gitclient-core -- --ignored gravatar`.
+    #[test]
+    #[ignore = "needs the network"]
+    fn gravatar_answers_for_a_known_address_and_not_for_an_unknown_one() {
+        let bytes = fetch("beau@dentedreality.com.au")
+            .unwrap()
+            .expect("a picture");
+        assert_eq!(sniff(&bytes), Some(Kind::Png));
+        assert_eq!(fetch("nobody-has-this@example.invalid"), Ok(None));
     }
 
     #[test]

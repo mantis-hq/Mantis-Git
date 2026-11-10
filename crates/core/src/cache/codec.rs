@@ -36,6 +36,11 @@ impl Writer {
         self.0.extend_from_slice(value.as_bytes());
     }
 
+    pub fn bytes(&mut self, value: &[u8]) {
+        self.len(value.len());
+        self.0.extend_from_slice(value);
+    }
+
     pub fn opt_u32(&mut self, value: Option<u32>) {
         self.bool(value.is_some());
         if let Some(value) = value {
@@ -97,6 +102,11 @@ impl<'a> Reader<'a> {
     pub fn str(&mut self) -> Option<&'a str> {
         let length = self.len()?;
         std::str::from_utf8(self.take(length)?).ok()
+    }
+
+    pub fn bytes(&mut self) -> Option<&'a [u8]> {
+        let length = self.len()?;
+        self.take(length)
     }
 
     pub fn opt_u32(&mut self) -> Option<Option<u32>> {
