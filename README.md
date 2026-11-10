@@ -1,7 +1,7 @@
 # gitclient
 
-A fast desktop Git client that tells you in plain words where your repository stands and
-what each step will do, so you can understand it at a glance and never wait on it.
+A desktop Git client built for performance. Speed is the point: the window stays
+responsive and history opens quickly, whatever the size of the repository.
 
 It's written in Rust on [gpui-kit](https://crates.io/crates/gpui-kit) and talks to your
 installed `git`.
