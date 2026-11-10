@@ -3,9 +3,12 @@
 # the jobs below build the binaries and publish the draft GitHub Release.
 name: Release
 
+# Paused: releases are made on Gitea for now (see .gitea/workflows/release.yml), so this
+# only runs by hand. To bring automatic releases back, swap `workflow_dispatch` for:
+#   push:
+#     branches: [main]
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
