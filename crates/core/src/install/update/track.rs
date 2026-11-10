@@ -41,10 +41,8 @@ impl Track {
     /// The sentence under the choice.
     pub fn sentence(self) -> &'static str {
         match self {
-            Self::Stable => "gitclient updates to full releases only.",
-            Self::Nightly => {
-                "gitclient updates to the nightly build, a pre-release made from every push to main. It may be unfinished."
-            }
+            Self::Stable => "Full releases only.",
+            Self::Nightly => "The nightly build, made from every push to main. May be unfinished.",
         }
     }
 
