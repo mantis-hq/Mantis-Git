@@ -6,6 +6,7 @@
 //! command is never a silent wait.
 
 mod command_log;
+mod selection;
 pub(super) mod terminal;
 
 use super::parts::{self, Edge, fit, grip, on_resize};
@@ -87,6 +88,8 @@ pub struct Dock {
     /// Which command the output list was last drawn for, and how many rows it had.
     output_seen: (Option<u64>, usize),
     log_focus: FocusHandle,
+    /// The text picked in the output of one command, which it belongs to.
+    log_selection: Option<(u64, selection::Selection)>,
     _tasks: [Task<()>; 2],
 }
 
@@ -125,6 +128,7 @@ impl Dock {
             output_scroll: UniformListScrollHandle::new(),
             output_seen: (None, 0),
             log_focus: cx.focus_handle(),
+            log_selection: None,
             _tasks: [redraw, clock],
         }
     }
@@ -392,6 +396,11 @@ impl Render for Dock {
                 .when(terminal.is_none(), |body| {
                     body.track_focus(&self.log_focus).on_key_down(cx.listener(
                         |this, event: &KeyDownEvent, _, cx| {
+                            if selection::is_copy(&event.keystroke, true) {
+                                this.copy_log_selection(cx);
+                                cx.stop_propagation();
+                                return;
+                            }
                             let delta = match event.keystroke.key.as_str() {
                                 "up" | "k" => -1,
                                 "down" | "j" => 1,

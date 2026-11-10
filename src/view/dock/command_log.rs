@@ -3,6 +3,9 @@
 
 use super::*;
 
+/// The output rows' side padding, which is where their text starts.
+const LOG_PADDING: f32 = 12.;
+
 impl Dock {
     /// The command on show: the one picked, else the newest.
     fn shown(&self) -> Option<u64> {
@@ -36,6 +39,61 @@ impl Dock {
         self.commands_scroll
             .scroll_to_item(target, ScrollStrategy::Nearest);
         self.select(ids[target], cx);
+    }
+
+    /// The cell of the output under `position`.
+    fn log_cell(&self, position: Point<Pixels>, window: &Window, cx: &App) -> (usize, usize) {
+        let scroll = self.output_scroll.0.borrow();
+        let base = &scroll.base_handle;
+        let top = base.bounds().top() + base.offset().y;
+        let origin = point(base.bounds().left() + px(LOG_PADDING), top);
+        let width = selection::cell_width(window, cx, TEXT_SMALL).unwrap_or(px(7.));
+        selection::cell(position, origin, width, px(ROW_HEIGHT))
+    }
+
+    fn press_log(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(shown) = self.shown() else {
+            return;
+        };
+        let cell = self.log_cell(position, window, cx);
+        self.log_selection = Some((shown, selection::Selection::start(cell)));
+        window.focus(&self.log_focus, cx);
+        cx.notify();
+    }
+
+    fn drag_log(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let cell = self.log_cell(position, window, cx);
+        if let Some((_, selection)) = self.log_selection.as_mut().filter(|(_, s)| s.dragging()) {
+            selection.extend(cell);
+            cx.notify();
+        }
+    }
+
+    /// Ends the drag. A click that selected nothing clears the old selection.
+    fn release_log(&mut self, cx: &mut Context<Self>) {
+        if let Some((_, selection)) = self.log_selection.as_mut() {
+            selection.finish();
+            if selection.is_empty() {
+                self.log_selection = None;
+            }
+            cx.notify();
+        }
+    }
+
+    pub(super) fn copy_log_selection(&mut self, cx: &mut Context<Self>) {
+        let Some((id, selection)) = self.log_selection else {
+            return;
+        };
+        let text = selection.text(|row| {
+            log::read(|entries| {
+                let entry = entries.iter().find(|entry| entry.id == id)?;
+                let line = entry.lines.get(row)?;
+                Some(parts::expand_tabs(&line.text).to_string())
+            })
+        });
+        if !text.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
     }
 
     pub(super) fn render_log(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -111,12 +169,31 @@ impl Dock {
                     .relative()
                     .flex_1()
                     .min_h_0()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                            this.press_log(event.position, window, cx)
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                        if event.pressed_button == Some(MouseButton::Left) {
+                            this.drag_log(event.position, window, cx);
+                        }
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _: &MouseUpEvent, _, cx| this.release_log(cx)),
+                    )
                     .child(
                         uniform_list(
                             "log-output",
                             rows,
-                            cx.processor(move |_, range: Range<usize>, _, cx| {
-                                output_lines(shown, range, cx)
+                            cx.processor(move |this, range: Range<usize>, _, cx| {
+                                let picked = this
+                                    .log_selection
+                                    .filter(|(id, _)| *id == shown)
+                                    .map(|(_, selection)| selection);
+                                output_lines(shown, range, picked, cx)
                             }),
                         )
                         .track_scroll(&self.output_scroll)
@@ -235,7 +312,13 @@ fn output_header(id: u64, cx: &App) -> Div {
         )
 }
 
-fn output_lines(id: u64, range: Range<usize>, cx: &mut App) -> Vec<Div> {
+fn output_lines(
+    id: u64,
+    range: Range<usize>,
+    picked: Option<selection::Selection>,
+    cx: &mut App,
+) -> Vec<Div> {
+    let tint = selection::tint(cx);
     let theme = cx.theme();
     let (muted, subtext) = (theme.muted_foreground, tokens(theme.is_dark()).subtext0);
     let danger = theme.danger;
@@ -243,7 +326,7 @@ fn output_lines(id: u64, range: Range<usize>, cx: &mut App) -> Vec<Div> {
         div()
             .h_flex()
             .h(px(ROW_HEIGHT))
-            .px_3()
+            .px(px(LOG_PADDING))
             .text_size(TEXT_SMALL)
             .whitespace_nowrap()
     };
@@ -261,9 +344,21 @@ fn output_lines(id: u64, range: Range<usize>, cx: &mut App) -> Vec<Div> {
                         Stream::Err if failed => danger,
                         Stream::Err | Stream::Note => muted,
                     };
-                    row()
-                        .text_color(color)
-                        .child(parts::expand_tabs(&line.text))
+                    let text = parts::expand_tabs(&line.text).to_string();
+                    let columns =
+                        picked.and_then(|picked| picked.columns(index, text.chars().count()));
+                    let row = row().text_color(color);
+                    match columns {
+                        Some(columns) => {
+                            let marked = selection::bytes(&text, columns);
+                            let style = HighlightStyle {
+                                background_color: Some(tint),
+                                ..Default::default()
+                            };
+                            row.child(StyledText::new(text).with_highlights([(marked, style)]))
+                        }
+                        None => row.child(text),
+                    }
                 }
                 None => row()
                     .text_color(muted)
