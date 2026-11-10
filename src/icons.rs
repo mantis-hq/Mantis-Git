@@ -94,6 +94,6 @@ mod tests {
             assert!(bytes.starts_with(b"<svg"), "{}", icon.path());
         }
         assert!(Icons.load("icons/none.svg").unwrap().is_none());
-        assert_eq!(Icons.list("icons/").unwrap().len(), 6);
+        assert_eq!(Icons.list("icons/").unwrap().len(), 7);
     }
 }
