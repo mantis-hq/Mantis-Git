@@ -18,6 +18,7 @@ installed `git`.
   change in the commit form, and it writes the commit line for you.
 - **Pull and merge requests** for GitHub, GitLab and Gitea remotes are listed using git
   alone, with no sign-in and no API token.
+- **WSL2 support on Windows.** Repositories inside WSL2 open like any other.
 - **A clean UI.** Few controls, one typeface, and nothing on screen that the task doesn't
   need.
 - **A fast flow, whatever your workflow.** The interface is made so the next step is
@@ -27,7 +28,7 @@ installed `git`.
 
 Download the archive for your system from the
 [releases](https://github.com/pretext8335/gitclient/releases) page, unpack it and run
-`gitclient`. On Windows it also opens repositories that live in WSL2.
+`gitclient`.
 
 ## Dependencies
 
