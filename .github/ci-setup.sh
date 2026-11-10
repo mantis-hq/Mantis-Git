@@ -1,5 +1,5 @@
 #!/bin/sh
-# The packages a Linux build of gitclient needs on Debian. The Gitea workflow runs this in
+# The packages a Linux build of gitclient needs on Debian. The release workflow runs this in
 # a plain rust:1-bookworm container.
 set -e
 apt-get update
