@@ -901,10 +901,8 @@ impl GraphView {
         };
         let unavailable = tree.unavailable();
         let path = tree.path.clone();
-        let mut detail = tree.detail();
-        if tree.locked {
-            detail.push_str(" · locked");
-        }
+        let detail = tree.detail();
+        let locked = tree.locked;
         let menu_path = tree.path.clone();
         let row = panel_row(("worktree", index), tree.is_current, cx)
             .on_mouse_down(
@@ -942,7 +940,15 @@ impl GraphView {
                         .text_size(TEXT_CHIP)
                         .text_color(muted)
                         .child(unavailable.map_or(detail, str::to_owned)),
-                ),
+                )
+                .children(locked.then(|| {
+                    status_icon(
+                        (("worktree", index).into(), "locked"),
+                        Icon::Lock,
+                        "Locked".to_owned(),
+                        muted,
+                    )
+                })),
         )
     }
 
