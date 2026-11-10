@@ -253,25 +253,25 @@ pub fn ref_menu(refs: &Refs, target: &Dragged) -> Vec<Line> {
             .danger(),
         );
     }
-    if kind == RefKind::Remote {
-        if let Some((remote, branch_name)) = remote::split_branch(&refs.remote_configs, &name) {
-            lines.push(Line::Separator);
-            lines.push(
-                Line::item(
-                    format!("Delete {name} on {}", remote.name),
-                    Command::DeleteRemote {
-                        remote: remote.name.clone(),
-                        name: branch_name.to_owned(),
-                        tip: refs
-                            .remotes
-                            .iter()
-                            .find(|r| r.name == name)
-                            .map(|r| r.tip.to_string()),
-                    },
-                )
-                .danger(),
-            );
-        }
+    if kind == RefKind::Remote
+        && let Some((remote, branch_name)) = remote::split_branch(&refs.remote_configs, &name)
+    {
+        lines.push(Line::Separator);
+        lines.push(
+            Line::item(
+                format!("Delete {name} on {}", remote.name),
+                Command::DeleteRemote {
+                    remote: remote.name.clone(),
+                    name: branch_name.to_owned(),
+                    tip: refs
+                        .remotes
+                        .iter()
+                        .find(|r| r.name == name)
+                        .map(|r| r.tip.to_string()),
+                },
+            )
+            .danger(),
+        );
     }
     lines
 }

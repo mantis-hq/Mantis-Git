@@ -469,7 +469,7 @@ impl GraphView {
                 self.max_columns = self.max_columns.max(width);
                 self.entries.extend(batch);
             }
-            LoadEvent::More(more) => self.more = Some(more),
+            LoadEvent::More(more) => self.more = Some(*more),
             LoadEvent::Failed(message) => {
                 self.pending_refs = None;
                 self.entries.clear();

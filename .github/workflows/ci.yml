@@ -1,13 +1,20 @@
-# What a pull request has to pass before it can be merged. The release workflow runs the tests
-# again before it builds anything, so a change that reaches main has been through both.
-# Gitea runs it from here when it has no .gitea/workflows folder.
 name: CI
 
 on:
   pull_request:
+    paths:
+      - "crates/**"
+      - "src/**"
+      - "tests/**"
+      - "assets/**"
+      - "build.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci.yml"
+      - ".github/ci-setup.sh"
+      - ".github/actions/**"
   workflow_dispatch:
 
-# A newer push to the same pull request stops the run still going for it.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -16,32 +23,20 @@ jobs:
   check:
     runs-on: docker
     container:
-      image: rust:1-bookworm
+      image: rust:1-trixie
     steps:
-      # The Rust image has no Node, which the JavaScript actions below need.
       - run: apt-get update && apt-get install -y --no-install-recommends nodejs
       - uses: actions/checkout@v7
       - run: sh .github/ci-setup.sh
-      # The image carries only the compiler.
       - run: rustup component add rustfmt clippy
-      # Same cache as the release workflow's test job, plus the tools installed below.
       - uses: actions/cache@v4
         with:
           path: |
             /usr/local/cargo/registry
             /usr/local/cargo/git
-            /usr/local/cargo/bin/cargo-about
             target
           key: test-${{ hashFiles('Cargo.lock') }}
           restore-keys: test-
-      # Plain `cargo fmt` skips crates/core.
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --locked --workspace
-      # The licenses inside the program are written from Cargo.lock. This also fails when a
-      # dependency has a license about.toml doesn't accept.
-      - name: Licenses are up to date
-        run: |
-          command -v cargo-about >/dev/null || cargo install --locked cargo-about --features cli
-          cargo about generate --locked about.hbs -o "$RUNNER_TEMP/licenses.txt"
-          diff -u THIRD-PARTY-LICENSES.txt "$RUNNER_TEMP/licenses.txt"

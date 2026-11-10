@@ -1,0 +1,34 @@
+name: Licenses
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.lock"
+      - "about.toml"
+      - "about.hbs"
+      - "THIRD-PARTY-LICENSES.txt"
+      - ".github/workflows/licenses.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: licenses-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  licenses:
+    runs-on: docker
+    container:
+      image: rust:1-bookworm
+    steps:
+      - run: apt-get update && apt-get install -y --no-install-recommends nodejs
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/bin/cargo-about
+          key: licenses-${{ hashFiles('Cargo.lock') }}
+          restore-keys: licenses-
+      - run: command -v cargo-about >/dev/null || cargo install --locked cargo-about --features cli
+      - run: cargo about generate --locked about.hbs -o "$RUNNER_TEMP/licenses.txt"
+      - run: diff -u THIRD-PARTY-LICENSES.txt "$RUNNER_TEMP/licenses.txt"

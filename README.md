@@ -5,12 +5,14 @@ A desktop Git client that stays fast on big repositories.
 Most Git GUIs are fine until you point them at something the size of a real monorepo,
 and then every click is a spinner. gitclient is built around not doing that. It's written
 in Rust on [gpui-kit](https://crates.io/crates/gpui-kit), it talks to your installed `git`,
-and the window never waits on it.
+and git never runs on the thread that draws the window.
 
 The second goal is that you can tell what's going on in a couple of seconds. The header
 says where you are in a sentence ("On feat/commit-graph, 2 commits to push"), your branch
 is the straight line down the graph, and buttons are named for what they'll do ("Push 2
 commits", not "Push").
+
+![gitclient showing a repository's branches, its history as a lane graph, and the working changes](docs/screenshot.png)
 
 ## Why it's fast
 
@@ -18,7 +20,7 @@ commits", not "Push").
   a background task, so scrolling and typing keep going while git thinks.
 - **Lists draw only what's in view.** The graph, a commit's files, the working changes, the
   sidebar and the conflict resolver are all virtualised, so a commit touching 10,000 files
-  costs about the same as one touching three.
+  shows its file list as quickly as one touching three.
 - **History loads in pages.** It reads 500 commits by default (100 to 20,000 if you want),
   and loads the next page when you scroll near the end. After a fetch or a commit it reads
   only the new commits when refs just moved forward.
@@ -64,7 +66,8 @@ different:
 Download the archive for your system from the
 [releases](https://github.com/pretext8335/gitclient/releases) page: `.tar.gz` for Linux and
 `.zip` for Windows. Unpack it anywhere and run `gitclient`. You need `git` on your
-`PATH`.
+`PATH`, and the latest version is recommended: some features, such as the branch counts in
+the sidebar, need a recent one.
 
 The first time it runs, a welcome panel explains how the window works, and offers to add
 gitclient to the application menu (Linux) or the Start menu (Windows). On Linux that writes
@@ -73,11 +76,10 @@ later.
 
 A copy unpacked this way looks for a newer release when it starts, and asks before
 installing one. Settings → About can follow the nightly pre-release (built from every push to
-`main`) instead of full releases. The archive is checked against the release's `SHA256SUMS.txt`
-first. A copy
-installed by a package manager neither adds a launcher nor updates itself; a package recipe
-marks its build with `GITCLIENT_INSTALL_CHANNEL=<name>` (anything but `portable`) at build
-time.
+`main`) instead of full releases. The archive is checked against the release's
+`SHA256SUMS.txt` first. A copy installed by a package manager neither adds a launcher nor
+updates itself; a package recipe marks its build with `GITCLIENT_INSTALL_CHANNEL=<name>`
+(anything but `portable`) at build time.
 
 ## Building from source
 
@@ -120,8 +122,8 @@ puts you off, that's a fair call.
 
 What I can say in its favour is that it's more stable than that probably sounds. There's a
 real test suite built on throwaway repositories, CI runs formatting, clippy with warnings
-as errors and the tests on Linux and Windows, and the thing never touches your files
-without saying what it's about to do. It was made with care and I'd like it to be good.
+as errors and the tests, and the thing never touches your files without saying what it's
+about to do. It was made with care and I'd like it to be good.
 
 Bug reports are welcome, and so are PRs, whoever or whatever wrote them. Please say if
 yours was generated.
@@ -129,24 +131,10 @@ yours was generated.
 ## Contributing
 
 Work on short-lived branches and open PRs into `main`. [CLAUDE.md](CLAUDE.md) has the
-layout rules and the commands, and it's worth reading even if you're not a robot.
-
-## Releasing
-
-PRs are squash-merged, so the PR title must be a
-[Conventional Commit](https://www.conventionalcommits.org):
-
-| PR title                       | Version bump before 1.0 | After 1.0 |
-| ------------------------------ | ----------------------- | --------- |
-| `fix: ...`                     | patch                   | patch     |
-| `feat: ...`                    | minor                   | minor     |
-| `feat!: ...`                   | minor                   | major     |
-| `chore:`, `docs:`, `ci:`, etc. | none                    | none      |
-
-Pushes to `main` keep a Release PR up to date with the next version and changelog.
-Merge that PR when you want to ship: it tags the version, builds Linux and
-Windows binaries, and publishes the GitHub Release. To ship 1.0.0, or any other
-specific version, add a `Release-As: 1.0.0` footer to a commit on `main`.
+layout rules and the commands, and it's worth reading even if you're not a robot. PRs are
+squash-merged, so give yours a
+[Conventional Commit](https://www.conventionalcommits.org) title such as `fix: ...` or
+`feat: ...`.
 
 ## License
 

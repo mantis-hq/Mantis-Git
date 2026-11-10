@@ -6,7 +6,9 @@
 use super::GraphView;
 use super::parts::{card, card_actions};
 use crate::theme::tokens;
+use gitclient_core::about;
 use gitclient_core::repo::commit_graph;
+use gitclient_core::settings::config::{self, Version};
 use gitclient_core::text;
 use gpui_kit::component::button::*;
 use gpui_kit::component::*;
@@ -36,6 +38,30 @@ pub(super) enum After {
 }
 
 impl GraphView {
+    /// At launch: asks which git this is, and says so in a toast when it is older than
+    /// gitclient is made for.
+    pub fn warn_if_git_is_old(&mut self, cx: &mut Context<Self>) {
+        Self::spawn_blocking(
+            config::git_version,
+            |this, git, cx| this.say_if_git_is_old(&git, cx),
+            cx,
+        );
+    }
+
+    pub(super) fn say_if_git_is_old(
+        &mut self,
+        git: &Result<Version, String>,
+        cx: &mut Context<Self>,
+    ) {
+        // Whatever the user just did is worth more than this, which Settings repeats.
+        if self.notice.is_none()
+            && let Some(text) = about::old_git_notice(git)
+        {
+            self.notice = Some(Notice::Info(text.into()));
+            cx.notify();
+        }
+    }
+
     /// Runs a git operation in the background, then reloads. `operation` returns what to
     /// tell the user on success, if anything worth saying.
     pub fn run_operation(

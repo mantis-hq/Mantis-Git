@@ -1141,7 +1141,8 @@ mod tests {
 
     #[test]
     fn stages_are_read_for_every_file_from_one_listing() {
-        let listing = "100644 aaa 1\ta\0100644 bbb 2\ta\0100644 ccc 3\ta\0100644 ddd 3\tb c\0";
+        let listing =
+            "100644 aaa 1\ta\x00100644 bbb 2\ta\x00100644 ccc 3\ta\x00100644 ddd 3\tb c\x00";
         let stages = stages_in(listing);
         assert_eq!(stages["a"], (true, true));
         assert_eq!(stages["b c"], (false, true));

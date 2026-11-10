@@ -151,6 +151,12 @@ impl Workspace {
         dialog::offer_welcome(self.active_view(), launcher.as_ref(), &file, cx);
     }
 
+    /// At launch: tells the user if the installed git is older than gitclient is made for.
+    pub fn check_git(&mut self, cx: &mut Context<Self>) {
+        self.active_view()
+            .update(cx, |view, cx| view.warn_if_git_is_old(cx));
+    }
+
     /// Brings the dock back as it was left, with its terminals in the front repository.
     pub fn restore_dock(&mut self, layout: DockLayout, cx: &mut Context<Self>) {
         self.sync_dock_directory(cx);

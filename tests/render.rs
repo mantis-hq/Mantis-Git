@@ -116,12 +116,21 @@ mod render {
     }
 
     fn open(cx: &mut HeadlessAppContext, repo: &Path) -> (AnyWindowHandle, Entity<GraphView>) {
+        open_sized(cx, repo, 1200., 800.)
+    }
+
+    fn open_sized(
+        cx: &mut HeadlessAppContext,
+        repo: &Path,
+        width: f32,
+        height: f32,
+    ) -> (AnyWindowHandle, Entity<GraphView>) {
         let repo = repo.to_owned();
         let (handle, view) = cx
             .update(|cx| {
                 let bounds = Bounds {
                     origin: Default::default(),
-                    size: size(px(1200.), px(800.)),
+                    size: size(px(width), px(height)),
                 };
                 let options = WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -678,7 +687,12 @@ mod render {
             cx.run_until_parked();
             std::thread::sleep(Duration::from_millis(10));
         }
-        for (index, name) in [(0, "git-config"), (1, "identities"), (3, "repository")] {
+        for (index, name) in [
+            (0, "git-config"),
+            (1, "identities"),
+            (3, "repository"),
+            (4, "about"),
+        ] {
             cx.update_window(handle, |_, _, cx| {
                 view.update(cx, |view, cx| view.show_page(index, cx));
             })
@@ -692,7 +706,50 @@ mod render {
         }
     }
 
+    /// The picture at the top of the README. Written only when `RENDER_README` names a file.
+    fn readme_screenshot() {
+        let Some(out) = std::env::var_os("RENDER_README") else {
+            return;
+        };
+        let repo = fixture();
+        let lines: String = (0..30).map(|line| format!("line {line}\n")).collect();
+        repo.write("notes.txt", &lines);
+        repo.commit("docs: add notes");
+        repo.write("notes.txt", &lines.replace("line 3\n", "changed 3\n"));
+        repo.write("draft.txt", "a new file\n");
+        // The window's title is its folder's name, which is a random one in a temp folder.
+        let named = tempfile::tempdir().unwrap();
+        let link = named.path().join("gitclient");
+        std::os::unix::fs::symlink(repo.path(), &link).unwrap();
+
+        let mut cx = app(ThemeMode::Dark);
+        let (handle, view) = open_sized(&mut cx, &link, 1500., 860.);
+        cx.update_window(handle, |_, _, cx| {
+            view.update(cx, |view, cx| {
+                if !view.sidebar_is_open() {
+                    view.toggle_sidebar(cx);
+                }
+                view.select_working_changes(cx);
+                view.stage_paths(vec!["draft.txt".to_owned()], false, cx);
+            });
+        })
+        .unwrap();
+        for _ in 0..50 {
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        cx.update_window(handle, |_, window, _| window.refresh())
+            .unwrap();
+        cx.run_until_parked();
+        let frame = cx
+            .capture_screenshot(handle)
+            .expect("a renderer is required");
+        frame.save(&out).expect("the screenshot saves");
+        println!("wrote {}", Path::new(&out).display());
+    }
+
     pub fn run() {
+        readme_screenshot();
         assert_settings_pages_draw(ThemeMode::Dark, "dark");
         assert_settings_pages_draw(ThemeMode::Light, "light");
         assert_conflict_screen_opens();
