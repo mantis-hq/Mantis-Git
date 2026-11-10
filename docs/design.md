@@ -251,7 +251,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   ("12m", "3h", "Tue", "Oct 30"). The full hash belongs to the inspector.
 - Column headings: a 28 px row on Mantle with a Surface 0 bottom border sits over the commits,
   with one heading per column ("Refs", "Graph", "Subject", "Author", "Date") in the section
-  label type, Overlay 2, and the same width as its column. A heading drags onto another to
+  label type, Overlay 2, and the same width as its column, inset 12 px from both edges like
+  the rows. A heading drags onto another to
   take its place, the columns between shifting over by one, and the heading under the
   pointer tints with 14% Blue, as tabs do. The order is kept for every repository as
   `graph_columns` in the `state` file, a comma separated list of `refs`, `graph`, `subject`,
