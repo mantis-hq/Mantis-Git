@@ -141,9 +141,25 @@ impl Settings {
                 // A license worded more than one way shows each wording, with who used it.
                 let several = license.texts.len() > 1;
                 let blocks = license.texts.iter().enumerate().map(|(index, text)| {
+                    // Each copyright line with the projects it came with, so that nobody's
+                    // year and name is taken for another's. When all of a wording's
+                    // projects share the lines, saying so again would only repeat it.
+                    let notices = text.notices.iter().map(|notice| {
+                        let lines = notice.copyrights.join("\n");
+                        div().v_flex().child(lines).when(
+                            notice.used_by != text.used_by,
+                            |notice_box| {
+                                notice_box.child(
+                                    div()
+                                        .text_color(muted)
+                                        .child(format!("— {}", notice.used_by_line())),
+                                )
+                            },
+                        )
+                    });
                     div()
                         .v_flex()
-                        .gap_1()
+                        .gap_3()
                         .when(index > 0, |block| {
                             block.pt_3().border_t_1().border_color(border)
                         })
@@ -154,7 +170,8 @@ impl Settings {
                                     .child(format!("Used by {}", text.used_by_line())),
                             )
                         })
-                        .child(text.to_text())
+                        .child(div().v_flex().gap_2().children(notices))
+                        .child(text.body.clone())
                 });
                 div()
                     .id("license-text")
