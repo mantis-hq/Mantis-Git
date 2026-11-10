@@ -2,22 +2,27 @@
 //! it is kept in the app's `state` file, so it must survive a file that was edited by hand
 //! or written by another version, naming columns twice, leaving some out or inventing new.
 
+/// How many columns there are.
+pub const COUNT: usize = 6;
+
 /// One column of a commit row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Column {
     Refs,
     Graph,
     Subject,
+    Hash,
     Author,
     Date,
 }
 
 impl Column {
     /// Every column, in the order a fresh install shows them.
-    pub const ALL: [Column; 5] = [
+    pub const ALL: [Column; COUNT] = [
         Column::Refs,
         Column::Graph,
         Column::Subject,
+        Column::Hash,
         Column::Author,
         Column::Date,
     ];
@@ -27,6 +32,7 @@ impl Column {
             Column::Refs => "refs",
             Column::Graph => "graph",
             Column::Subject => "subject",
+            Column::Hash => "hash",
             Column::Author => "author",
             Column::Date => "date",
         }
@@ -44,6 +50,7 @@ impl Column {
             Column::Refs => "Refs",
             Column::Graph => "Graph",
             Column::Subject => "Subject",
+            Column::Hash => "Hash",
             Column::Author => "Author",
             Column::Date => "Date",
         }
@@ -52,7 +59,7 @@ impl Column {
 
 /// The columns, each exactly once, left to right.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ColumnOrder([Column; 5]);
+pub struct ColumnOrder([Column; COUNT]);
 
 impl Default for ColumnOrder {
     fn default() -> Self {
@@ -61,7 +68,7 @@ impl Default for ColumnOrder {
 }
 
 impl ColumnOrder {
-    pub fn columns(&self) -> [Column; 5] {
+    pub fn columns(&self) -> [Column; COUNT] {
         self.0
     }
 
@@ -111,7 +118,7 @@ mod tests {
     fn the_default_order_is_the_one_the_graph_always_had() {
         assert_eq!(
             ColumnOrder::default().render(),
-            "refs,graph,subject,author,date"
+            "refs,graph,subject,hash,author,date"
         );
     }
 
@@ -119,15 +126,15 @@ mod tests {
     fn dropping_on_a_column_takes_its_place() {
         let mut order = ColumnOrder::default();
         order.move_to(Column::Date, Column::Refs);
-        assert_eq!(order.render(), "date,refs,graph,subject,author");
+        assert_eq!(order.render(), "date,refs,graph,subject,hash,author");
         order.move_to(Column::Date, Column::Author);
-        assert_eq!(order.render(), "refs,graph,subject,author,date");
+        assert_eq!(order.render(), "refs,graph,subject,hash,author,date");
     }
 
     #[test]
     fn a_damaged_list_still_has_every_column_once() {
         let order = ColumnOrder::parse("date, nonsense,date,subject,,");
-        assert_eq!(order.render(), "date,subject,refs,graph,author");
+        assert_eq!(order.render(), "date,subject,refs,graph,hash,author");
         assert_eq!(ColumnOrder::parse(""), ColumnOrder::default());
     }
 

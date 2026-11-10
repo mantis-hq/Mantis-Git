@@ -5,12 +5,13 @@ use super::menu::wire_ref;
 use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
 use crate::theme::{lane_color, selected_row, tokens};
 use chrono::{Datelike, Local, TimeZone, Utc};
-use gitclient_core::history::columns::{Column, ColumnOrder};
+use gitclient_core::history::columns::{COUNT, Column, ColumnOrder};
 use gitclient_core::history::lanes::{Lane, Row};
 use gitclient_core::history::refs::{Chip, RefKind};
 use gitclient_core::history::spotlight::Spotlight;
 use gitclient_core::history::{Commit, split_subject};
 use gitclient_core::repo::branch::Dragged;
+use gitclient_core::text::short_oid;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
@@ -36,6 +37,8 @@ const REFS_CLOSE_DELAY: Duration = Duration::from_millis(150);
 const FADED_ROW: f32 = 0.28;
 const FADED_LINE: f32 = 0.16;
 
+/// Seven characters of Maple Mono at the body size, with room to spare.
+const HASH_WIDTH: Pixels = px(68.);
 const AUTHOR_WIDTH: Pixels = px(120.);
 const DATE_WIDTH: Pixels = px(72.);
 
@@ -305,6 +308,14 @@ impl GraphView {
                                 )
                                 .into_any_element(),
                             div()
+                                .w(HASH_WIDTH)
+                                .flex_none()
+                                .text_color(muted)
+                                .when(!is_working, |hash| {
+                                    hash.child(short_oid(&commit.oid).to_owned())
+                                })
+                                .into_any_element(),
+                            div()
                                 .w(AUTHOR_WIDTH)
                                 .flex_none()
                                 .truncate()
@@ -346,6 +357,7 @@ impl GraphView {
                 Column::Refs => heading.w(px(REFS_WIDTH)).flex_none(),
                 Column::Graph => heading.w(px(graph_width)).flex_none(),
                 Column::Subject => heading.flex_1().min_w_0(),
+                Column::Hash => heading.w(HASH_WIDTH).flex_none(),
                 Column::Author => heading.w(AUTHOR_WIDTH).flex_none().justify_end(),
                 Column::Date => heading.w(DATE_WIDTH).flex_none().justify_end(),
             };
@@ -409,7 +421,7 @@ impl Render for DraggedColumn {
 }
 
 /// The cells of one row, given in the columns' usual order, set in the order chosen.
-fn cells(order: ColumnOrder, cells: [AnyElement; 5]) -> Vec<AnyElement> {
+fn cells(order: ColumnOrder, cells: [AnyElement; COUNT]) -> Vec<AnyElement> {
     let mut cells: Vec<_> = Column::ALL.into_iter().zip(cells).collect();
     let place = |column: Column| order.columns().iter().position(|&other| other == column);
     cells.sort_by_key(|(column, _)| place(*column));
