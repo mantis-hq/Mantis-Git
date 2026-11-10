@@ -93,24 +93,37 @@ pub fn is_askable(email: &str) -> bool {
     email.contains('@') && !email.ends_with(".(none)") && !email.contains(char::is_whitespace)
 }
 
-/// Downloads the picture for `email`, or `None` when there is none or Gravatar can't be
-/// reached.
-pub fn fetch(email: &str) -> Option<Vec<u8>> {
+/// Downloads the picture for `email`. `Ok(None)` means Gravatar answered that there is
+/// none, which is final; `Err` says why it couldn't be asked or answered oddly, which may
+/// pass, so the caller can try again.
+pub fn fetch(email: &str) -> Result<Option<Vec<u8>>, String> {
     if !is_askable(email) {
-        return None;
+        return Ok(None);
     }
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(PATIENCE))
         .user_agent("gitclient")
         .build()
         .into();
-    let mut response = agent.get(&url(email)).call().ok()?;
-    response
+    let mut response = match agent.get(&url(email)).call() {
+        Ok(response) => response,
+        Err(ureq::Error::StatusCode(404)) => return Ok(None),
+        Err(ureq::Error::StatusCode(code)) => {
+            return Err(format!("gravatar.com answered with an error ({code})."));
+        }
+        Err(error) => return Err(format!("Couldn't reach gravatar.com: {error}")),
+    };
+    let bytes = response
         .body_mut()
         .with_config()
         .limit(MAX_BYTES)
         .read_to_vec()
-        .ok()
+        .map_err(|error| format!("Couldn't read gravatar.com's answer: {error}"))?;
+    if sniff(&bytes) == Some(Kind::Png) {
+        Ok(Some(bytes))
+    } else {
+        Err("gravatar.com answered with something that isn't a PNG picture.".to_owned())
+    }
 }
 
 /// The first letter of the first and of the last word of a name, in capitals ("Ada
@@ -223,6 +236,14 @@ impl Asked {
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(key(email))
     }
+
+    /// Forgets that `email` was asked, after an answer that may be different next time.
+    pub fn release(&self, email: &str) {
+        self.seen
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&key(email));
+    }
 }
 
 #[cfg(test)]
@@ -257,6 +278,8 @@ mod tests {
         assert!(asked.claim("a@b.c"));
         assert!(!asked.claim("A@B.C "));
         assert!(!asked.claim("nobody"));
+        asked.release("a@b.c");
+        assert!(asked.claim("a@b.c"), "released, so it can be asked again");
     }
 
     #[test]
@@ -308,9 +331,11 @@ mod tests {
     #[test]
     #[ignore = "needs the network"]
     fn gravatar_answers_for_a_known_address_and_not_for_an_unknown_one() {
-        let bytes = fetch("beau@dentedreality.com.au").expect("a picture");
+        let bytes = fetch("beau@dentedreality.com.au")
+            .unwrap()
+            .expect("a picture");
         assert_eq!(sniff(&bytes), Some(Kind::Png));
-        assert_eq!(fetch("nobody-has-this@example.invalid"), None);
+        assert_eq!(fetch("nobody-has-this@example.invalid"), Ok(None));
     }
 
     #[test]

@@ -1864,3 +1864,58 @@ fn a_repository_is_cloned_from_an_address_in_a_tab_with_nothing_open(cx: &mut Te
     assert!(opened[0].join("a").is_file());
     assert_eq!(view.read_with(&cx, |view, cx| view.form_values(cx)), None);
 }
+
+/// Runs the whole path for a Gravatar: the picked style is read from the settings file, the
+/// commit's address is asked about off the UI thread, and the picture is shown once it
+/// arrives. It needs the network, so it is run by hand:
+/// `cargo test --lib gravatar -- --ignored`.
+#[gpui_kit::test]
+#[ignore = "needs the network"]
+fn a_gravatar_replaces_the_initials_once_it_arrives(cx: &mut TestAppContext) {
+    use super::avatars::Face;
+    use gitclient_core::history::avatar::Style;
+    use gitclient_core::settings::state::AppState;
+
+    let (repo, view, mut cx) = open_repo(cx);
+    repo.git(&[
+        "commit",
+        "--allow-empty",
+        "-m",
+        "by someone with a Gravatar",
+        "--author",
+        "Beau <beau@dentedreality.com.au>",
+    ]);
+    view.update(&mut cx, |view, cx| view.open(repo.path().to_owned(), cx));
+    wait_until_loaded(&view, &mut cx);
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("state");
+    AppState {
+        avatars: Style::Gravatar,
+        ..AppState::default()
+    }
+    .save(&file)
+    .unwrap();
+    view.update(&mut cx, |view, _| view.set_state_file(Some(file)));
+
+    let commit = view.read_with(&cx, |view, _| {
+        view.entries
+            .iter()
+            .map(|entry| entry.commit.clone())
+            .find(|commit| &*commit.email == "beau@dentedreality.com.au")
+            .expect("the commit is listed with its address")
+    });
+    let mut shown = false;
+    for _ in 0..50 {
+        shown = view.update(&mut cx, |view, cx| {
+            view.prepare_avatars(cx);
+            matches!(view.avatar_face(&commit, cx), Face::Picture(_))
+        });
+        if shown {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+    assert!(shown, "the Gravatar never replaced the initials");
+}
