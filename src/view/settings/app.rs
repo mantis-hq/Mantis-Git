@@ -3,7 +3,9 @@
 
 use super::super::avatars::{Face, disc};
 use super::*;
+use crate::theme::lane_color;
 use gitclient_core::history::avatar::{self, Style as AvatarStyle};
+use gitclient_core::history::lanes::LaneColor;
 use gitclient_core::install::exe_path;
 use gitclient_core::install::update::{self, Track};
 
@@ -708,10 +710,12 @@ impl Settings {
         let theme = cx.theme();
         let (track, bar_gap, muted) = (theme.border, theme.list_head, theme.muted_foreground);
         let is_dark = theme.is_dark();
+        let text = theme.foreground;
+        // The theme's own palette, in Latte as well as Mocha, so each cache has a colour.
         let shades = [
-            tokens(is_dark).subtext0,
-            theme.muted_foreground,
-            tokens(is_dark).overlay1,
+            lane_color(LaneColor::Branch(1), is_dark),
+            lane_color(LaneColor::Branch(2), is_dark),
+            lane_color(LaneColor::Branch(3), is_dark),
         ];
         let used: u64 = usage.iter().map(|part| part.bytes).sum();
         // Against the limit while it applies, else the whole bar is what is there.
@@ -744,11 +748,14 @@ impl Settings {
                         .rounded(px(2.))
                         .bg(shades[index % shades.len()]),
                 )
-                .child(div().text_size(TEXT_SMALL).text_color(muted).child(format!(
-                    "{} {}",
-                    part.label,
-                    bytes_label(part.bytes)
-                )))
+                .child(
+                    div()
+                        .h_flex()
+                        .gap_1()
+                        .text_size(TEXT_SMALL)
+                        .child(div().text_color(text).child(part.label))
+                        .child(div().text_color(muted).child(bytes_label(part.bytes))),
+                )
         });
         div()
             .v_flex()

@@ -208,9 +208,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     is in use ("Using 98 MB of 256 MB.") beside a quiet "Clear cache" button that empties
     every cache, and under it one 8 px bar, as long as the limit while the cache is on, cut
     into what each cache holds (commit files, file diffs, avatars), largest first. The cuts
-    are the palette's muted greys (Subtext 0, Overlay 2, Overlay 1) with a gap of Mantle
-    between them on a Surface 0 track, and a legend names each with its size, so no meaning
-    rests on shade alone. Changes apply at once to the running app. The cache lives in the
+    take three of the branch palette's colours (Teal, Pink, Sky) with a gap of Mantle
+    between them on a Surface 0 track, and a legend names each, its name in Text and its
+    size ("< 1 MB" when under a megabyte) in Overlay 2, so no meaning rests on colour alone. Changes apply at once to the running app. The cache lives in the
     system's cache folder (`$XDG_CACHE_HOME` or `~/.cache` on Linux), never in the config
     folder, and an
     entry that is damaged or out of date is simply read from git again. What gravatar.com
