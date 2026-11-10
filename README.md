@@ -63,7 +63,7 @@ different:
 
 Download the archive for your system from the
 [releases](https://github.com/pretext8335/gitclient/releases) page: `.tar.gz` for Linux and
-macOS, `.zip` for Windows. Unpack it anywhere and run `gitclient`. You need `git` on your
+`.zip` for Windows. Unpack it anywhere and run `gitclient`. You need `git` on your
 `PATH`.
 
 The first time it runs, a welcome panel explains how the window works, and offers to add
@@ -120,7 +120,7 @@ puts you off, that's a fair call.
 
 What I can say in its favour is that it's more stable than that probably sounds. There's a
 real test suite built on throwaway repositories, CI runs formatting, clippy with warnings
-as errors and the tests on Linux, macOS and Windows, and the thing never touches your files
+as errors and the tests on Linux and Windows, and the thing never touches your files
 without saying what it's about to do. It was made with care and I'd like it to be good.
 
 Bug reports are welcome, and so are PRs, whoever or whatever wrote them. Please say if
@@ -144,7 +144,7 @@ PRs are squash-merged, so the PR title must be a
 | `chore:`, `docs:`, `ci:`, etc. | none                    | none      |
 
 Pushes to `main` keep a Release PR up to date with the next version and changelog.
-Merge that PR when you want to ship: it tags the version, builds Linux, macOS, and
+Merge that PR when you want to ship: it tags the version, builds Linux and
 Windows binaries, and publishes the GitHub Release. To ship 1.0.0, or any other
 specific version, add a `Release-As: 1.0.0` footer to a commit on `main`.
 
