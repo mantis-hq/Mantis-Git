@@ -205,7 +205,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     default, 1 GB, 4 GB), and a row says how much is in use beside a quiet "Clear cache"
     button. Changes apply at once to the running app. The cache lives in the system's cache
     folder (`$XDG_CACHE_HOME` or `~/.cache` on Linux), never in the config folder, and an
-    entry that is damaged or out of date is simply read from git again.
+    entry that is damaged or out of date is simply read from git again. Gravatars that were
+    fetched are kept there too (a sixteenth of the limit, a few kilobytes each, found by the
+    hash of the author's address), so an author is asked of gravatar.com once, ever, while
+    the entry stays. Each address is asked at most once per session whatever the answer: an
+    author with no Gravatar, or a failed request, is not asked again until the app restarts,
+    and a failure is said once in the band.
     Only a copy unpacked from a release archive looks after itself, which is called
     portable. One a package manager installed (found by a build flag, `/usr`, Flatpak, an
     AppImage, Homebrew, Nix, Scoop and the like) leaves its launcher and its updates to the

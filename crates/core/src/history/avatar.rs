@@ -6,6 +6,8 @@
 //! but the hash still tells it which authors a repository has. That is why it is off
 //! unless chosen, and why the setting says so.
 
+use crate::cache::Cacheable;
+use crate::cache::codec::{Reader, Writer};
 use crate::ops;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -94,8 +96,7 @@ pub fn is_askable(email: &str) -> bool {
 }
 
 /// Downloads the picture for `email`. `Ok(None)` means Gravatar answered that there is
-/// none, which is final; `Err` says why it couldn't be asked or answered oddly, which may
-/// pass, so the caller can try again.
+/// none; `Err` says why it couldn't be asked or answered oddly.
 pub fn fetch(email: &str) -> Result<Option<Vec<u8>>, String> {
     if !is_askable(email) {
         return Ok(None);
@@ -123,6 +124,28 @@ pub fn fetch(email: &str) -> Result<Option<Vec<u8>>, String> {
         Ok(Some(bytes))
     } else {
         Err("gravatar.com answered with something that isn't a PNG picture.".to_owned())
+    }
+}
+
+/// A Gravatar picture as it is kept in the cache: the PNG as Gravatar sent it. Only a
+/// picture is kept; "none" and failures are remembered for the session alone.
+pub struct Picture(pub Vec<u8>);
+
+impl Cacheable for Picture {
+    const FORMAT: u32 = 1;
+
+    fn weight(&self) -> usize {
+        self.0.len() + 64
+    }
+
+    fn encode(&self, out: &mut Writer) {
+        out.bytes(&self.0);
+    }
+
+    fn decode(input: &mut Reader) -> Option<Self> {
+        let bytes = input.bytes()?;
+        // Whatever was read must still be a picture, so a damaged file is read again.
+        (input.is_empty() && sniff(bytes) == Some(Kind::Png)).then(|| Picture(bytes.to_vec()))
     }
 }
 
@@ -220,7 +243,7 @@ pub fn own_email(repo: &Path) -> Option<String> {
 }
 
 /// The addresses Gravatar has been asked about this session, so each is asked once
-/// however many commits it wrote. Nothing is written to disk.
+/// however many commits it wrote, whatever the answer. Asking again takes a restart.
 #[derive(Default)]
 pub struct Asked {
     seen: Mutex<HashSet<String>>,
@@ -235,14 +258,6 @@ impl Asked {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(key(email))
-    }
-
-    /// Forgets that `email` was asked, after an answer that may be different next time.
-    pub fn release(&self, email: &str) {
-        self.seen
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&key(email));
     }
 }
 
@@ -278,8 +293,6 @@ mod tests {
         assert!(asked.claim("a@b.c"));
         assert!(!asked.claim("A@B.C "));
         assert!(!asked.claim("nobody"));
-        asked.release("a@b.c");
-        assert!(asked.claim("a@b.c"), "released, so it can be asked again");
     }
 
     #[test]

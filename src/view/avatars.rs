@@ -20,8 +20,6 @@ use std::time::SystemTime;
 /// no two marks touch, and the neighbouring lanes' lines pass clear of it.
 pub(super) const SIZE: f32 = 20.;
 const RING: f32 = 2.;
-/// How long after a failed request the address is asked again.
-const RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// What one commit's dot shows.
 pub(super) enum Face {
@@ -121,21 +119,14 @@ impl GraphView {
         }
     }
 
-    /// Says once why Gravatar couldn't be asked, and lets the address be asked again after a
-    /// while, so a dropped connection doesn't leave initials until the app restarts.
-    fn gravatar_failed(&mut self, email: String, error: String, cx: &mut Context<Self>) {
+    /// Says once why Gravatar couldn't be asked. The address isn't asked again until the
+    /// app restarts, so a failing connection isn't hammered.
+    fn gravatar_failed(&mut self, error: String, cx: &mut Context<Self>) {
         if !self.avatars.failure_shown {
             self.avatars.failure_shown = true;
             self.notice = Some(super::notice::Notice::Error(error.into()));
             cx.notify();
         }
-        let asked = self.avatars.asked.clone();
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(RETRY_AFTER).await;
-            asked.release(&email);
-            this.update(cx, |_, cx| cx.notify()).ok();
-        })
-        .detach();
     }
 
     fn refresh_avatar_prefs(&mut self) {
@@ -184,7 +175,18 @@ impl GraphView {
                 Self::spawn_blocking(
                     {
                         let email = email.clone();
-                        move || avatar::fetch(&email)
+                        let caches = self.caches.clone();
+                        move || {
+                            // Asked of Gravatar only when no earlier run kept it.
+                            if let Some(picture) = caches.cached_avatar(&email) {
+                                return Ok(Some(picture.0.clone()));
+                            }
+                            let answer = avatar::fetch(&email)?;
+                            if let Some(bytes) = &answer {
+                                caches.store_avatar(&email, bytes.clone());
+                            }
+                            Ok(answer)
+                        }
                     },
                     move |this, answer, cx| match answer {
                         Ok(Some(bytes)) => {
@@ -195,7 +197,7 @@ impl GraphView {
                         }
                         // Final: this address has no Gravatar, so it keeps its initials.
                         Ok(None) => {}
-                        Err(error) => this.gravatar_failed(email, error, cx),
+                        Err(error) => this.gravatar_failed(error, cx),
                     },
                     cx,
                 );
