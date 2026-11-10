@@ -327,8 +327,9 @@ pub struct Settings {
     writing_graph: bool,
     /// Which forge the open repository is on, once read.
     forge_choice: Option<gitclient_core::repo::forge::choice::Choice>,
-    /// Which license on the About page has its text open.
-    open_license: Option<usize>,
+    /// Which license on the About page is picked, and how its list is scrolled.
+    picked_license: Option<usize>,
+    licenses_scroll: UniformListScrollHandle,
     feedback: Feedback,
     /// Inputs the user has typed in since they were last saved or filled in.
     dirty: std::collections::HashSet<String>,
@@ -467,7 +468,8 @@ impl Settings {
             commit_graph: Default::default(),
             writing_graph: false,
             forge_choice: None,
-            open_license: None,
+            picked_license: None,
+            licenses_scroll: UniformListScrollHandle::new(),
             feedback: Feedback::None,
             dirty: Default::default(),
             _new_inputs: new_inputs,

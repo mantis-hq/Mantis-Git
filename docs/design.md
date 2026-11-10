@@ -232,7 +232,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     Only a copy unpacked from a release archive looks after itself, which is called
     portable. One a package manager installed (found by a build flag, `/usr`, Flatpak, an
     AppImage, Homebrew, Nix, Scoop and the like) leaves its launcher and its updates to the
-    package manager, shows no "Launcher" card, and says in "Updates" who updates it.
+    package manager, shows no "Launcher" card, and says on the About page who updates it.
     Under "Launcher", a tick box "Add gitclient to the application menu" ("Start menu" on
     Windows) is ticked when a launcher is on disk: on Linux a `gitclient.desktop` and an SVG
     icon under `$XDG_DATA_HOME` (`~/.local/share` by default), on Windows one shortcut in the
@@ -242,17 +242,6 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     else's, is never replaced or removed, and has no tick box. Ticking or clearing it applies
     at once, and the header says how to undo it. Every start mends a launcher of gitclient's
     own that points at a copy that has moved, and never adds one that was taken away.
-    Under "Updates", a tick box "Look for a newer version when gitclient starts" (on by
-    default, `check_updates` in the same file), a row of chips "Which versions to update to"
-    ("Full releases", the default, or "Nightly builds", kept as `update_track`, the picked one
-    ticked and never blue) and a row that says where an update stands ("gitclient 0.2.0 is
-    available. This is 0.1.0.") beside one quiet button named for its result: "Check now",
-    "Update to 0.2.0" or "Restart now". Full releases are the newest tag that is a plain
-    version (`v1.2.3`). The nightly is the one pre-release every push to `main` replaces; all
-    nightlies share a version, so one is told from the next by the commit it was built from
-    (`GITCLIENT_COMMIT`, set at build time), and is named "nightly 1a2b3c4". Choosing a
-    track looks again at once. Releases are read from one host, GitHub, set in one place
-    (`HOST` in `gitclient_core::install::update`), and moving to another is a one-line change.
   - **Repository** holds what belongs to the open repository alone, apart from its git
     config, and is only in the side panel while a repository is open. The header says which
     one. Under "Hosting", a "Forge" row says which forge the remote is on ("gitclient can tell
@@ -270,19 +259,36 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     window says nothing about the commit graph unless it is the reason for a wait (see
     "Commit graph card"). Both sentences for a missing or behind graph add that in a large
     repository it makes branch counts, search and loading history slow.
-  - **About** is the last page, always in the side panel. A "Version" card says which build
-    this is ("gitclient 0.1.0", with the commit in brackets for a nightly), what gitclient is
-    licensed under and that it contains so many projects by others, with a quiet "Open the
-    source on GitHub" button. A "Licenses" card lists every license text in the program, one
-    row each: an arrow, the license's name, how many projects are under it, and the projects
-    in Overlay 2 on a line under it. A click opens that text under its row, on Base in a card
-    of its own, and opens no more than one at a time. The first is gitclient's own, then Maple
-    Mono's, then the crates'. The list is about 200 rows and doesn't grow, so it isn't
-    drawn as a virtual list. The texts are inside the program, so they can't be separated from
-    a copy that is passed on: `cargo about` writes them to `THIRD-PARTY-LICENSES.txt` from
-    `Cargo.lock` (`about.toml` says which licenses are accepted, `about.hbs` the layout), CI
-    fails when that file is out of date, and the release attaches it and `LICENSE` too. What
-    the page says and how the file is read lives in `gitclient_core::about`.
+  - **About** is the last page, always in the side panel. Its "Version" card says which
+    build this is ("gitclient 0.1.0", with the commit in brackets for a nightly), what
+    gitclient is licensed under and that it contains so many projects by others, with a quiet
+    "Open the source on GitHub" button, and under that holds everything about updating, in
+    rows. A tick box "Look for a newer version when gitclient starts" (on by default,
+    `check_updates` in the `state` file), a row of chips "Which versions to update to"
+    ("Full releases", the default, or "Nightly builds", kept as `update_track`, the picked one
+    ticked and never blue) and a row that says where an update stands ("gitclient 0.2.0 is
+    available. This is 0.1.0.") beside one quiet button named for its result: "Check now",
+    "Update to 0.2.0" or "Restart now". A copy a package manager installed has one row saying
+    who updates it, instead. Full releases are the newest tag that is a plain version
+    (`v1.2.3`). The nightly is the one pre-release every push to `main` replaces; all
+    nightlies share a version, so one is told from the next by the commit it was built from
+    (`GITCLIENT_COMMIT`, set at build time), and is named "nightly 1a2b3c4". Choosing a
+    track looks again at once. Releases are read from one host, GitHub, set in one
+    place (`HOST` in `gitclient_core::install::update`), and moving to another is a one-line
+    change.
+    A "Licenses" card lists the licenses that have to be shown for what is in the program:
+    those that ask for their text to go with a copy, so 0BSD, CC0 and the Unlicense are left
+    out (`License::must_be_shown`). The list is a virtual list of 48 px rows, about six in
+    view with a scrollbar, that draws only the rows in view. A row has the license's name and
+    how many projects are under it, and the projects in Overlay 2 on a line under it. The
+    first is gitclient's own, then Maple Mono's, then the crates'. A click picks one, which
+    takes the selected-row fill and a bold name, and clicking it again puts it down. The
+    picked license's text shows under the list, on Base in a pane of its own that scrolls past
+    320 px. The texts are inside the program, so they can't be separated from a copy that is
+    passed on: `cargo about` writes them to `THIRD-PARTY-LICENSES.txt` from `Cargo.lock`
+    (`about.toml` says which licenses are accepted, `about.hbs` the layout), CI fails when that
+    file is out of date, and the release attaches it and `LICENSE` too. What the page says and
+    how the file is read lives in `gitclient_core::about`.
 - Dock: a 36 px Mantle bar along the bottom of the graph column, under the graph and
   between the sidebar and the inspector, which keep their full height, with a 1 px
   Surface 0 top border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)

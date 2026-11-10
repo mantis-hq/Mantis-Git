@@ -50,12 +50,29 @@ impl License {
     }
 }
 
-/// The licenses of everything in this program: gitclient's own first, then the font, then
-/// the crates by license.
+/// Licenses that ask nothing of whoever passes the program on: no notice and no text. They
+/// are in the generated file, since `cargo about` lists everything, but the page leaves
+/// them out.
+const NO_NOTICE: [&str; 3] = [
+    "BSD Zero Clause License",
+    "Creative Commons Zero v1.0 Universal",
+    "The Unlicense",
+];
+
+impl License {
+    /// Whether passing the program on means passing this license's text on with it.
+    pub fn must_be_shown(&self) -> bool {
+        !NO_NOTICE.contains(&self.name.as_str())
+    }
+}
+
+/// The licenses that have to be shown for everything in this program: gitclient's own
+/// first, then the font, then the crates by license.
 pub fn licenses() -> &'static [License] {
     static ALL: OnceLock<Vec<License>> = OnceLock::new();
     ALL.get_or_init(|| {
         let mut all = parse(CRATES);
+        all.retain(License::must_be_shown);
         all.insert(
             0,
             License {
@@ -173,6 +190,17 @@ mod tests {
         );
         // HTML escaping would show as &quot; in a license's name.
         assert!(all.iter().all(|l| !l.name.contains('&')));
+    }
+
+    #[test]
+    fn licenses_that_ask_for_nothing_are_left_out() {
+        let file = parse(CRATES);
+        assert!(
+            file.iter().any(|l| !l.must_be_shown()),
+            "the generated file has none of them, so this list matches nothing"
+        );
+        assert!(licenses().iter().all(License::must_be_shown));
+        assert!(licenses().len() < file.len());
     }
 
     #[test]

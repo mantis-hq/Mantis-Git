@@ -935,17 +935,17 @@ fn the_about_page_opens_one_license_at_a_time(cx: &mut TestAppContext) {
     view.update(&mut cx, |settings, cx| settings.show_page(about, cx));
     view.read_with(&cx, |settings, _| {
         assert_eq!(settings.page, Page::About);
-        assert_eq!(settings.open_license, None);
+        assert_eq!(settings.picked_license, None);
     });
 
-    view.update(&mut cx, |settings, cx| settings.toggle_license(2, cx));
+    view.update(&mut cx, |settings, cx| settings.pick_license(2, cx));
     view.read_with(&cx, |settings, _| {
-        assert_eq!(settings.open_license, Some(2))
+        assert_eq!(settings.picked_license, Some(2))
     });
-    view.update(&mut cx, |settings, cx| settings.toggle_license(5, cx));
+    view.update(&mut cx, |settings, cx| settings.pick_license(5, cx));
     view.read_with(&cx, |settings, _| {
-        assert_eq!(settings.open_license, Some(5))
+        assert_eq!(settings.picked_license, Some(5))
     });
-    view.update(&mut cx, |settings, cx| settings.toggle_license(5, cx));
-    view.read_with(&cx, |settings, _| assert_eq!(settings.open_license, None));
+    view.update(&mut cx, |settings, cx| settings.pick_license(5, cx));
+    view.read_with(&cx, |settings, _| assert_eq!(settings.picked_license, None));
 }
