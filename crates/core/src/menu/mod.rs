@@ -285,8 +285,8 @@ fn why_not_deletable(refs: &Refs, target: &Dragged) -> Option<String> {
         RefKind::Branch if refs.head_branch.as_deref() == Some(name.as_str()) => {
             Some(format!("{name} is checked out, so it stays"))
         }
-        RefKind::Branch => None,
-        _ => Some(format!("{name} is a remote branch, so it stays")),
+        RefKind::Branch | RefKind::Remote => None,
+        _ => Some(format!("{name} can't be deleted")),
     }
 }
 
@@ -620,6 +620,10 @@ pub fn refs_menu(refs: &Refs, targets: &[Dragged]) -> Vec<Line> {
                 name: target.name.clone(),
                 tip: crate::history::picks::tip_of(refs, target).map(|tip| tip.to_string()),
                 at_risk: branch::loses_commits(refs, target.kind, &target.name),
+                on_remote: (target.kind == RefKind::Remote)
+                    .then(|| remote::split_branch(&refs.remote_configs, &target.name))
+                    .flatten()
+                    .map(|(remote, name)| (remote.name.clone(), name.to_owned())),
             })
             .collect();
         let tags = doomed.iter().filter(|d| d.kind == RefKind::Tag).count();
@@ -1345,11 +1349,8 @@ mod tests {
     }
 
     #[test]
-    fn only_a_checked_out_branch_leaves_nothing_to_delete() {
-        let picks = [
-            target(RefKind::Branch, "main"),
-            target(RefKind::Remote, "origin/x"),
-        ];
+    fn the_checked_out_branch_alone_leaves_nothing_to_delete() {
+        let picks = [target(RefKind::Branch, "main")];
         let lines = refs_menu(&refs(), &picks);
         assert!(
             lines
@@ -1602,6 +1603,25 @@ mod tests {
             })
             .collect();
         refs
+    }
+
+    #[test]
+    fn several_picked_branches_can_include_remote_ones() {
+        let refs = refs_on(&[("origin", "git@github.com:octo/cat.git")]);
+        let lines = refs_menu(
+            &refs,
+            &[
+                target(RefKind::Remote, "origin/feat/x"),
+                target(RefKind::Remote, "origin/feat/y"),
+            ],
+        );
+        let Some(Command::DeleteMany { refs }) = lines.last().and_then(|l| l.command()) else {
+            panic!("no delete line: {:?}", labels(&lines));
+        };
+        assert_eq!(
+            refs[0].on_remote,
+            Some(("origin".to_owned(), "feat/x".to_owned()))
+        );
     }
 
     #[test]

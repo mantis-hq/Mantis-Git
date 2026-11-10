@@ -317,6 +317,8 @@ pub struct Doomed {
     pub tip: Option<String>,
     /// Whether deleting it loses commits that nothing else keeps, see [`loses_commits`].
     pub at_risk: bool,
+    /// For a remote branch: its remote and its name there (`origin`, `feat/x`).
+    pub on_remote: Option<(String, String)>,
 }
 
 fn counted(number: usize, one: &str, many: &str) -> String {
@@ -347,12 +349,16 @@ pub fn delete_many_warning(refs: &[Doomed]) -> String {
         .iter()
         .filter_map(|r| {
             let tip = short_oid(r.tip.as_deref()?);
-            Some(match r.kind {
-                RefKind::Tag => format!("`git tag {} {tip}`", r.name),
+            Some(match (&r.kind, &r.on_remote) {
+                (_, Some((remote, name))) => {
+                    format!("`git push {remote} {tip}:refs/heads/{name}`")
+                }
+                (RefKind::Tag, _) => format!("`git tag {} {tip}`", r.name),
                 _ => format!("`git branch {} {tip}`", r.name),
             })
         })
         .collect();
+    let on_remote = refs.iter().any(|r| r.on_remote.is_some());
     let undo = if undo.is_empty() {
         String::new()
     } else {
@@ -363,8 +369,13 @@ pub fn delete_many_warning(refs: &[Doomed]) -> String {
     } else {
         " Branch commits stay until git cleans up."
     };
+    let shared = if on_remote {
+        " Remote branches go for everyone who uses the remote."
+    } else {
+        ""
+    };
     format!(
-        "This deletes {}: {}.{stay}{undo}",
+        "This deletes {}: {}.{shared}{stay}{undo}",
         summary(&branches, &tags),
         names.join(", ")
     )
@@ -373,12 +384,31 @@ pub fn delete_many_warning(refs: &[Doomed]) -> String {
 /// Deletes branches and tags in one go. Branches go first, in one git call.
 pub fn delete_many(repo: &Path, refs: &[Doomed]) -> Result<Option<String>, String> {
     let (branches, tags) = split(refs);
-    for (group, base) in [(&branches, ["branch", "-D"]), (&tags, ["tag", "-d"])] {
+    let (remote, local): (Vec<&Doomed>, Vec<&Doomed>) =
+        branches.iter().partition(|r| r.on_remote.is_some());
+    for (group, base) in [(&local, ["branch", "-D"]), (&tags, ["tag", "-d"])] {
         if !group.is_empty() {
             let names = group.iter().map(|r| r.name.as_str());
             let args: Vec<&str> = base.into_iter().chain(names).collect();
             ops::run(repo, &args)?;
         }
+    }
+    // One push per remote, which also drops the local copies.
+    let mut remotes: Vec<&str> = remote
+        .iter()
+        .filter_map(|r| r.on_remote.as_ref().map(|(remote, _)| remote.as_str()))
+        .collect();
+    remotes.dedup();
+    for name in remotes {
+        let names = remote.iter().filter_map(|r| match &r.on_remote {
+            Some((on, branch)) if on == name => Some(branch.as_str()),
+            _ => None,
+        });
+        let args: Vec<&str> = ["push", name, "--delete"]
+            .into_iter()
+            .chain(names)
+            .collect();
+        ops::run(repo, &args)?;
     }
     Ok(Some(format!("Deleted {}.", summary(&branches, &tags))))
 }
@@ -840,6 +870,7 @@ mod tests {
             name: name.into(),
             tip: Some(repo.git(&["rev-parse", name])),
             at_risk: false,
+            on_remote: None,
         };
         let refs = [
             doomed(RefKind::Branch, "side"),

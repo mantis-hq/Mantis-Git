@@ -319,8 +319,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   `Ctrl`-click adds or removes branches, `Shift`-click picks the range down from the last
   one, and the graph lights all of their histories. Right-clicking one of several picked
   refs opens a menu for all of them ("Delete 3 branches"), which asks first and lists the
-  command to bring each back. A checked-out branch and remote branches stay, and the menu
-  says so.
+  command to bring each back. A checked-out branch stays, and the menu says so. Remote branches
+  can be picked too and go with one `git push --delete` per remote.
 - Worktrees: when a repository has more than one working tree, the sidebar lists them
   under "Worktrees", open by default, between Remotes and Tags. A row is the folder's
   name, then its branch (or `detached at <hash>`) in Overlay 2, with a dot in that
@@ -353,7 +353,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   that can't be used stays and says why. Checking out the recorded commit in a submodule
   that is on another one asks first, and gives the `git -C <path> checkout <hash>` that
   goes back. The app never forces anything.
-- Deleting a remote branch: right-clicking one (one at a time, not in a picked set) ends its
+- Deleting a remote branch: right-clicking one (or several picked) ends its
   menu in red "Delete origin/feat/x on origin". It asks first in a popup, which says it
   removes the branch for everyone who uses the remote and gives the `git push origin
   <hash>:refs/heads/feat/x` that brings it back, and runs `git push origin --delete`.
