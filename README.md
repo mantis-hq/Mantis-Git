@@ -44,14 +44,6 @@ Download the archive for your system from the
 cargo run --release
 ```
 
-## How it's put together
-
-Everything about a repository lives in `crates/core` (`gitclient-core`), which never
-depends on the UI toolkit. The window in `src/` asks core what's true and draws the
-answer, so rules and wording can be tested without opening a window. All git goes through
-`crates/core/src/ops.rs`. The look and behaviour are specified in
-[docs/design.md](docs/design.md).
-
 ## AI disclosure
 
 Most of this project's code, tests, design document and commit messages were written with
