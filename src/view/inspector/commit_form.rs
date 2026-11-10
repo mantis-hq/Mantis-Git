@@ -3,6 +3,7 @@
 use crate::theme::tokens;
 use crate::view::parts::{TEXT_CHIP, TEXT_SMALL, checkbox, section_label};
 use crate::view::{GraphView, Notice};
+use gitclient_core::history::columns::Column;
 use gitclient_core::menu::command::Command;
 use gitclient_core::repo::stash;
 use gitclient_core::settings::state::{self, AppState};
@@ -38,7 +39,28 @@ pub(in crate::view) struct State {
 impl GraphView {
     /// Sets the file where the way of listing files is remembered.
     pub(in crate::view) fn set_state_file(&mut self, file: Option<PathBuf>) {
+        if let Some(file) = &file {
+            self.columns = AppState::load(file).graph_columns;
+        }
         self.commit.state_file = file;
+    }
+
+    /// Puts `column` where `target` stands and remembers the order for every repository.
+    /// The file's other settings are left as they are.
+    pub(in crate::view) fn move_column(
+        &mut self,
+        column: Column,
+        target: Column,
+        cx: &mut Context<Self>,
+    ) {
+        self.columns.move_to(column, target);
+        if let Some(file) = &self.commit.state_file {
+            let order = self.columns;
+            if let Err(error) = AppState::change(file, |state| state.graph_columns = order) {
+                self.notice = Some(Notice::Error(error.into()));
+            }
+        }
+        cx.notify();
     }
 
     /// The file where the app's own settings are remembered, if there is one.

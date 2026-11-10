@@ -2,14 +2,16 @@
 
 use super::GraphView;
 use super::menu::wire_ref;
-use super::parts::{TEXT_BODY, TEXT_CHIP};
+use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
 use crate::theme::{lane_color, selected_row, tokens};
 use chrono::{Datelike, Local, TimeZone, Utc};
+use gitclient_core::history::columns::{Column, ColumnOrder};
 use gitclient_core::history::lanes::{Lane, Row};
 use gitclient_core::history::refs::{Chip, RefKind};
 use gitclient_core::history::spotlight::Spotlight;
 use gitclient_core::history::{Commit, split_subject};
 use gitclient_core::repo::branch::Dragged;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -242,84 +244,175 @@ impl GraphView {
                         this.click_row(index, event.modifiers(), cx);
                         window.focus(&this.focus, cx);
                     }))
-                    .child(self.render_refs_column(index, &chips, cx))
-                    .child(
-                        div()
-                            .w(px(graph_width))
-                            .h_full()
-                            .flex_none()
-                            .overflow_hidden()
-                            .child(
-                                canvas(
-                                    |_, _, _| (),
-                                    move |bounds, _, window, _| {
-                                        paint_row(
-                                            bounds,
-                                            &lane_row,
-                                            spotlight.as_deref().map(|spot| (spot, index)),
-                                            NodeStyle {
-                                                is_head,
-                                                is_merge,
-                                                is_working,
-                                                is_stash,
-                                                head,
-                                                hollow: row_background,
-                                            },
-                                            is_dark,
-                                            window,
-                                        );
-                                    },
-                                )
-                                .size_full(),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .h_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .gap_1p5()
-                            .overflow_hidden()
-                            .child(
-                                div()
-                                    .h_flex()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_color(subject_color)
-                                    .child(
-                                        div()
-                                            .flex_none()
-                                            .text_color(muted)
-                                            .child(prefix.to_owned()),
+                    .children(cells(
+                        self.columns,
+                        [
+                            self.render_refs_column(index, &chips, cx)
+                                .into_any_element(),
+                            div()
+                                .w(px(graph_width))
+                                .h_full()
+                                .flex_none()
+                                .overflow_hidden()
+                                .child(
+                                    canvas(
+                                        |_, _, _| (),
+                                        move |bounds, _, window, _| {
+                                            paint_row(
+                                                bounds,
+                                                &lane_row,
+                                                spotlight.as_deref().map(|spot| (spot, index)),
+                                                NodeStyle {
+                                                    is_head,
+                                                    is_merge,
+                                                    is_working,
+                                                    is_stash,
+                                                    head,
+                                                    hollow: row_background,
+                                                },
+                                                is_dark,
+                                                window,
+                                            );
+                                        },
                                     )
-                                    .child(
-                                        div().min_w_0().truncate().child(description.to_owned()),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .w(AUTHOR_WIDTH)
-                            .flex_none()
-                            .truncate()
-                            .text_right()
-                            .text_color(muted)
-                            .child(SharedString::from(commit.author.clone())),
-                    )
-                    .child(
-                        div()
-                            .w(DATE_WIDTH)
-                            .flex_none()
-                            .text_right()
-                            .text_color(muted)
-                            .when(!is_working, |date| {
-                                date.child(format_when(commit, Utc::now().timestamp()))
-                            }),
-                    ),
+                                    .size_full(),
+                                )
+                                .into_any_element(),
+                            div()
+                                .h_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .gap_1p5()
+                                .overflow_hidden()
+                                .child(
+                                    div()
+                                        .h_flex()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_color(subject_color)
+                                        .child(
+                                            div()
+                                                .flex_none()
+                                                .text_color(muted)
+                                                .child(prefix.to_owned()),
+                                        )
+                                        .child(
+                                            div()
+                                                .min_w_0()
+                                                .truncate()
+                                                .child(description.to_owned()),
+                                        ),
+                                )
+                                .into_any_element(),
+                            div()
+                                .w(AUTHOR_WIDTH)
+                                .flex_none()
+                                .truncate()
+                                .text_right()
+                                .text_color(muted)
+                                .child(SharedString::from(commit.author.clone()))
+                                .into_any_element(),
+                            div()
+                                .w(DATE_WIDTH)
+                                .flex_none()
+                                .text_right()
+                                .text_color(muted)
+                                .when(!is_working, |date| {
+                                    date.child(format_when(commit, Utc::now().timestamp()))
+                                })
+                                .into_any_element(),
+                        ],
+                    )),
             );
         }
         rows
     }
+
+    /// The row of headings over the commits, one per column, in the same order and widths.
+    /// Each can be dragged onto another to change the order, which is remembered.
+    pub(super) fn render_column_headers(&self, cx: &mut Context<Self>) -> Div {
+        let theme = cx.theme();
+        let (panel, border, muted) = (theme.title_bar, theme.border, theme.muted_foreground);
+        let graph_width = self.graph_width();
+        let headers = self.columns.columns().map(|column| {
+            let heading = div()
+                .id(("column", column as usize))
+                .h_full()
+                .h_flex()
+                .cursor_pointer()
+                .rounded(px(4.))
+                .child(column.label());
+            let heading = match column {
+                Column::Refs => heading.w(px(REFS_WIDTH)).flex_none(),
+                Column::Graph => heading.w(px(graph_width)).flex_none().px_1p5(),
+                Column::Subject => heading.flex_1().min_w_0(),
+                Column::Author => heading.w(AUTHOR_WIDTH).flex_none().justify_end(),
+                Column::Date => heading.w(DATE_WIDTH).flex_none().justify_end(),
+            };
+            heading
+                .on_drag(DraggedColumn(column), |dragged, _, _, cx| {
+                    cx.new(|_| dragged.clone())
+                })
+                .can_drop(move |dragged, _, _| {
+                    dragged
+                        .downcast_ref::<DraggedColumn>()
+                        .is_some_and(|source| source.0 != column)
+                })
+                .drag_over::<DraggedColumn>(|style, _, _, cx| {
+                    style.bg(cx.theme().primary.opacity(0.14))
+                })
+                .on_drop(cx.listener(move |this, source: &DraggedColumn, _, cx| {
+                    this.move_column(source.0, column, cx)
+                }))
+                .tooltip(move |window, cx| {
+                    Tooltip::new(format!("Drag to move {}", column.label())).build(window, cx)
+                })
+        });
+        div()
+            .h_flex()
+            .h(px(28.))
+            .w_full()
+            .flex_none()
+            .pr_3()
+            .gap_3()
+            .bg(panel)
+            .border_b_1()
+            .border_color(border)
+            .text_size(TEXT_SMALL)
+            .font_medium()
+            .text_color(muted)
+            .children(headers)
+    }
+}
+
+/// What the cursor carries while a column heading is dragged.
+#[derive(Clone)]
+struct DraggedColumn(Column);
+
+impl Render for DraggedColumn {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        div()
+            .h_flex()
+            .h(px(28.))
+            .px_2()
+            .rounded(px(6.))
+            .bg(theme.title_bar)
+            .border_1()
+            .border_color(theme.border)
+            .text_size(TEXT_SMALL)
+            .font_medium()
+            .text_color(theme.foreground)
+            .child(self.0.label())
+    }
+}
+
+/// The cells of one row, given in the columns' usual order, set in the order chosen.
+fn cells(order: ColumnOrder, cells: [AnyElement; 5]) -> Vec<AnyElement> {
+    let mut cells: Vec<_> = Column::ALL.into_iter().zip(cells).collect();
+    let place = |column: Column| order.columns().iter().position(|&other| other == column);
+    cells.sort_by_key(|(column, _)| place(*column));
+    cells.into_iter().map(|(_, cell)| cell).collect()
 }
 
 /// When a commit happened, as short as it can be said.

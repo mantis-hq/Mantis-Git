@@ -25,6 +25,7 @@ pub use workspace::Workspace;
 
 use dialog::{Confirm, Dialog};
 use gitclient_core::cache::keys::{self, Caches};
+use gitclient_core::history::columns::ColumnOrder;
 use gitclient_core::history::refs::Refs;
 use gitclient_core::history::selection::Selection;
 use gitclient_core::history::{self, Entry, LoadEvent};
@@ -151,6 +152,8 @@ pub struct GraphView {
     /// The row whose refs card is open, and whether the pointer is on the card.
     hovered_refs: Option<usize>,
     popover_hovered: bool,
+    /// The graph's columns, left to right, as the user arranged them.
+    columns: ColumnOrder,
     scroll: UniformListScrollHandle,
     focus: FocusHandle,
     load_task: Option<Task<()>>,
@@ -221,6 +224,7 @@ impl GraphView {
             menu: None,
             hovered_refs: None,
             popover_hovered: false,
+            columns: ColumnOrder::default(),
             scroll: UniformListScrollHandle::new(),
             focus,
             load_task: None,
@@ -727,22 +731,29 @@ impl GraphView {
                     .child(match self.render_search_results(cx) {
                         Some(results) => results,
                         None => div()
-                            .relative()
+                            .v_flex()
                             .flex_1()
                             .min_h_0()
+                            .child(self.render_column_headers(cx))
                             .child(
-                                uniform_list(
-                                    "commits",
-                                    self.entries.len(),
-                                    cx.processor(|this, range: Range<usize>, _, cx| {
-                                        this.load_more_if_near_the_end(range.end, cx);
-                                        this.render_rows(range, cx)
-                                    }),
-                                )
-                                .track_scroll(&self.scroll)
-                                .size_full(),
+                                div()
+                                    .relative()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .child(
+                                        uniform_list(
+                                            "commits",
+                                            self.entries.len(),
+                                            cx.processor(|this, range: Range<usize>, _, cx| {
+                                                this.load_more_if_near_the_end(range.end, cx);
+                                                this.render_rows(range, cx)
+                                            }),
+                                        )
+                                        .track_scroll(&self.scroll)
+                                        .size_full(),
+                                    )
+                                    .vertical_scrollbar(&self.scroll),
                             )
-                            .vertical_scrollbar(&self.scroll)
                             .into_any_element(),
                     })
                     .into_any_element(),

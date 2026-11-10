@@ -70,6 +70,34 @@ fn the_way_files_are_listed_is_saved_for_every_repository(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
+fn the_order_of_the_graph_columns_is_saved_and_comes_back(cx: &mut TestAppContext) {
+    use gitclient_core::history::columns::Column;
+    use gitclient_core::settings::state::AppState;
+    let (view, mut cx) = open_view(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("state");
+    AppState {
+        reopen_tabs: false,
+        ..Default::default()
+    }
+    .save(&file)
+    .unwrap();
+    view.update(&mut cx, |view, cx| {
+        view.set_state_file(Some(file.clone()));
+        view.move_column(Column::Date, Column::Refs, cx);
+    });
+    let saved = AppState::load(&file);
+    assert_eq!(saved.graph_columns.columns()[0], Column::Date);
+    assert!(!saved.reopen_tabs, "other settings are kept");
+
+    let (again, mut cx2) = open_view(&mut cx.cx.clone());
+    again.update(&mut cx2, |view, _| {
+        view.set_state_file(Some(file.clone()));
+        assert_eq!(view.columns, saved.graph_columns);
+    });
+}
+
+#[gpui_kit::test]
 fn wide_histories_stop_growing_the_graph_at_eight_lanes(cx: &mut TestAppContext) {
     let (view, mut cx) = open_view(cx);
     load(&view, &["a"], &mut cx);
@@ -462,8 +490,11 @@ fn clicking_a_row_selects_it(cx: &mut TestAppContext) {
     load(&view, &["a", "b", "c"], &mut cx);
     cx.run_until_parked();
 
-    // The second row, below the 52px header.
-    cx.simulate_click(point(px(300.), px(52. + 32. + 16.)), Modifiers::none());
+    // The second row, below the 52px header and the 28px column headings.
+    cx.simulate_click(
+        point(px(300.), px(52. + 28. + 32. + 16.)),
+        Modifiers::none(),
+    );
     assert_eq!(view.read_with(&cx, |view, _| view.selected()), Some(1));
 }
 
