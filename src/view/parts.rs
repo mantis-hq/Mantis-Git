@@ -104,10 +104,6 @@ pub(super) const TEXT_BODY: Pixels = px(13.);
 pub(super) const TEXT_SMALL: Pixels = px(12.);
 /// Chips and counts.
 pub(super) const TEXT_CHIP: Pixels = px(11.);
-/// Initials in the 16 px avatar on a commit's dot. Smaller than the type table's rows
-/// because a lane is 16 px wide; two capitals still fit.
-pub(super) const TEXT_AVATAR: Pixels = px(7.);
-
 /// The short line between a header's way back and its sentence.
 pub(super) fn header_divider(cx: &App) -> Div {
     div().flex_none().w(px(1.)).h(px(20.)).bg(cx.theme().border)

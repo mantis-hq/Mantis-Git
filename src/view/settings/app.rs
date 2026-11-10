@@ -1,6 +1,7 @@
 //! The App page: what gitclient itself remembers, apart from git. Reopening tabs on
 //! launch, how many commits the graph loads, and the cache on disk.
 
+use super::super::avatars::{Face, disc};
 use super::*;
 use gitclient_core::history::avatar::{self, Style as AvatarStyle};
 use gitclient_core::install::exe_path;
@@ -351,12 +352,86 @@ impl Settings {
         .detach();
     }
 
-    /// The rows of the "Graph" card about avatars: what the dots show, and the user's own
-    /// picture.
-    fn avatar_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let muted = cx.theme().muted_foreground;
-        let enabled = self.state_file.is_some();
+    /// Who the open repository commits as, for the preview of the user's own avatar.
+    fn committer(&self) -> (String, String) {
+        let (name, email) = match &self.repo_state {
+            Some(Ok(state)) => (
+                state.committing.name.clone(),
+                state.committing.email.clone(),
+            ),
+            _ => (
+                self.sources.get("user.name").map(|s| s.value.clone()),
+                self.sources.get("user.email").map(|s| s.value.clone()),
+            ),
+        };
+        (name.unwrap_or_default(), email.unwrap_or_default())
+    }
+
+    /// The "Avatars" card. Two rows that read as two groups of people: "You", a person with
+    /// a picture of their own to change, and "Everyone else", shown by samples of what the
+    /// chips would make of other authors.
+    fn render_avatars_group(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let (muted, border, text) = (theme.muted_foreground, theme.border, theme.foreground);
+        let (on_tint, is_dark) = (theme.primary_foreground, theme.is_dark());
+        if self.state_file.is_none() {
+            let row = div()
+                .px_4()
+                .py_3()
+                .text_size(TEXT_SMALL)
+                .text_color(muted)
+                .child("gitclient can't find a folder to keep this in.")
+                .into_any_element();
+            return self.render_group("Avatars", vec![row], cx);
+        }
         let style = self.app.avatars;
+        let ring = border;
+        let (name, email) = self.committer();
+        let title = |label: &str| {
+            div()
+                .text_size(TEXT_BODY)
+                .line_height(px(20.))
+                .child(label.to_owned())
+        };
+        let small = |label: String| {
+            div()
+                .text_size(TEXT_SMALL)
+                .line_height(px(17.))
+                .text_color(muted)
+                .truncate()
+                .child(label)
+        };
+
+        // Everyone else: three samples in the picked style, then the choice.
+        let samples = div().h_flex().flex_none().children(
+            ["Ada Lovelace", "Alan Turing", "Grace Hopper"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, name)| {
+                    let face = if style == AvatarStyle::Off {
+                        Face::None
+                    } else {
+                        Face::Initials {
+                            text: avatar::initials(name),
+                            tint: avatar::tint("", name),
+                        }
+                    };
+                    let sample = if matches!(face, Face::None) {
+                        // A plain dot, as the graph draws one.
+                        div()
+                            .size(px(10.))
+                            .m(px(5.))
+                            .rounded_full()
+                            .bg(muted)
+                            .into_any_element()
+                    } else {
+                        disc(face, 28., 2., ring, is_dark, on_tint).into_any_element()
+                    };
+                    div()
+                        .when(index > 0, |sample| sample.ml(px(-6.)))
+                        .child(sample)
+                }),
+        );
         let chips = AvatarStyle::ALL.into_iter().map(|choice| {
             chip(
                 ("avatar-style", choice as usize),
@@ -366,48 +441,41 @@ impl Settings {
             )
             .on_click(cx.listener(move |this, _, _, cx| this.set_avatar_style(choice, cx)))
         });
-        let title =
-            |text: &'static str| div().text_size(TEXT_BODY).line_height(px(20.)).child(text);
-        let note = |text: String| {
-            div()
-                .text_size(TEXT_SMALL)
-                .line_height(px(17.))
-                .text_color(muted)
-                .child(text)
-        };
-        let shown = div()
-            .v_flex()
+        let others = div()
             .px_4()
             .py_3()
-            .gap_2()
+            .gap_3()
+            .h_flex()
             .child(
                 div()
                     .v_flex()
-                    .gap_0p5()
-                    .child(title("Author avatars"))
-                    .child(note(if enabled {
-                        style.sentence().to_owned()
-                    } else {
-                        "gitclient can't find a folder to keep this in.".to_owned()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_2()
+                    .child(title("Everyone else"))
+                    .child(div().flex().flex_wrap().gap_1().children(chips))
+                    .children((style == AvatarStyle::Gravatar).then(|| {
+                        small("Asks gravatar.com with a hash of each author's email.".to_owned())
                     })),
             )
-            .children(enabled.then(|| div().flex().flex_wrap().gap_1().children(chips)))
+            .child(samples)
             .into_any_element();
-        if !enabled || style == AvatarStyle::Off {
-            return vec![shown];
+        if style == AvatarStyle::Off {
+            return self.render_group("Avatars", vec![others], cx);
         }
+
+        // You: your own picture, or what you would get without one.
         let own = self.app.own_avatar.clone();
-        let words = match &own {
-            Some(file) => format!(
-                "Your commits, the ones made with the email git has set, show {}.",
-                file.display()
-            ),
-            None => "Pick a picture from this computer for your own commits. It is only read \
-                     here, never sent anywhere."
-                .to_owned(),
+        let face = match &own {
+            Some(file) => Face::File(file.clone()),
+            None => Face::Initials {
+                text: avatar::initials(&name),
+                tint: avatar::tint(&email, &name),
+            },
         };
         let buttons = div()
             .h_flex()
+            .flex_none()
             .gap_1()
             .child(
                 Button::new("choose-own-avatar")
@@ -427,23 +495,39 @@ impl Settings {
                     .label("Remove")
                     .on_click(cx.listener(|this, _, _, cx| this.set_own_avatar(None, cx)))
             }));
-        let mine = div()
+        let who = if name.is_empty() {
+            "You".to_owned()
+        } else {
+            name.clone()
+        };
+        let you = div()
             .px_4()
             .py_3()
             .gap_3()
             .h_flex()
+            .child(disc(face, 44., 2., ring, is_dark, on_tint))
             .child(
                 div()
                     .v_flex()
                     .flex_1()
                     .min_w_0()
-                    .gap_0p5()
-                    .child(title("Your own avatar"))
-                    .child(note(words)),
+                    .child(
+                        div()
+                            .text_size(TEXT_BODY)
+                            .line_height(px(20.))
+                            .text_color(text)
+                            .truncate()
+                            .child(who),
+                    )
+                    .child(small(if email.is_empty() {
+                        "No email set in git".to_owned()
+                    } else {
+                        email
+                    })),
             )
             .child(buttons)
             .into_any_element();
-        vec![shown, mine]
+        self.render_group("Avatars", vec![you, others], cx)
     }
 
     /// The "Graph" card: how many commits are loaded from a repository.
@@ -498,9 +582,7 @@ impl Settings {
                     .then(|| div().flex().flex_wrap().gap_1().children(chips)),
             )
             .into_any_element();
-        let mut rows = vec![row];
-        rows.extend(self.avatar_rows(cx));
-        self.render_group("Graph", rows, cx)
+        self.render_group("Graph", vec![row], cx)
     }
 
     pub(super) fn clear_cache(&mut self, cx: &mut Context<Self>) {
@@ -665,6 +747,7 @@ impl Settings {
             .children(self.render_launcher_group(cx))
             .child(self.render_updates_group(cx))
             .child(self.render_graph_group(cx))
+            .child(self.render_avatars_group(cx))
             .child(self.render_cache_group(cx))
             .into_any_element()
     }

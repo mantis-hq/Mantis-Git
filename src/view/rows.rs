@@ -272,7 +272,8 @@ impl GraphView {
                                     };
                                     cell.child(avatar_mark(
                                         face,
-                                        GRAPH_PADDING + lane_row.column as f32 * LANE_WIDTH,
+                                        GRAPH_PADDING + (lane_row.column as f32 + 0.5) * LANE_WIDTH
+                                            - avatars::SIZE / 2.,
                                         (f32::from(ROW_HEIGHT) - avatars::SIZE) / 2.,
                                         ring,
                                         is_dark,

@@ -187,15 +187,18 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     scrolled into view. When refs only moved forward, a reload reads just the new commits
     and lays out the rest again; after a rewrite or a deleted branch it reads everything.
     A change applies the next time a repository loads.
-    A second row, "Author avatars", picks what each commit's dot shows (`avatars` in the same
-    file): "Initials" (the default), "Gravatar" or "Plain dots", the picked one ticked and
-    never blue, with a sentence that says what it does now. Gravatar is opt-in because it
-    sends gravatar.com a SHA-256 hash of each author's email address, once per author per
-    session, and the sentence says so; initials send nothing. Unless dots are plain, a third
-    row "Your own avatar" has "Choose a picture" (a file dialog; PNG, JPEG, GIF, WebP or BMP,
-    up to 8 MB, checked by its first bytes) and "Remove", kept as `own_avatar`. It is drawn
-    on commits made with the email `git config user.email` gives in the open repository, and
-    beats a Gravatar. A file that can't be used is said in the header.
+    A card "Avatars" follows, with two rows that read as two groups of people. "You" is a
+    person row: a 44 px preview of the avatar your commits get (your picture, or your
+    initials on your colour), your name and email from git, and "Choose a picture" (a file
+    dialog; PNG, JPEG, GIF, WebP or BMP up to 8 MB, checked by its first bytes) with
+    "Remove" once one is set, kept as `own_avatar`. It is drawn on commits made with the
+    email `git config user.email` gives in the open repository, and beats a Gravatar. "Everyone
+    else" has the chips "Initials" (the default), "Gravatar" and "Plain dots" (`avatars` in
+    the same file), the picked one ticked and never blue, and three overlapping 28 px
+    samples in the picked style. Gravatar is opt-in because it sends gravatar.com a SHA-256
+    hash of each author's email address, once per author per session, and its chip says so
+    in one line; initials send nothing. With plain dots the "You" row goes. A file that
+    can't be used is said in the header.
     Under "Cache", a tick box "Keep a cache on disk" (on by default) says that what git
     reports about commits and their file diffs is kept between runs, so a commit seen before
     opens at once. When it is on, a row of chips picks the size limit (64 MB, 256 MB by
@@ -256,15 +259,17 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   open, how many terminals the front tab has and which of its tabs is in front are saved with
   the open tabs (see "App") and come back on launch, the terminals as fresh shells in the
   front repository's folder. The keyboard starts with the repository, not a terminal.
-- Avatars: unless turned off, a commit's dot is covered by a 16 px circle, the width of a
-  lane, with a 1.5 px ring in the lane's colour (Blue for HEAD), so a branch keeps its
-  colour. It holds the author's picture (own or Gravatar) or else their initials: the first
+- Avatars: unless turned off, a commit's dot is covered by a 20 px circle with a 2 px ring
+  in the lane's colour (Blue for HEAD), so a branch keeps its colour. A row holds one commit
+  and is 32 px tall, so no two circles touch and the lines of the lanes beside it pass
+  clear. It holds the author's picture (own or Gravatar) or else their initials: the first
   letter of the first and of the last word of the name, in capitals (`avatar::initials`),
-  in Crust at 7 px (`TEXT_AVATAR`, smaller than the type table because a lane is 16 px) on
-  one of the branch palette's colours, picked by a hash of the author's address so a person
-  has the same colour in every repository and session (`avatar::tint`). Working changes,
-  stashes and commits past the last lane keep their own marks. Merges lose their hollow dot
-  to the avatar; the inspector still says a commit is a merge.
+  in Crust at 45% of the circle's width (9 px here, so smaller than the type table, as an
+  avatar has to be) on one of the branch palette's colours, picked by a hash of the author's
+  address so a person has the same colour in every repository and session (`avatar::tint`).
+  With Gravatar, an author who has none keeps their initials. Working changes, stashes and
+  commits past the last lane keep their own marks. Merges lose their hollow dot to the
+  avatar; the inspector still says a commit is a merge.
 - Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide. Rows have no
   full hash: by default the refs column, the graph, the subject, the short hash (7
   characters, Overlay 2), then author and a short time ("12m", "3h", "Tue", "Oct 30"). The

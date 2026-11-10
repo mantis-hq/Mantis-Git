@@ -4,7 +4,7 @@
 //!
 //! Gravatar is asked by the SHA-256 of the lower-cased address, never the address itself,
 //! but the hash still tells it which authors a repository has. That is why it is off
-//! unless chosen, and why the setting says so (`AppState::avatars_sentence`).
+//! unless chosen, and why the setting says so.
 
 use crate::ops;
 use sha2::{Digest, Sha256};
@@ -69,21 +69,6 @@ impl Style {
                 "Saved. Commit dots show Gravatars, and initials where there is none."
             }
             Style::Off => "Saved. Commit dots are plain.",
-        }
-    }
-
-    pub fn sentence(self) -> &'static str {
-        match self {
-            Style::Initials => {
-                "Each commit's dot shows its author's initials on a colour of their own. \
-                 Nothing leaves your computer."
-            }
-            Style::Gravatar => {
-                "Each commit's dot shows its author's Gravatar, and initials when they have \
-                 none. To find it, gitclient sends gravatar.com a hash of the author's email \
-                 address, once for each author."
-            }
-            Style::Off => "Commit dots are plain.",
         }
     }
 }
