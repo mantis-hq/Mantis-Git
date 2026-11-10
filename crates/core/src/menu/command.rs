@@ -307,7 +307,7 @@ impl Command {
             Self::DeleteRemote { remote, name, tip } => Some(Confirmation {
                 message: branch::delete_remote_warning(remote, name, tip.as_deref()),
                 action: "Delete",
-                weight: Weight::Popup,
+                weight: Weight::DoublePress,
             }),
             Self::RemoveWorktree { warning, .. } => Some(Confirmation {
                 message: warning.clone(),
@@ -340,7 +340,11 @@ impl Command {
             Self::DeleteMany { refs } => Some(Confirmation {
                 message: branch::delete_many_warning(refs),
                 action: "Delete",
-                weight: deletion_weight(refs.iter().any(|doomed| doomed.at_risk)),
+                weight: if refs.iter().any(|doomed| doomed.on_remote.is_some()) {
+                    Weight::DoublePress
+                } else {
+                    deletion_weight(refs.iter().any(|doomed| doomed.at_risk))
+                },
             }),
             Self::Reset {
                 oid, hard: true, ..

@@ -1636,6 +1636,7 @@ mod tests {
         ));
         let ask = delete.command().unwrap().confirmation().unwrap();
         assert!(ask.message.contains("on origin"));
+        assert_eq!(ask.weight, command::Weight::DoublePress);
     }
 
     #[test]
