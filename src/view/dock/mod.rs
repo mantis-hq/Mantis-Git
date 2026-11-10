@@ -296,6 +296,10 @@ impl Dock {
                 cx,
             )
             .on_click(cx.listener(move |this, _, window, cx| this.show(tab, window, cx)))
+            .on_mouse_up(
+                MouseButton::Middle,
+                cx.listener(move |this, _, window, cx| this.close_terminal(index, window, cx)),
+            )
             .child(format!("Terminal {}", self.group.terminals[index].number))
             .child(
                 Button::new(("close-terminal", index))
