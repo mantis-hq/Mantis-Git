@@ -351,7 +351,7 @@ impl Command {
             Self::DeleteStashes { warning, .. } => Some(Confirmation {
                 message: warning.clone(),
                 action: "Delete",
-                weight: Weight::Popup,
+                weight: Weight::DoublePress,
             }),
             Self::DiscardChanges { warning, .. } => Some(Confirmation {
                 message: warning.clone(),
@@ -377,7 +377,7 @@ impl Command {
                     short_oid(oid)
                 ),
                 action: "Discard and reset",
-                weight: Weight::Popup,
+                weight: Weight::DoublePress,
             }),
             _ => None,
         }

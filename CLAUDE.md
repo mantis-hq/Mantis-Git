@@ -62,6 +62,23 @@ document in the same change.
 - `cargo fmt --all` formats both crates. Plain `cargo fmt` skips `crates/core`, and CI
   checks it.
 
+## Confirmation popups
+
+Every `Confirmation` in `crates/core/src/menu/command.rs` carries a `Weight`. Choose it by
+what a mistake costs, and say so in the same change as the command:
+
+- `Weight::DoublePress` (Enter twice) when the step loses something git can't give back:
+  uncommitted or unstaged work (discard, hard reset), commits nothing else keeps (deleting
+  an unmerged, unpushed branch or a stash), or something that changes for everyone who uses
+  a remote (deleting a remote branch, force push). A new command that does any of these
+  must be `DoublePress`.
+- `Weight::Popup` (Enter once) when the popup gives the exact command that undoes the step,
+  or git itself refuses to lose data (rebase, removing a remote or a clean worktree,
+  checking out a submodule commit).
+
+Keep "Delete confirmation" in `docs/design.md` in step, and cover the weight of a new
+confirmation with a test in `crates/core/src/menu`.
+
 ## Commits and releases
 
 Only create a branch when asked to, or when working in a worktree; otherwise commit on the

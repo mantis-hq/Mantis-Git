@@ -521,9 +521,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     "Delete". Deleting a branch that is neither merged into the default branch nor pushed
     loses commits nothing else keeps, so `Enter` has to be pressed twice within 600 ms: the
     first press turns the key line Red and says "Press Enter again to delete." Rules for
-    which is which live in core (`Weight` in `crates/core/src/menu/command.rs`). Other risky
-    steps (rebase, force push, hard reset) ask in the same popup, where `Enter` answers
-    once.
+    which is which live in core (`Weight` in `crates/core/src/menu/command.rs`). Steps
+    that lose what git can't give back (discarding changes, hard reset, force push, deleting
+    a stash or a remote branch) take Enter twice; steps that say the command that undoes
+    them (rebase, removing a remote or a worktree) ask in the same popup, where `Enter`
+    answers once.
   - **Forms** ask for a few words: a new branch's name, a remote's name and address, or a
     submodule's address and folder. The
     sentence says what the form makes or changes, and each input sits under its section
@@ -719,7 +721,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   opens a menu for every picked stash, or the one under the pointer when it isn't picked:
   "Apply 3 stashes" (applies them and keeps them, oldest first, stopping at the first git
   can't apply), "Pop 3 stashes" (the same, deleting each as it applies, so one that git can't
-  apply stays; the band gives the `git stash store <hash>` that puts each back), and in red "Delete 3 stashes", which asks first. The band
+  apply stays; the band gives the `git stash store <hash>` that puts each back), and in red "Delete 3 stashes", which asks first and takes Enter twice (see "Delete confirmation"). The band
   after a delete gives the `git stash store <hash>` that brings each one back.
 - **File lists:** the inspector's lists of a commit's (or the working changes') files share
   one choice. Its header always holds two chips, "List" (every file by its path, the
