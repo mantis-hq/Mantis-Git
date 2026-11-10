@@ -1,5 +1,5 @@
 //! The few pictures the interface draws: which forge a line is about, a question mark
-//! when that isn't known, and a check and a broken cloud on branch rows, and a lock on a locked worktree. They are plain shapes that take the colour of the text beside
+//! when that isn't known, and a check and a broken cloud on branch rows, and a lock on a locked worktree, and the window buttons of the tab strip. They are plain shapes that take the colour of the text beside
 //! them, so they add no colour of their own. GitHub's mark and the question mark are from
 //! Simple Icons and Lucide (ISC); the other two are drawn here.
 
@@ -17,6 +17,9 @@ pub enum Icon {
     CloudOff,
     Lock,
     ArrowUp,
+    WindowMinimize,
+    WindowMaximize,
+    WindowClose,
 }
 
 impl Icon {
@@ -31,6 +34,9 @@ impl Icon {
             Self::CloudOff => "icons/cloud-off.svg",
             Self::Lock => "icons/lock.svg",
             Self::ArrowUp => "icons/arrow-up.svg",
+            Self::WindowMinimize => "icons/window-minimize.svg",
+            Self::WindowMaximize => "icons/window-maximize.svg",
+            Self::WindowClose => "icons/window-close.svg",
         }
     }
 
@@ -44,6 +50,9 @@ impl Icon {
             "icons/cloud-off.svg" => include_bytes!("icons/cloud-off.svg"),
             "icons/lock.svg" => include_bytes!("icons/lock.svg"),
             "icons/arrow-up.svg" => include_bytes!("icons/arrow-up.svg"),
+            "icons/window-minimize.svg" => include_bytes!("icons/window-minimize.svg"),
+            "icons/window-maximize.svg" => include_bytes!("icons/window-maximize.svg"),
+            "icons/window-close.svg" => include_bytes!("icons/window-close.svg"),
             _ => return None,
         })
     }
@@ -67,6 +76,9 @@ impl AssetSource for Icons {
             Icon::CloudOff,
             Icon::Lock,
             Icon::ArrowUp,
+            Icon::WindowMinimize,
+            Icon::WindowMaximize,
+            Icon::WindowClose,
         ];
         Ok(all
             .into_iter()
@@ -94,11 +106,14 @@ mod tests {
             Icon::CloudOff,
             Icon::Lock,
             Icon::ArrowUp,
+            Icon::WindowMinimize,
+            Icon::WindowMaximize,
+            Icon::WindowClose,
         ] {
             let bytes = Icons.load(icon.path()).unwrap().expect("served");
             assert!(bytes.starts_with(b"<svg"), "{}", icon.path());
         }
         assert!(Icons.load("icons/none.svg").unwrap().is_none());
-        assert_eq!(Icons.list("icons/").unwrap().len(), 8);
+        assert_eq!(Icons.list("icons/").unwrap().len(), 11);
     }
 }

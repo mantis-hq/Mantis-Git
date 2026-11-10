@@ -590,39 +590,40 @@ impl Render for Workspace {
 fn window_controls(cx: &mut Context<Workspace>) -> impl IntoElement {
     let theme = cx.theme();
     let (hover, danger, text) = (theme.list_active, theme.danger, theme.foreground);
-    let control = |id: &'static str, icon: IconName, area: WindowControlArea, close: bool| {
-        div()
-            .id(id)
-            .h_full()
-            .w(px(46.))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_color(text)
-            .window_control_area(area)
-            .hover(move |style| style.bg(if close { danger } else { hover }))
-            .child(Icon::new(icon).small())
-    };
+    let control =
+        |id: &'static str, icon: crate::icons::Icon, area: WindowControlArea, close: bool| {
+            div()
+                .id(id)
+                .h_full()
+                .w(px(46.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(text)
+                .window_control_area(area)
+                .hover(move |style| style.bg(if close { danger } else { hover }))
+                .child(svg().path(icon.path()).size(px(14.)).text_color(text))
+        };
     div()
         .h_flex()
         .h_full()
         .flex_none()
         .child(control(
             "minimize",
-            IconName::WindowMinimize,
+            crate::icons::Icon::WindowMinimize,
             WindowControlArea::Min,
             false,
         ))
         .child(control(
             "maximize",
-            IconName::WindowMaximize,
+            crate::icons::Icon::WindowMaximize,
             WindowControlArea::Max,
             false,
         ))
         .child(control(
             "close-window",
-            IconName::WindowClose,
+            crate::icons::Icon::WindowClose,
             WindowControlArea::Close,
             true,
         ))
