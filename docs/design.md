@@ -356,8 +356,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   and opening it asks once. A quiet blue "Refresh" in its header asks again, and the count
   after it is how many the remote has. There is no sign-in and no API: the section uses
   git alone, `git ls-remote` on the refs hosts publish (`refs/pull/*/head`,
-  `refs/merge-requests/*/head`). So it lists the newest 30 by number, and a sentence under
-  them says so and that git can't say which are still open. A row is the number (`#42`, or
+  `refs/merge-requests/*/head`). So it lists the newest 30 by number. On GitHub and GitLab
+  only open requests are listed: those hosts drop a request's test merge ref
+  (`refs/pull/*/merge`) when it is closed or merged, so a request without one is left out,
+  and so is an open one that conflicts with its base, which a sentence under the list says.
+  Gitea has no such ref, so it lists every request and the sentence says git can't say which
+  are still open. A row is the number (`#42`, or
   `!42` on GitLab) in Text, then what the newest commit says in Overlay 2 when that commit
   is already in the repository, else its short hash. Clicking one opens it in the browser.
   Right-clicking opens the usual menu: "Open #42 on GitHub" and "Copy link". While asking,
