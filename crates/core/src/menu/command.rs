@@ -36,6 +36,12 @@ pub enum Command {
     PushBranch {
         branch: String,
     },
+    /// Sends a local branch to a named branch on a remote.
+    PushTo {
+        branch: String,
+        remote: String,
+        name: String,
+    },
     Drop {
         action: DropAction,
         source: String,
@@ -232,7 +238,7 @@ impl Command {
             Self::CheckOutRef { .. } | Self::CheckOutCommit { .. } => "Checking out",
             Self::MergeIntoCurrent { .. } => "Merging",
             Self::PullBranch { .. } => "Pulling",
-            Self::PushBranch { .. } => "Pushing",
+            Self::PushBranch { .. } | Self::PushTo { .. } => "Pushing",
             Self::Drop {
                 action: DropAction::FastForward,
                 ..
@@ -391,6 +397,11 @@ impl Command {
             Self::MergeIntoCurrent { source } => branch::merge_into_current(repo, source),
             Self::PullBranch { branch } => branch::pull_branch(repo, branch),
             Self::PushBranch { branch } => branch::push_branch(repo, branch),
+            Self::PushTo {
+                branch,
+                remote,
+                name,
+            } => branch::push_to(repo, branch, remote, name),
             Self::Drop {
                 action,
                 source,
