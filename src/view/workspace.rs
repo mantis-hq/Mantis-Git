@@ -230,7 +230,11 @@ impl Workspace {
     /// moves to the other working tree in place, keeping its position in the strip.
     fn make_tab(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<GraphView> {
         let view = cx.new(|cx| GraphView::new(window, cx));
-        view.update(cx, |view, _| view.set_state_file(self.state_file.clone()));
+        let dock = self.dock.clone();
+        view.update(cx, |view, _| {
+            view.set_state_file(self.state_file.clone());
+            view.set_dock(dock);
+        });
         cx.subscribe_in(
             &view,
             window,
@@ -549,7 +553,6 @@ impl Render for Workspace {
                             .child(self.tabs[self.active].clone()),
                     ),
             )
-            .child(self.dock.clone())
     }
 }
 

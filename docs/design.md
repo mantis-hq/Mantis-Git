@@ -244,8 +244,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     window says nothing about the commit graph unless it is the reason for a wait (see
     "Commit graph card"). Both sentences for a missing or behind graph add that in a large
     repository it makes branch counts, search and loading history slow.
-- Dock: a 36 px Mantle bar along the bottom of the window with a 1 px Surface 0 top
-  border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
+- Dock: a 36 px Mantle bar along the bottom of the graph column, under the graph and
+  between the sidebar and the inspector, which keep their full height, with a 1 px
+  Surface 0 top border, always visible. Open, it adds a body of 40% of the window height (160 to 420 px)
   under the bar, so history stays in view. `Ctrl \`` shows and hides it, and
   `Ctrl Shift \`` opens a terminal. Closed, the bar still says which command is running
   and for how long, so a slow command is never a silent wait. Terminals belong to the
