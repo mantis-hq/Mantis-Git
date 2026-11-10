@@ -547,7 +547,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     conflict header with each side named). Pictures use only the palette, and show chips and
     buttons as they are drawn elsewhere.
   - "Keys worth knowing": keycaps in Surface 0 (`Ctrl O` open a repository, `Ctrl T` new
-    tab, `Ctrl B` sidebar, `Ctrl ,` settings; `Cmd` on macOS).
+    tab, `Ctrl B` sidebar, `Ctrl ,` settings).
   - For a portable copy that has no launcher, a tick box, ticked: "Add gitclient to the
     application menu" ("Start menu" on Windows), with a muted sentence that names what will
     be written and where, and says Settings → App takes it away. A launcher that is already
@@ -627,7 +627,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   Repository page. A line that can't be used says why, briefly: the base already has all of
   the branch, or the two are on different remotes (a request between repositories isn't
   supported yet).
-- **Search:** a quiet "Search" button in the header, or `Ctrl F` (`Cmd F` on macOS), opens a
+- **Search:** a quiet "Search" button in the header, or `Ctrl F`, opens a
   44 px bar on Mantle with a Surface 0 bottom border over the graph, with the cursor in its
   input. Two chips choose what is matched, the picked one ticked and never blue: "Message,
   author or hash" (the default; the start of a hash of 4 or more digits finds its commit) and
@@ -820,10 +820,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   `running · 12s`, `exit 0 · 0.2s` in Green, `exit 128 · 0.2s` in Red. Its output sits
   under it as it arrives, stdout in Subtext 0, stderr in Overlay 2, and in Red when the
   command failed. A running command keeps to its newest line unless you scroll up. Dragging
-  over the output selects text, tinted 35% Blue, and `Ctrl C` (`Ctrl Shift C` too, `Cmd C` on
-  macOS) copies it; a click clears it, and so does picking another command.
+  over the output selects text, tinted 35% Blue, and `Ctrl C` (`Ctrl Shift C` too)
+  copies it; a click clears it, and so does picking another command.
 - **Terminal:** code type on Mantle. Dragging selects text, tinted 35% Blue, and `Ctrl Shift C`
-  (`Cmd C` on macOS, and `Ctrl C` on Windows while something is selected) copies it, so a plain
+  (and `Ctrl C` on Windows while something is selected) copies it, so a plain
   `Ctrl C` still interrupts the shell. Typing, scrolling or a click clears the selection. The cursor is a Blue block with Crust text and shows
   only while the terminal has focus. While it has focus it takes every key, Tab, Ctrl C
   and Ctrl W included, before any shortcut of the app, except `Ctrl \`` and
