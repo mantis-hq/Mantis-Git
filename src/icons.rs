@@ -1,5 +1,5 @@
 //! The few pictures the interface draws: which forge a line is about, a question mark
-//! when that isn't known, and a check and a broken cloud on branch rows. They are plain shapes that take the colour of the text beside
+//! when that isn't known, and a check and a broken cloud on branch rows, and a lock on a locked worktree. They are plain shapes that take the colour of the text beside
 //! them, so they add no colour of their own. GitHub's mark and the question mark are from
 //! Simple Icons and Lucide (ISC); the other two are drawn here.
 
@@ -15,6 +15,7 @@ pub enum Icon {
     Question,
     Check,
     CloudOff,
+    Lock,
 }
 
 impl Icon {
@@ -27,6 +28,7 @@ impl Icon {
             Self::Question => "icons/question.svg",
             Self::Check => "icons/check.svg",
             Self::CloudOff => "icons/cloud-off.svg",
+            Self::Lock => "icons/lock.svg",
         }
     }
 
@@ -38,6 +40,7 @@ impl Icon {
             "icons/question.svg" => include_bytes!("icons/question.svg"),
             "icons/check.svg" => include_bytes!("icons/check.svg"),
             "icons/cloud-off.svg" => include_bytes!("icons/cloud-off.svg"),
+            "icons/lock.svg" => include_bytes!("icons/lock.svg"),
             _ => return None,
         })
     }
@@ -59,6 +62,7 @@ impl AssetSource for Icons {
             Icon::Question,
             Icon::Check,
             Icon::CloudOff,
+            Icon::Lock,
         ];
         Ok(all
             .into_iter()
@@ -84,6 +88,7 @@ mod tests {
             Icon::Question,
             Icon::Check,
             Icon::CloudOff,
+            Icon::Lock,
         ] {
             let bytes = Icons.load(icon.path()).unwrap().expect("served");
             assert!(bytes.starts_with(b"<svg"), "{}", icon.path());
