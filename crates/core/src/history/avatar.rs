@@ -303,6 +303,16 @@ mod tests {
         assert!(read_own(&dir.path().join("gone.png")).is_err());
     }
 
+    /// Reaches the real gravatar.com with the address its own documentation uses, so it
+    /// needs a network and is run by hand: `cargo test -p gitclient-core -- --ignored gravatar`.
+    #[test]
+    #[ignore = "needs the network"]
+    fn gravatar_answers_for_a_known_address_and_not_for_an_unknown_one() {
+        let bytes = fetch("beau@dentedreality.com.au").expect("a picture");
+        assert_eq!(sniff(&bytes), Some(Kind::Png));
+        assert_eq!(fetch("nobody-has-this@example.invalid"), None);
+    }
+
     #[test]
     fn the_style_is_read_from_its_key() {
         for style in Style::ALL {
