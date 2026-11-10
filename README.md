@@ -35,9 +35,32 @@ Download the archive for your system from the
 - `git` on your `PATH`. Version 2.41 or newer is recommended, as the sidebar's branch
   counts need it.
 - To build from source: a recent stable Rust toolchain.
-- To build on Linux: `pkg-config`, `libxcb1-dev`, `libxkbcommon-dev`,
-  `libxkbcommon-x11-dev`, `libfontconfig1-dev`, `libfreetype-dev` and `libwayland-dev`
-  (package names for Debian and Ubuntu).
+- To build on Linux: the GUI libraries below.
+
+<details>
+<summary>Install the Linux build packages</summary>
+
+Debian and Ubuntu:
+
+```sh
+sudo apt-get install pkg-config libxcb1-dev libxkbcommon-dev \
+  libxkbcommon-x11-dev libfontconfig1-dev libfreetype-dev libwayland-dev
+```
+
+Arch:
+
+```sh
+sudo pacman -S pkgconf libxcb libxkbcommon libxkbcommon-x11 fontconfig freetype2 wayland
+```
+
+Fedora:
+
+```sh
+sudo dnf install pkgconf-pkg-config libxcb-devel libxkbcommon-devel \
+  libxkbcommon-x11-devel fontconfig-devel freetype-devel wayland-devel
+```
+
+</details>
 
 ## Building from source
 
