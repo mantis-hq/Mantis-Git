@@ -741,8 +741,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   muted `$`, in weight 600 and Text colour, with how it stands at the right in words:
   `running · 12s`, `exit 0 · 0.2s` in Green, `exit 128 · 0.2s` in Red. Its output sits
   under it as it arrives, stdout in Subtext 0, stderr in Overlay 2, and in Red when the
-  command failed. A running command keeps to its newest line unless you scroll up.
-- **Terminal:** code type on Mantle. The cursor is a Blue block with Crust text and shows
+  command failed. A running command keeps to its newest line unless you scroll up. Dragging
+  over the output selects text, tinted 35% Blue, and `Ctrl C` (`Ctrl Shift C` too, `Cmd C` on
+  macOS) copies it; a click clears it, and so does picking another command.
+- **Terminal:** code type on Mantle. Dragging selects text, tinted 35% Blue, and `Ctrl Shift C`
+  (`Cmd C` on macOS, and `Ctrl C` on Windows while something is selected) copies it, so a plain
+  `Ctrl C` still interrupts the shell. Typing, scrolling or a click clears the selection. The cursor is a Blue block with Crust text and shows
   only while the terminal has focus. While it has focus it takes every key, Tab, Ctrl C
   and Ctrl W included, before any shortcut of the app, except `Ctrl \`` and
   `Ctrl Shift \``. Colours the shell asks for by number use Catppuccin's terminal

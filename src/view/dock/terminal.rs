@@ -1,5 +1,6 @@
 //! One terminal in the dock: a shell in the repository's folder, drawn as text on a grid.
 
+use super::selection::{self, Selection};
 use crate::theme::{ansi_color, rgb_color};
 use crate::view::parts::TEXT_BODY;
 use gitclient_core::terminal::{Color, Cursor, Key, Run, Size, Snapshot, Terminal};
@@ -26,6 +27,9 @@ pub struct TerminalPane {
     terminal: Result<Terminal, String>,
     focus: FocusHandle,
     cell_width: Pixels,
+    /// Where the view was last drawn, to turn the pointer into a cell.
+    bounds: Bounds<Pixels>,
+    selection: Option<Selection>,
     _redraw: Option<Task<()>>,
     _keys: Subscription,
 }
@@ -80,6 +84,8 @@ impl TerminalPane {
             terminal,
             focus,
             cell_width: px(8.),
+            bounds: Bounds::default(),
+            selection: None,
             _redraw: redraw,
             _keys: keys,
         }
@@ -98,6 +104,7 @@ impl TerminalPane {
         let Ok(terminal) = &self.terminal else {
             return;
         };
+        self.bounds = bounds;
         let width = bounds.size.width - px(2. * PADDING_X);
         let height = bounds.size.height - px(2. * PADDING_Y);
         let size = Size {
@@ -115,6 +122,21 @@ impl TerminalPane {
             return false;
         };
         let modifiers = &key.modifiers;
+        // Ctrl C interrupts the shell, so it copies only where Windows terminals have it
+        // copy: while something is selected.
+        let selected = self
+            .selection
+            .is_some_and(|selection| !selection.is_empty());
+        if selection::is_copy(key, cfg!(windows) && selected) {
+            if selected {
+                self.copy(cx);
+                return true;
+            }
+            // Nothing to copy: Ctrl Shift C is not for the shell.
+            if modifiers.shift || modifiers.platform {
+                return true;
+            }
+        }
         let paste = if cfg!(target_os = "macos") {
             modifiers.platform && key.key == "v"
         } else {
@@ -142,6 +164,7 @@ impl TerminalPane {
                 return false;
             }
         }
+        self.selection = None;
         cx.notify();
         true
     }
@@ -155,7 +178,26 @@ impl TerminalPane {
             ScrollDelta::Lines(delta) => delta.y * 3.0,
         };
         terminal.scroll(lines.round() as isize);
+        // The rows moved under the selection.
+        self.selection = None;
         cx.notify();
+    }
+
+    /// The cell under `position`.
+    fn cell_at(&self, position: Point<Pixels>) -> (usize, usize) {
+        let origin = self.bounds.origin + point(px(PADDING_X), px(PADDING_Y));
+        selection::cell(position, origin, self.cell_width, px(ROW_HEIGHT))
+    }
+
+    fn copy(&mut self, cx: &mut Context<Self>) {
+        let (Some(selection), Ok(terminal)) = (self.selection, &self.terminal) else {
+            return;
+        };
+        let snapshot = terminal.snapshot();
+        let text = selection.text(|row| snapshot.rows.get(row).map(|runs| row_text(runs)));
+        if !text.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
     }
 }
 
@@ -197,7 +239,7 @@ impl Render for TerminalPane {
         let focused = self.focus.is_focused(window);
         let snapshot = terminal.snapshot();
         let exit = terminal.exit_message();
-        let rows = snapshot_rows(&snapshot, focused, is_dark, theme);
+        let rows = snapshot_rows(&snapshot, focused, is_dark, self.selection, theme);
         let this = cx.entity();
 
         shell
@@ -207,6 +249,35 @@ impl Render for TerminalPane {
             .text_color(text)
             .font_features(FontFeatures::disable_ligatures())
             .on_scroll(cx.listener(|this, event, _, cx| this.on_scroll(event, cx)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    window.focus(&this.focus, cx);
+                    this.selection = Some(Selection::start(this.cell_at(event.position)));
+                    cx.notify();
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                let cell = this.cell_at(event.position);
+                if event.pressed_button == Some(MouseButton::Left)
+                    && let Some(selection) = this.selection.as_mut().filter(|s| s.dragging())
+                {
+                    selection.extend(cell);
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| {
+                    if let Some(selection) = this.selection.as_mut() {
+                        selection.finish();
+                        if selection.is_empty() {
+                            this.selection = None;
+                        }
+                        cx.notify();
+                    }
+                }),
+            )
             .child(
                 // Measures the room, so the shell can be told how many rows and columns fit.
                 canvas(
@@ -243,6 +314,7 @@ fn snapshot_rows(
     snapshot: &Snapshot,
     focused: bool,
     is_dark: bool,
+    selection: Option<Selection>,
     theme: &Theme,
 ) -> Vec<AnyElement> {
     let cursor = snapshot.cursor.as_ref().filter(|_| focused);
@@ -251,8 +323,19 @@ fn snapshot_rows(
         .iter()
         .enumerate()
         .map(|(index, runs)| {
-            let text: String = runs.iter().map(|run| run.text.as_str()).collect();
+            let text = row_text(runs);
             let mut highlights = highlights(runs, is_dark, theme);
+            if let Some(columns) =
+                selection.and_then(|selection| selection.columns(index, text.chars().count()))
+            {
+                let tint = theme.primary.opacity(0.35);
+                highlights = overlay(highlights, selection::bytes(&text, columns), |style| {
+                    HighlightStyle {
+                        background_color: Some(tint),
+                        ..style
+                    }
+                });
+            }
             if let Some(cursor) = cursor.filter(|cursor| cursor.row == index) {
                 highlights = with_cursor(highlights, cursor, theme);
             }
@@ -265,6 +348,43 @@ fn snapshot_rows(
                 .into_any_element()
         })
         .collect()
+}
+
+fn row_text(runs: &[Run]) -> String {
+    runs.iter().map(|run| run.text.as_str()).collect()
+}
+
+/// Changes the style of the bytes `over`, whatever styles they had, and leaves the rest.
+fn overlay(
+    styled: Vec<(Range<usize>, HighlightStyle)>,
+    over: Range<usize>,
+    patch: impl Fn(HighlightStyle) -> HighlightStyle,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let mut result = Vec::with_capacity(styled.len() + 2);
+    let mut at = over.start;
+    for (range, style) in styled {
+        if range.end <= over.start || range.start >= over.end {
+            result.push((range, style));
+            continue;
+        }
+        let (start, end) = (range.start.max(over.start), range.end.min(over.end));
+        if range.start < over.start {
+            result.push((range.start..over.start, style));
+        }
+        if start > at {
+            result.push((at..start, patch(HighlightStyle::default())));
+        }
+        result.push((start..end, patch(style)));
+        at = end;
+        if range.end > over.end {
+            result.push((over.end..range.end, style));
+        }
+    }
+    if at < over.end {
+        result.push((at..over.end, patch(HighlightStyle::default())));
+    }
+    result.sort_by_key(|(range, _)| range.start);
+    result
 }
 
 /// The styles of the runs that differ from plain text.
