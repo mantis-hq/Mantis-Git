@@ -227,7 +227,7 @@ impl GraphView {
                     .h_flex()
                     .h(ROW_HEIGHT)
                     .w_full()
-                    .pr_3()
+                    .px_3()
                     .gap_3()
                     .text_size(TEXT_BODY)
                     .bg(row_background)
@@ -344,7 +344,7 @@ impl GraphView {
                 .child(column.label());
             let heading = match column {
                 Column::Refs => heading.w(px(REFS_WIDTH)).flex_none(),
-                Column::Graph => heading.w(px(graph_width)).flex_none().px_1p5(),
+                Column::Graph => heading.w(px(graph_width)).flex_none(),
                 Column::Subject => heading.flex_1().min_w_0(),
                 Column::Author => heading.w(AUTHOR_WIDTH).flex_none().justify_end(),
                 Column::Date => heading.w(DATE_WIDTH).flex_none().justify_end(),
@@ -373,7 +373,8 @@ impl GraphView {
             .h(px(28.))
             .w_full()
             .flex_none()
-            .pr_3()
+            // The same inset and gap as the rows, so each heading stands over its column.
+            .px_3()
             .gap_3()
             .bg(panel)
             .border_b_1()
