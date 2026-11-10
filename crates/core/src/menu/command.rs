@@ -1,6 +1,7 @@
 //! What a menu line does when chosen: the command itself, what it says while it runs, how
 //! it asks first when it can lose something, and running it.
 
+use super::Line;
 use super::form::Form;
 use crate::commit::actions;
 use crate::history::refs::RefKind;
@@ -17,6 +18,14 @@ use std::path::{Path, PathBuf};
 /// What a menu line does when chosen.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
+    /// Opens a menu of its own in place of this one. Nothing runs.
+    Submenu {
+        /// What the submenu applies to, shown as its heading.
+        heading: String,
+        lines: Vec<Line>,
+    },
+    /// Goes back from a submenu to the menu it came from.
+    Back,
     CheckOutRef {
         kind: RefKind,
         name: String,
@@ -285,6 +294,7 @@ impl Command {
             Self::Copy { .. } => "Copying",
             Self::RevealPath { .. } => "Opening",
             Self::OpenUrl { .. } | Self::AskForge { .. } => "Opening",
+            Self::Submenu { .. } | Self::Back => "Opening",
             Self::StashStaged { .. } => "Stashing",
             Self::ApplyStashes { .. } => "Applying",
             Self::PopStashes { .. } => "Popping",
@@ -525,6 +535,8 @@ impl Command {
             | Self::OpenUrl { .. }
             | Self::RevealPath { .. }
             | Self::AskForge { .. }
+            | Self::Submenu { .. }
+            | Self::Back
             | Self::Copy { .. } => Ok(None),
         }
     }

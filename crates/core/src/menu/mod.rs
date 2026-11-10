@@ -77,6 +77,27 @@ impl Line {
         }
     }
 
+    /// A line that opens `lines` as a menu of its own, under `heading`.
+    fn submenu(label: impl Into<String>, heading: impl Into<String>, lines: Vec<Line>) -> Self {
+        Self::item(
+            label,
+            Command::Submenu {
+                heading: heading.into(),
+                lines,
+            },
+        )
+    }
+
+    /// The first line of a submenu, which goes back.
+    pub fn back() -> Self {
+        Self::item("Back", Command::Back)
+    }
+
+    /// Whether choosing the line opens another menu.
+    pub fn opens_submenu(&self) -> bool {
+        matches!(self.command(), Some(Command::Submenu { .. }))
+    }
+
     fn danger(mut self) -> Self {
         if let Self::Item { danger, .. } = &mut self {
             *danger = true;
@@ -735,6 +756,12 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
             },
         )
     });
+    // Several ways to check out fold into one line; a lone one stays as it is.
+    let check_out = if check_out.len() > 1 {
+        vec![Line::submenu("Check out", "Check out", check_out)]
+    } else {
+        check_out
+    };
     if has_sync {
         push_group(&mut lines, check_out);
     } else {
@@ -800,30 +827,33 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
             .flat_map(|chip| upstream_lines(refs, chip.label.kind, &chip.label.name)),
     );
     if actions.can_check_out {
-        rework.push(Line::item(
-            format!("Reset {head} to here, keeping changes"),
-            Command::Reset {
-                oid: oid.clone(),
-                hard: false,
-            },
+        let heading = format!("Reset {head} to here");
+        rework.push(Line::submenu(
+            heading.clone(),
+            heading,
+            vec![
+                Line::item(
+                    "Keep changes",
+                    Command::Reset {
+                        oid: oid.clone(),
+                        hard: false,
+                    },
+                ),
+                Line::item(
+                    "Discard changes",
+                    Command::Reset {
+                        oid: oid.clone(),
+                        hard: true,
+                    },
+                )
+                .danger(),
+            ],
         ));
     }
     push_group(&mut lines, rework);
 
     // Everything that removes something comes last, in red.
     let mut danger = Vec::new();
-    if actions.can_check_out {
-        danger.push(
-            Line::item(
-                format!("Reset {head} to here, discarding changes"),
-                Command::Reset {
-                    oid: oid.clone(),
-                    hard: true,
-                },
-            )
-            .danger(),
-        );
-    }
     for r in refs.by_commit.get(oid.as_str()).into_iter().flatten() {
         if r.kind != RefKind::DetachedHead {
             danger.extend(delete_lines(refs, r.kind, &r.name));
@@ -1433,6 +1463,36 @@ mod tests {
             .collect()
     }
 
+    /// The lines under the submenu called `label`.
+    fn inside<'a>(lines: &'a [Line], label: &str) -> &'a [Line] {
+        lines
+            .iter()
+            .find_map(|line| match line {
+                Line::Item {
+                    label: found,
+                    command: Some(Command::Submenu { lines, .. }),
+                    ..
+                } if found == label => Some(lines.as_slice()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no submenu {label:?} in {:?}", labels(lines)))
+    }
+
+    /// Every label, with those inside submenus listed where the submenu is.
+    fn all_labels(lines: &[Line]) -> Vec<&str> {
+        lines
+            .iter()
+            .flat_map(|line| match line {
+                Line::Item {
+                    command: Some(Command::Submenu { lines, .. }),
+                    ..
+                } => all_labels(lines),
+                Line::Item { label, .. } => vec![label.as_str()],
+                _ => Vec::new(),
+            })
+            .collect()
+    }
+
     fn target(kind: RefKind, name: &str) -> Dragged {
         Dragged {
             kind,
@@ -1560,9 +1620,12 @@ mod tests {
                 "Copy hash",
                 "Copy subject",
                 "Revert",
-                "Reset main to here, keeping changes",
-                "Reset main to here, discarding changes"
+                "Reset main to here"
             ]
+        );
+        assert_eq!(
+            labels(inside(&elsewhere, "Reset main to here")),
+            ["Keep changes", "Discard changes"]
         );
     }
 
@@ -1580,13 +1643,13 @@ mod tests {
             .filter(|l| !labels(std::slice::from_ref(l))[0].starts_with("New branch"))
         {
             assert!(
-                labels(&lines).contains(&labels(std::slice::from_ref(line))[0]),
+                all_labels(&lines).contains(&labels(std::slice::from_ref(line))[0]),
                 "{:?} is missing from the commit's menu",
                 labels(std::slice::from_ref(line))
             );
         }
         // Check-outs first, red lines last, each group apart.
-        assert_eq!(labels(&lines)[0], "Check out feat/x");
+        assert_eq!(labels(&lines)[0], "Check out");
         assert_eq!(*labels(&lines).last().unwrap(), "Delete branch feat/x");
         let danger = lines
             .iter()
@@ -1617,8 +1680,9 @@ mod tests {
             ],
         );
         let lines = commit_menu(&refs, &[commit("bbbbbbbb", &["cccccccc"])]);
+        let check_out = inside(&lines, "Check out");
         assert_eq!(
-            labels(&lines)[..4],
+            labels(check_out),
             [
                 "Check out feat/x",
                 "Check out origin/feat/y as a local branch",
@@ -1628,14 +1692,14 @@ mod tests {
             "a remote branch whose local copy is here is the same chip, so one line"
         );
         assert_eq!(
-            lines[1].command(),
+            check_out[0].command(),
             Some(&Command::CheckOutRef {
                 kind: RefKind::Branch,
                 name: "feat/x".into()
             })
         );
         assert_eq!(
-            lines[4].command(),
+            check_out[3].command(),
             Some(&Command::CheckOutCommit {
                 branch: None,
                 oid: "bbbbbbbb".into()
@@ -1656,7 +1720,7 @@ mod tests {
         );
         let lines = commit_menu(&refs, &[commit("aaaaaaaa", &["cccccccc"])]);
         assert_eq!(
-            labels(&lines)[..2],
+            labels(inside(&lines, "Check out")),
             ["Check out main", "This commit is already checked out"]
         );
     }

@@ -521,11 +521,18 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   without a branch"), then "Check out 1a2b3c4 without a branch" for the commit itself.
   A commit's menu holds every option of each branch, tag and remote branch at it, in groups
   split by a rule, most used first: push, then pull, for each local branch that follows a
-  remote; check out (each ref, then the commit); bring in (merge and rebase each ref, or
-  merge the commit when there is none, then cherry-pick); a new branch from the commit;
-  copy; then the rarer ones near the foot, revert, set upstream for each local branch and
-  reset keeping changes; and last, in red, the hard reset and the deletion of each ref. A
+  remote; "Check out", a submenu of a line for each ref ("Check out feat/x", "Check out
+  origin/y as a local branch", "Check out v1.0.0 without a branch") and then the commit
+  itself ("Check out 1a2b3c4 without a branch"), or the one line itself when that is all
+  there is; bring in (merge and rebase each ref, or merge the commit when there is none,
+  then cherry-pick); a new branch from the commit; copy; then the rarer ones near the foot,
+  revert, set upstream for each local branch and "Reset main to here", a submenu of "Keep
+  changes" and, in red, "Discard changes"; and last, in red, the deletion of each ref. A
   branch's own menu follows the same order.
+  A line that ends in `›` opens a submenu in the card's place, under its own heading and a
+  "Back" line, and the keyboard starts on its first choice. `Esc` goes back to the line it
+  came from, and a second `Esc` or a click outside closes the menu. `Enter` on a submenu
+  opens it, and the confirmations of what it holds are the same as anywhere else.
 - **Popups:** a 420 px card centred over the window, on Mantle with a 1 px Blue outline
   and 8 px radius. It holds a sentence, then any inputs, then a line naming the keys
   ("Press Enter to create feat/x, or Esc to cancel.", in Overlay 2), and "Cancel" as a

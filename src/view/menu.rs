@@ -30,6 +30,8 @@ pub(super) struct Menu {
     lines: Vec<Line>,
     /// The line the keyboard is on.
     highlighted: Option<usize>,
+    /// The menus this one was opened from, each with the line that was on.
+    parents: Vec<(Vec<Line>, Option<usize>)>,
 }
 
 impl Menu {
@@ -38,7 +40,30 @@ impl Menu {
             position,
             lines,
             highlighted: None,
+            parents: Vec::new(),
         }
+    }
+
+    /// Shows a submenu in this one's place, under its heading and a way back.
+    fn enter(&mut self, heading: String, lines: Vec<Line>) {
+        let mut shown = vec![Line::Heading(heading), Line::back()];
+        shown.extend(lines);
+        let previous = std::mem::replace(&mut self.lines, shown);
+        self.parents.push((previous, self.highlighted));
+        self.highlighted = None;
+        // The keyboard starts on the first real choice, not on the way back.
+        self.step(1);
+        self.step(1);
+    }
+
+    /// Goes back to the menu this one was opened from. False when it is the first.
+    fn leave(&mut self) -> bool {
+        let Some((lines, highlighted)) = self.parents.pop() else {
+            return false;
+        };
+        self.lines = lines;
+        self.highlighted = highlighted;
+        true
     }
 
     /// Moves the keyboard highlight to the next or previous line with a command, wrapping.
@@ -160,6 +185,15 @@ pub(super) fn wire_ref(
 }
 
 impl GraphView {
+    /// Escape in a menu: back out of a submenu, else close it.
+    pub(super) fn back_menu(&mut self, cx: &mut Context<Self>) {
+        if self.menu.as_mut().is_some_and(Menu::leave) {
+            cx.notify();
+        } else {
+            self.close_menu(cx);
+        }
+    }
+
     pub(super) fn close_menu(&mut self, cx: &mut Context<Self>) {
         if self.menu.take().is_some() {
             cx.notify();
@@ -202,6 +236,18 @@ impl GraphView {
 
     /// Closes the menu and does what the chosen line says, asking first when it must.
     pub(super) fn choose(&mut self, command: Command, cx: &mut Context<Self>) {
+        // Opening or leaving a submenu keeps the menu on screen.
+        match command {
+            Command::Submenu { heading, lines } => {
+                if let Some(menu) = &mut self.menu {
+                    menu.enter(heading, lines);
+                    cx.notify();
+                }
+                return;
+            }
+            Command::Back => return self.back_menu(cx),
+            _ => {}
+        }
         self.menu = None;
         if let Command::SwitchWorktree { path } = &command {
             cx.emit(SwitchWorktree(path.clone()));
@@ -541,7 +587,8 @@ impl GraphView {
                                 .flex_1()
                                 .when(!explains, |label| label.truncate())
                                 .child(label.clone()),
-                        );
+                        )
+                        .when(line.opens_submenu(), |row| row.child(div().child("›")));
                     match command.clone() {
                         Some(command) => row
                             .cursor_pointer()
