@@ -793,6 +793,7 @@ impl GraphView {
                 .child(
                     div()
                         .id("scroll-to-top")
+                        .occlude()
                         .h_flex()
                         .size(px(28.))
                         .justify_center()
