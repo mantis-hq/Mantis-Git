@@ -16,9 +16,8 @@ on:
       - "docs/**"
       - "**.md"
       - "LICENSE"
-      # Pull request checks, not part of the program.
+      # The pull request checks are not part of the program.
       - ".github/workflows/ci.yml"
-      - ".github/workflows/licenses.yml"
   workflow_dispatch:
 
 # A newer push to the same ref stops the build still running for it. Tags have their own
