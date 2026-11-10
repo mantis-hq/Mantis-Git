@@ -601,6 +601,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   older than what the graph has loaded is dimmed, and clicking it says so in the band.
   `Esc` or "Close" brings the graph back, scrolled to the picked commit. An open diff or
   resolver covers the bar like the rest of the graph.
+- **Back to the top:** once the graph is scrolled down a screen or more, a 28 px quiet button
+  with an up arrow (Mantle fill, Surface 0 border, 6 px radius) floats at the top middle of
+  the list, with the tooltip "Back to the newest commit". Clicking it scrolls to the first
+  row, and it goes away at the top.
 - **Selecting commits:** a click selects one, `Ctrl`-click adds or removes one, and
   `Shift`-click adds the range. Selected rows take the selected-row fill, and the menu
   then acts on all of them.
