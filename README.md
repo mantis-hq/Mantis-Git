@@ -4,8 +4,7 @@ A desktop Git client that stays fast on big repositories.
 
 It's written in Rust on [gpui-kit](https://crates.io/crates/gpui-kit) and talks to your
 installed `git`. Git never runs on the thread that draws the window, long lists draw only
-what's in view, and history loads in pages. Performance is one of its core selling
-points: it should stay fast and responsive on large repositories.
+what's in view, and history loads in pages.
 
 ![gitclient showing a repository's branches, its history as a lane graph, and the working changes](docs/screenshot.png)
 
