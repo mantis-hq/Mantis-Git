@@ -1,7 +1,7 @@
 //! The commit rows: lanes on a canvas, then the subject, author and time.
 
 use super::GraphView;
-use super::avatars::{self, avatar_mark};
+use super::avatars::{self, Face, avatar_mark};
 use super::menu::wire_ref;
 use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
 use crate::theme::{lane_color, selected_row, tokens};
@@ -228,6 +228,14 @@ impl GraphView {
             let is_stash = self.refs.stash_at(&commit.oid).is_some();
             let chips = self.refs.chips_at(&commit.oid);
             let (prefix, description) = split_subject(&commit.subject);
+            let covered =
+                !matches!(face, Face::None) && !(is_working || is_stash || is_clipped(&lane_row));
+            let node_column = lane_row.column;
+            let node_ring = if is_head {
+                head
+            } else {
+                lane_color(lane_row.color, is_dark)
+            };
             let subject_color = if is_merge { subtext0 } else { foreground };
 
             rows.push(
@@ -264,22 +272,6 @@ impl GraphView {
                                 .flex_none()
                                 .relative()
                                 .overflow_hidden()
-                                .when(!(is_working || is_stash || is_clipped(&lane_row)), |cell| {
-                                    let ring = if is_head {
-                                        head
-                                    } else {
-                                        lane_color(lane_row.color, is_dark)
-                                    };
-                                    cell.child(avatar_mark(
-                                        face,
-                                        GRAPH_PADDING + (lane_row.column as f32 + 0.5) * LANE_WIDTH
-                                            - avatars::SIZE / 2.,
-                                        (f32::from(ROW_HEIGHT) - avatars::SIZE) / 2.,
-                                        ring,
-                                        is_dark,
-                                        on_tint,
-                                    ))
-                                })
                                 .child(
                                     canvas(
                                         |_, _, _| (),
@@ -293,6 +285,7 @@ impl GraphView {
                                                     is_merge,
                                                     is_working,
                                                     is_stash,
+                                                    covered,
                                                     head,
                                                     hollow: row_background,
                                                 },
@@ -303,6 +296,17 @@ impl GraphView {
                                     )
                                     .size_full(),
                                 )
+                                .when(covered, |cell| {
+                                    cell.child(avatar_mark(
+                                        face,
+                                        GRAPH_PADDING + (node_column as f32 + 0.5) * LANE_WIDTH
+                                            - avatars::SIZE / 2.,
+                                        (f32::from(ROW_HEIGHT) - avatars::SIZE) / 2.,
+                                        node_ring,
+                                        is_dark,
+                                        on_tint,
+                                    ))
+                                })
                                 .into_any_element(),
                             div()
                                 .h_flex()
@@ -576,6 +580,8 @@ struct NodeStyle {
     is_working: bool,
     /// A stash: a dashed ring in its lane's colour, as it isn't history yet.
     is_stash: bool,
+    /// An avatar is drawn over the dot, so the dot isn't.
+    covered: bool,
     head: Hsla,
     /// Fills the middle of merge nodes and the HEAD ring, so it has to match the row
     /// behind them.
@@ -636,6 +642,9 @@ fn paint_row(
         return;
     }
 
+    if node.covered {
+        return;
+    }
     if node.is_working {
         paint_dashed_ring(node_x, middle, NODE_RADIUS + 1., node.head, window);
         return;
