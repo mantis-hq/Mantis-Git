@@ -367,7 +367,7 @@ pub fn cache_size_label(megabytes: u32) -> String {
 pub fn bytes_label(bytes: u64) -> String {
     const MB: u64 = 1024 * 1024;
     if bytes < MB {
-        "under 1 MB".to_owned()
+        "< 1 MB".to_owned()
     } else if bytes < 1024 * MB {
         format!("{} MB", bytes / MB)
     } else {
@@ -489,7 +489,7 @@ mod tests {
     fn sizes_are_said_in_words() {
         assert_eq!(cache_size_label(256), "256 MB");
         assert_eq!(cache_size_label(1024), "1 GB");
-        assert_eq!(bytes_label(10), "under 1 MB");
+        assert_eq!(bytes_label(10), "< 1 MB");
         assert_eq!(bytes_label(42 * 1024 * 1024), "42 MB");
         assert_eq!(bytes_label(3 * 1024 * 1024 * 1024 / 2), "1.5 GB");
     }
