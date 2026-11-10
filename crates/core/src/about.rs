@@ -310,17 +310,13 @@ pub fn git_row(git: &Result<Version, String>) -> GitRow {
         Ok(version) if version.is_old() => GitRow {
             title: format!("git {version}"),
             sentence: format!(
-                "gitclient works best with git {RECOMMENDED} or newer. This one can't count how \
-                 far each branch is from the default branch, so the sidebar has no counts. \
-                 Updating git brings them back."
+                "Branch counts in the sidebar need git {RECOMMENDED} or newer. Update git to get them."
             ),
             update: true,
         },
         Ok(version) => GitRow {
             title: format!("git {version}"),
-            sentence: "This git has everything gitclient uses. The latest version is always \
-                       the best one to run."
-                .to_owned(),
+            sentence: "Recent enough for everything gitclient does.".to_owned(),
             update: false,
         },
         Err(message) => GitRow {
@@ -337,14 +333,13 @@ pub fn git_row(git: &Result<Version, String>) -> GitRow {
 pub fn old_git_notice(git: &Result<Version, String>) -> Option<String> {
     let version = git.as_ref().ok().filter(|version| version.is_old())?;
     Some(format!(
-        "This is git {version}, and gitclient is made for {RECOMMENDED} or newer. The \
-         sidebar has no branch counts with it. Settings → About has more."
+        "git {version} is too old for branch counts, which need {RECOMMENDED}. Update git to get them."
     ))
 }
 
 /// The sentence over the page's cards.
 pub fn page_sentence() -> String {
-    "The version you are running, and the licenses of everything in it.".to_owned()
+    "What you're running, and what's inside it.".to_owned()
 }
 
 /// What gitclient is licensed under, and what else is in it.
@@ -355,9 +350,8 @@ pub fn license_sentence() -> String {
         .map(|license| license.used_by.len())
         .sum::<usize>();
     format!(
-        "gitclient is free software under the GNU General Public License, version 3 or \
-         later. It also contains {} by others, each under its own license, which are \
-         listed here as they ask.",
+        "Free software under the GPL, version 3 or later. Built on {} by others, listed \
+         below with their licenses.",
         count(others, "project")
     )
 }
