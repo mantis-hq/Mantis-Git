@@ -1,7 +1,6 @@
 # gitclient
 
-A desktop Git client built for performance. Speed is the point: the window stays
-responsive and history opens quickly, whatever the size of the repository.
+A desktop Git client built for performance.
 
 It's written in Rust on [gpui-kit](https://crates.io/crates/gpui-kit) and talks to your
 installed `git`.
