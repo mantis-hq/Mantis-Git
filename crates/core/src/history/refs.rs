@@ -704,9 +704,6 @@ fn classify_ref(full_name: &str) -> Option<(RefKind, &str)> {
     }
 }
 
-/// Streams up to `limit` commits reachable from `tips`, children before parents, until
-/// `sink` returns false.
-
 #[cfg(test)]
 mod tests {
     use super::*;

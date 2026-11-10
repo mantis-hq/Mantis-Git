@@ -3,7 +3,7 @@
 //! separated from a copy that is passed on.
 //!
 //! The crates' licenses are written by `cargo about` into `THIRD-PARTY-LICENSES.txt` at the
-//! repository root (see "Releasing" in the README) and read here. Maple Mono is not a crate,
+//! repository root and read here. Maple Mono is not a crate,
 //! so its license is added by hand. Everything works without a window.
 //!
 //! `cargo about` writes one entry for each distinct text, so a license that crates word a
@@ -12,6 +12,7 @@
 //! with every copyright line of every crate that used it kept.
 
 use crate::install::update::Build;
+use crate::settings::config::{RECOMMENDED, Version};
 use crate::text::count;
 use std::sync::OnceLock;
 
@@ -290,9 +291,55 @@ pub fn version_line(build: &Build) -> String {
     format!("gitclient {}", build.label())
 }
 
+/// Where to get a newer git.
+pub const GIT_DOWNLOAD_URL: &str = "https://git-scm.com/downloads";
+
+/// The About page's row for the installed git.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitRow {
+    /// "git 2.39", or "git" when there is none to name.
+    pub title: String,
+    pub sentence: String,
+    /// The row offers a way to get a newer git.
+    pub update: bool,
+}
+
+/// Says which git this is, and suggests an update when it is older than [`RECOMMENDED`].
+pub fn git_row(git: &Result<Version, String>) -> GitRow {
+    match git {
+        Ok(version) if version.is_old() => GitRow {
+            title: format!("git {version}"),
+            sentence: format!(
+                "Branch counts in the sidebar need git {RECOMMENDED} or newer. Update git to get them."
+            ),
+            update: true,
+        },
+        Ok(version) => GitRow {
+            title: format!("git {version}"),
+            sentence: "Recent enough for everything gitclient does.".to_owned(),
+            update: false,
+        },
+        Err(message) => GitRow {
+            title: "git".to_owned(),
+            sentence: message.clone(),
+            update: false,
+        },
+    }
+}
+
+/// What the toast at launch says when the installed git is older than [`RECOMMENDED`].
+/// Nothing for a git that is recent enough, or one that couldn't be read, which the
+/// settings pages already say.
+pub fn old_git_notice(git: &Result<Version, String>) -> Option<String> {
+    let version = git.as_ref().ok().filter(|version| version.is_old())?;
+    Some(format!(
+        "git {version} is too old for branch counts, which need {RECOMMENDED}. Update git to get them."
+    ))
+}
+
 /// The sentence over the page's cards.
 pub fn page_sentence() -> String {
-    "The version you are running, and the licenses of everything in it.".to_owned()
+    "What you're running, and what's inside it.".to_owned()
 }
 
 /// What gitclient is licensed under, and what else is in it.
@@ -303,9 +350,8 @@ pub fn license_sentence() -> String {
         .map(|license| license.used_by.len())
         .sum::<usize>();
     format!(
-        "gitclient is free software under the GNU General Public License, version 3 or \
-         later. It also contains {} by others, each under its own license, which are \
-         listed here as they ask.",
+        "Free software under the GPL, version 3 or later. Built on {} by others, listed \
+         below with their licenses.",
         count(others, "project")
     )
 }
@@ -319,6 +365,32 @@ mod tests {
             "{RULE}\nMIT License\n\nUsed by:\na 1.0.0\nb 2.0.0\n\nMIT License\n\nCopyright (c) A\n\n\
              {RULE}\nZlib\n\nUsed by:\nc 0.1.0\n\nline one\n{RULE}\nline three\n\n"
         )
+    }
+
+    #[test]
+    fn an_old_git_is_named_and_an_update_suggested() {
+        let old = git_row(&Ok(Version(2, 39)));
+        assert_eq!(old.title, "git 2.39");
+        assert!(old.update);
+        assert!(old.sentence.contains("2.41"));
+
+        let recent = git_row(&Ok(Version(2, 41)));
+        assert_eq!(recent.title, "git 2.41");
+        assert!(!recent.update);
+        assert!(!git_row(&Ok(Version(3, 0))).update);
+
+        let missing = git_row(&Err("Git wasn't found.".to_owned()));
+        assert_eq!(missing.sentence, "Git wasn't found.");
+        assert!(!missing.update);
+    }
+
+    #[test]
+    fn only_an_old_git_gets_a_notice_at_launch() {
+        let notice = old_git_notice(&Ok(Version(2, 39))).unwrap();
+        assert!(notice.contains("2.39") && notice.contains("2.41"));
+        assert_eq!(old_git_notice(&Ok(Version(2, 41))), None);
+        assert_eq!(old_git_notice(&Ok(Version(2, 56))), None);
+        assert_eq!(old_git_notice(&Err("Git wasn't found.".to_owned())), None);
     }
 
     #[test]

@@ -41,8 +41,31 @@ impl Settings {
             )
             .into_any_element();
         let mut rows = vec![version];
+        rows.extend(self.git_row(cx));
         rows.extend(self.update_rows(cx));
         self.render_group("Version", rows, cx)
+    }
+
+    /// Which git this is, with a way to get a newer one when it is older than gitclient
+    /// is made for. Not drawn until git has been asked.
+    fn git_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let row = about::git_row(self.git.as_ref()?);
+        Some(
+            div()
+                .px_4()
+                .py_3()
+                .gap_3()
+                .h_flex()
+                .child(self.row_words(&row.title, &row.sentence, cx))
+                .children(row.update.then(|| {
+                    Button::new("get-newer-git")
+                        .ghost()
+                        .small()
+                        .label("Get a newer git")
+                        .on_click(|_, _, cx| cx.open_url(about::GIT_DOWNLOAD_URL))
+                }))
+                .into_any_element(),
+        )
     }
 
     /// The rows of the list in `range`: a license's name, what is under it, and how many.

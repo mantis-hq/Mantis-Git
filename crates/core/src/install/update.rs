@@ -664,9 +664,9 @@ impl Status {
 /// The sentence under "Check for updates when gitclient starts".
 pub fn check_sentence(on: bool) -> &'static str {
     if on {
-        "gitclient looks for a newer version when it starts, and asks before installing it."
+        "Checks when gitclient starts, and asks before installing."
     } else {
-        "gitclient only looks for a newer version when you press Check now."
+        "Only checks when you press Check now."
     }
 }
 

@@ -41,7 +41,7 @@ fn kept_by_app(keystroke: &Keystroke, context: &[KeyContext], cx: &App) -> bool 
     let (bindings, _) = cx
         .key_bindings()
         .borrow()
-        .bindings_for_input(&[keystroke.clone()], context);
+        .bindings_for_input(std::slice::from_ref(keystroke), context);
     bindings.iter().any(|binding| {
         let action = binding.action().as_any();
         action.is::<super::ToggleDock>() || action.is::<super::NewTerminal>()

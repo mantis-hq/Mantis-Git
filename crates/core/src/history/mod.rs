@@ -92,7 +92,7 @@ pub enum LoadEvent {
     Refs(Arc<Refs>),
     Batch(Vec<Entry>),
     /// The load stopped at its limit, and history may go on past it.
-    More(More),
+    More(Box<More>),
     Failed(String),
 }
 
@@ -245,7 +245,7 @@ fn read_more(
         // A full page may have more under it. If it was exactly the last, the next read
         // finds nothing and says no more.
         Ok(read) if !stopped && limit > 0 && read == limit => {
-            emit(LoadEvent::More(more));
+            emit(LoadEvent::More(Box::new(more)));
         }
         Ok(_) => {}
     }
@@ -393,7 +393,7 @@ mod tests {
         let mut take = |more: &mut Option<More>, event| {
             match event {
                 LoadEvent::Batch(batch) => entries.extend(batch),
-                LoadEvent::More(next) => *more = Some(next),
+                LoadEvent::More(next) => *more = Some(*next),
                 LoadEvent::Refs(_) => {}
                 LoadEvent::Failed(message) => panic!("{message}"),
             }

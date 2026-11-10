@@ -83,4 +83,4 @@ confirmation with a test in `crates/core/src/menu`.
 
 Only create a branch when asked to, or when working in a worktree; otherwise commit on the
 current branch. When a PR is wanted, open it into `main`. PRs are squash-merged, so PR
-titles must be Conventional Commits. See "Releasing" in `README.md`.
+titles must be Conventional Commits.

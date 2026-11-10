@@ -262,8 +262,17 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   - **About** is the last page, always in the side panel. Its "Version" card says which
     build this is ("gitclient 0.1.0", with the commit in brackets for a nightly), what
     gitclient is licensed under and that it contains so many projects by others, with a quiet
-    "Open the source on GitHub" button, and under that holds everything about updating, in
-    rows. A tick box "Look for a newer version when gitclient starts" (on by default,
+    "Open the source on GitHub" button, then a row that names the installed git ("git 2.56")
+    with a sentence under it, and under that holds everything about updating, in rows. A git
+    older than 2.41 (`RECOMMENDED` in `gitclient_core::settings::config`), which is the first
+    with `for-each-ref --format=%(ahead-behind:…)` and so the first to count every branch
+    against the default one in a single call, says what it lacks ("Branch counts in the
+    sidebar need git 2.41 or newer.") and ends its row in a quiet "Get a newer git" that
+    opens git-scm.com. The same
+    git also gets a toast at launch, in the front tab, which gives way to any message already
+    showing and closes like any other (`about::old_git_notice`). A git that is recent enough
+    says only that it is; one that can't be run is said on the Git config page already, and
+    the row repeats it. A tick box "Look for a newer version when gitclient starts" (on by default,
     `check_updates` in the `state` file), a row of chips "Which versions to update to"
     ("Full releases", the default, or "Nightly builds", kept as `update_track`, the picked one
     ticked and never blue) and a row that says where an update stands ("gitclient 0.2.0 is

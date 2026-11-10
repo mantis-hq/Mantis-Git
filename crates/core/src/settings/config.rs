@@ -86,7 +86,17 @@ impl Version {
         let mut parts = number.split('.').map(|part| part.parse::<u32>());
         Some(Version(parts.next()?.ok()?, parts.next()?.ok()?))
     }
+
+    /// Whether this git is older than [`RECOMMENDED`].
+    pub fn is_old(self) -> bool {
+        self < RECOMMENDED
+    }
 }
+
+/// The oldest git gitclient is made for. Before it, git has no `ahead-behind` for
+/// `for-each-ref`, the one call that counts every branch against the default branch, so the
+/// sidebar has no counts.
+pub const RECOMMENDED: Version = Version(2, 41);
 
 impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

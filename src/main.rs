@@ -90,6 +90,7 @@ fn main() {
                         workspace.answer_questions(questions, cx);
                     }
                     workspace.welcome(launcher, cx);
+                    workspace.check_git(cx);
                     workspace
                 })
             })

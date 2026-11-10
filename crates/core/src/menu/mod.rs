@@ -249,24 +249,24 @@ fn delete_lines(refs: &Refs, kind: RefKind, name: &str) -> Vec<Line> {
             .danger(),
         );
     }
-    if kind == RefKind::Remote {
-        if let Some((remote, branch_name)) = remote::split_branch(&refs.remote_configs, name) {
-            lines.push(
-                Line::item(
-                    format!("Delete {name} on {}", remote.name),
-                    Command::DeleteRemote {
-                        remote: remote.name.clone(),
-                        name: branch_name.to_owned(),
-                        tip: refs
-                            .remotes
-                            .iter()
-                            .find(|r| r.name == name)
-                            .map(|r| r.tip.to_string()),
-                    },
-                )
-                .danger(),
-            );
-        }
+    if kind == RefKind::Remote
+        && let Some((remote, branch_name)) = remote::split_branch(&refs.remote_configs, name)
+    {
+        lines.push(
+            Line::item(
+                format!("Delete {name} on {}", remote.name),
+                Command::DeleteRemote {
+                    remote: remote.name.clone(),
+                    name: branch_name.to_owned(),
+                    tip: refs
+                        .remotes
+                        .iter()
+                        .find(|r| r.name == name)
+                        .map(|r| r.tip.to_string()),
+                },
+            )
+            .danger(),
+        );
     }
     lines
 }
@@ -728,15 +728,15 @@ fn one_commit_menu(refs: &Refs, commit: &Commit) -> Vec<Line> {
         .iter()
         .flat_map(|chip| integrate_lines(refs, chip.label.kind, &chip.label.name))
         .collect();
-    if bring_in.is_empty() {
-        if let Some(current) = current.filter(|_| actions.can_check_out) {
-            bring_in.push(Line::item(
-                format!("Merge into {current}"),
-                Command::MergeIntoCurrent {
-                    source: oid.clone(),
-                },
-            ));
-        }
+    if bring_in.is_empty()
+        && let Some(current) = current.filter(|_| actions.can_check_out)
+    {
+        bring_in.push(Line::item(
+            format!("Merge into {current}"),
+            Command::MergeIntoCurrent {
+                source: oid.clone(),
+            },
+        ));
     }
     if actions.can_cherry_pick {
         bring_in.push(Line::item(

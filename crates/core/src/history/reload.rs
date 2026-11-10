@@ -121,7 +121,7 @@ fn lay_out_again(
     }
     // Lanes still waiting for a parent, or a tip not listed yet, mean there is more.
     if !more.starts().is_empty() {
-        emit(LoadEvent::More(more));
+        emit(LoadEvent::More(Box::new(more)));
     }
 }
 
@@ -153,7 +153,7 @@ mod tests {
             match event {
                 LoadEvent::Refs(refs) => self.refs = Some(refs),
                 LoadEvent::Batch(batch) => self.entries.extend(batch),
-                LoadEvent::More(next) => *more = Some(next),
+                LoadEvent::More(next) => *more = Some(*next),
                 LoadEvent::Failed(message) => panic!("{message}"),
             }
             true

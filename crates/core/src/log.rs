@@ -489,8 +489,10 @@ mod tests {
             status: "exit 0".into(),
             took: Duration::ZERO,
         };
-        let mut log = Log::default();
-        log.entries = vec![entry(done), entry(State::Running)];
+        let mut log = Log {
+            entries: vec![entry(done), entry(State::Running)],
+            ..Log::default()
+        };
         log.clear_finished();
         assert_eq!(log.entries.len(), 1);
         assert!(log.entries[0].is_running());

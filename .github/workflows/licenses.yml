@@ -1,0 +1,70 @@
+# THIRD-PARTY-LICENSES.txt is compiled into the program, so it has to match Cargo.lock.
+# A pull request only checks that every dependency's license is accepted (about.toml).
+# After a merge to main, this regenerates the file and, if it changed, pushes it to the
+# branch chore/licenses and opens a pull request for it (main is protected, so it can't
+# be pushed to). Releases don't wait for that pull request: the Release workflow makes
+# its own copy. LICENSES_TOKEN is a token that may push branches and open pull requests;
+# set it as a secret on both GitHub and Gitea.
+name: Licenses
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.lock"
+      - "about.toml"
+      - "about.hbs"
+      - ".github/workflows/licenses.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "about.toml"
+      - "about.hbs"
+      - ".github/workflows/licenses.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: licenses-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  licenses:
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'docker' }}
+    container:
+      image: rust:1-bookworm
+    steps:
+      - run: apt-get update && apt-get install -y --no-install-recommends nodejs
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.LICENSES_TOKEN || github.token }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/bin/cargo-about
+          key: licenses-${{ hashFiles('Cargo.lock') }}
+          restore-keys: licenses-
+      - run: command -v cargo-about >/dev/null || cargo install --locked cargo-about --features cli
+      - run: cargo about generate --locked about.hbs -o THIRD-PARTY-LICENSES.txt
+      - name: Open a pull request for the new file
+        if: github.event_name == 'push'
+        env:
+          TOKEN: ${{ secrets.LICENSES_TOKEN }}
+          API: ${{ github.api_url || format('{0}/api/v1', github.server_url) }}/repos/${{ github.repository }}
+        run: |
+          git diff --quiet THIRD-PARTY-LICENSES.txt && exit 0
+          git config user.name "gitclient licenses"
+          git config user.email "licenses@users.noreply.invalid"
+          git switch -c chore/licenses
+          git add THIRD-PARTY-LICENSES.txt
+          git commit -m "chore: update third-party licenses"
+          git push --force origin chore/licenses
+          # Gitea and GitHub take the same request here. A pull request from this branch
+          # that is already open is answered with 409 (Gitea) or 422 (GitHub), which is fine.
+          code=$(curl -sS -o "$RUNNER_TEMP/pr.json" -w '%{http_code}' -X POST "$API/pulls" \
+            -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+            -d '{"head":"chore/licenses","base":"main","title":"chore: update third-party licenses"}')
+          case "$code" in
+            201|409|422) ;;
+            *) cat "$RUNNER_TEMP/pr.json"; exit 1 ;;
+          esac
