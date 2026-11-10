@@ -308,7 +308,7 @@ impl GraphView {
             .rounded(px(8.))
             .bg(panel)
             .border_1()
-            .border_color(border)
+            .border_color(theme.primary)
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .text_size(TEXT_BODY)
