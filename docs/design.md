@@ -540,7 +540,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   away. Settings → App adds or removes the launcher from then on. On a window too short for
   it, the panel scrolls.
 - **Toast:** what just happened (and why a step failed, in Peach) is a card over the bottom
-  right of the window, 420 px wide, on Mantle with a Surface 0 border and 8 px radius, and
+  right of the window, 420 px wide, on Mantle with a 1 px Blue outline and 8 px radius, and
   ends in a quiet `×` that closes it. It floats over the graph, so the rows never move.
   There are no bands: nothing in the window pushes the graph down. Where this document
   says "the band says" for an outcome, it means the toast. A card that offers something
