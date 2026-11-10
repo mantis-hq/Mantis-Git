@@ -747,6 +747,7 @@ mod tests {
             oid: oid.into(),
             parents: parents.iter().map(|&parent| parent.into()).collect(),
             author: "".into(),
+            email: "".into(),
             time: 0,
             subject: "".into(),
         }

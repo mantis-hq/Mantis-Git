@@ -800,6 +800,38 @@ fn the_update_check_switch_saves_at_once_and_keeps_the_tabs(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
+fn avatars_default_to_initials_and_the_choices_save_at_once(cx: &mut TestAppContext) {
+    use gitclient_core::history::avatar::Style;
+    let dir = tempfile::tempdir().unwrap();
+    let (_scope_dir, scope) = file_scope();
+    let (view, mut cx) = open(None, scope, cx);
+    let (file, _) = with_launcher(&view, dir.path(), &mut cx);
+    let saved = AppState::load(&file);
+    assert_eq!(
+        saved.avatars,
+        Style::Initials,
+        "nothing leaves the computer by default"
+    );
+    assert_eq!(saved.own_avatar, None);
+
+    view.update(&mut cx, |settings, cx| {
+        settings.set_avatar_style(Style::Gravatar, cx)
+    });
+    view.update(&mut cx, |settings, cx| {
+        settings.set_own_avatar(Some(PathBuf::from("/home/ada/me.png")), cx)
+    });
+
+    let saved = AppState::load(&file);
+    assert_eq!(saved.avatars, Style::Gravatar);
+    assert_eq!(saved.own_avatar, Some(PathBuf::from("/home/ada/me.png")));
+    assert_eq!(saved.tabs, [PathBuf::from("/work/a")], "the tabs are kept");
+    draw(&view, &mut cx);
+
+    view.update(&mut cx, |settings, cx| settings.set_own_avatar(None, cx));
+    assert_eq!(AppState::load(&file).own_avatar, None);
+}
+
+#[gpui_kit::test]
 fn the_update_track_saves_at_once_and_defaults_to_full_releases(cx: &mut TestAppContext) {
     use gitclient_core::install::update::Track;
     let dir = tempfile::tempdir().unwrap();

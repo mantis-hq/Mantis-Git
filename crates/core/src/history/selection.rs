@@ -102,6 +102,7 @@ mod tests {
                         oid,
                         parents,
                         author: "Ada".into(),
+                        email: "".into(),
                         time: 0,
                         subject: format!("commit {index}").into(),
                     },

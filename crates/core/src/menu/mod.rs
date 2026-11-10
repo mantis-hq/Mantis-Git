@@ -1016,6 +1016,7 @@ mod tests {
             oid: oid.into(),
             parents: parents.iter().map(|&p| p.into()).collect(),
             author: "Ada".into(),
+            email: "".into(),
             time: 0,
             subject: format!("subject of {oid}").into(),
         }

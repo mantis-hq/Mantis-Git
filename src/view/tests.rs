@@ -28,6 +28,7 @@ fn entries(names: &[&str]) -> Vec<Entry> {
                     oid: name.into(),
                     parents,
                     author: "Author".into(),
+                    email: "".into(),
                     time: 0,
                     subject: name.into(),
                 },

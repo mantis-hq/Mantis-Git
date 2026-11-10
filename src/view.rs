@@ -1,6 +1,7 @@
 //! The main window. This file owns the state shared across the app and the overall
 //! layout; each region and screen lives in its own module.
 
+mod avatars;
 mod conflicts;
 mod dialog;
 mod diff;
@@ -192,6 +193,7 @@ pub struct GraphView {
     /// Set while another tab is showing, so that only the visible tab reacts to the
     /// window coming back to the front.
     in_background: bool,
+    avatars: avatars::State,
     caches: Caches,
     /// What besides a commit decides how git reports it, which keys the caches. `None`
     /// until it has been read, and the caches go unused until then.
@@ -255,6 +257,7 @@ impl GraphView {
             commit: Default::default(),
             conflict: Default::default(),
             in_background: false,
+            avatars: Default::default(),
             caches: shared_caches(cx),
             fingerprint: None,
             _activation: activation,
@@ -758,6 +761,7 @@ impl GraphView {
                                             self.entries.len(),
                                             cx.processor(|this, range: Range<usize>, _, cx| {
                                                 this.load_more_if_near_the_end(range.end, cx);
+                                                this.prepare_avatars(cx);
                                                 this.render_rows(range, cx)
                                             }),
                                         )

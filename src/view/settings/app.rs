@@ -2,6 +2,7 @@
 //! launch, how many commits the graph loads, and the cache on disk.
 
 use super::*;
+use gitclient_core::history::avatar::{self, Style as AvatarStyle};
 use gitclient_core::install::exe_path;
 use gitclient_core::install::update::{self, Track};
 
@@ -296,6 +297,155 @@ impl Settings {
         );
     }
 
+    pub(super) fn set_avatar_style(&mut self, style: AvatarStyle, cx: &mut Context<Self>) {
+        self.change_cache_setting(
+            |state| state.avatars = style,
+            move |_| style.saved_message().to_owned(),
+            cx,
+        );
+    }
+
+    pub(super) fn set_own_avatar(&mut self, file: Option<PathBuf>, cx: &mut Context<Self>) {
+        let said = if file.is_some() {
+            "Saved. Your commits show the picture you chose."
+        } else {
+            "Saved. Your commits no longer show a picture of your own."
+        };
+        self.change_cache_setting(
+            |state| state.own_avatar = file,
+            move |_| said.to_owned(),
+            cx,
+        );
+    }
+
+    /// Asks for a picture from the computer, and keeps it if the app can draw it.
+    fn choose_own_avatar(&mut self, cx: &mut Context<Self>) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Use as my avatar".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let Some(file) = paths.into_iter().next() else {
+                return;
+            };
+            let checked = cx
+                .background_spawn({
+                    let file = file.clone();
+                    async move { avatar::read_own(&file).map(|_| ()) }
+                })
+                .await;
+            this.update(cx, |this, cx| match checked {
+                Ok(()) => this.set_own_avatar(Some(file), cx),
+                Err(error) => {
+                    this.feedback = Feedback::Failed(error);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The rows of the "Graph" card about avatars: what the dots show, and the user's own
+    /// picture.
+    fn avatar_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let muted = cx.theme().muted_foreground;
+        let enabled = self.state_file.is_some();
+        let style = self.app.avatars;
+        let chips = AvatarStyle::ALL.into_iter().map(|choice| {
+            chip(
+                ("avatar-style", choice as usize),
+                choice.label(),
+                choice == style,
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.set_avatar_style(choice, cx)))
+        });
+        let title =
+            |text: &'static str| div().text_size(TEXT_BODY).line_height(px(20.)).child(text);
+        let note = |text: String| {
+            div()
+                .text_size(TEXT_SMALL)
+                .line_height(px(17.))
+                .text_color(muted)
+                .child(text)
+        };
+        let shown = div()
+            .v_flex()
+            .px_4()
+            .py_3()
+            .gap_2()
+            .child(
+                div()
+                    .v_flex()
+                    .gap_0p5()
+                    .child(title("Author avatars"))
+                    .child(note(if enabled {
+                        style.sentence().to_owned()
+                    } else {
+                        "gitclient can't find a folder to keep this in.".to_owned()
+                    })),
+            )
+            .children(enabled.then(|| div().flex().flex_wrap().gap_1().children(chips)))
+            .into_any_element();
+        if !enabled || style == AvatarStyle::Off {
+            return vec![shown];
+        }
+        let own = self.app.own_avatar.clone();
+        let words = match &own {
+            Some(file) => format!(
+                "Your commits, the ones made with the email git has set, show {}.",
+                file.display()
+            ),
+            None => "Pick a picture from this computer for your own commits. It is only read \
+                     here, never sent anywhere."
+                .to_owned(),
+        };
+        let buttons = div()
+            .h_flex()
+            .gap_1()
+            .child(
+                Button::new("choose-own-avatar")
+                    .ghost()
+                    .small()
+                    .label(if own.is_some() {
+                        "Change picture"
+                    } else {
+                        "Choose a picture"
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| this.choose_own_avatar(cx))),
+            )
+            .children(own.is_some().then(|| {
+                Button::new("clear-own-avatar")
+                    .ghost()
+                    .small()
+                    .label("Remove")
+                    .on_click(cx.listener(|this, _, _, cx| this.set_own_avatar(None, cx)))
+            }));
+        let mine = div()
+            .px_4()
+            .py_3()
+            .gap_3()
+            .h_flex()
+            .child(
+                div()
+                    .v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_0p5()
+                    .child(title("Your own avatar"))
+                    .child(note(words)),
+            )
+            .child(buttons)
+            .into_any_element();
+        vec![shown, mine]
+    }
+
     /// The "Graph" card: how many commits are loaded from a repository.
     fn render_graph_group(&self, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
@@ -348,7 +498,9 @@ impl Settings {
                     .then(|| div().flex().flex_wrap().gap_1().children(chips)),
             )
             .into_any_element();
-        self.render_group("Graph", vec![row], cx)
+        let mut rows = vec![row];
+        rows.extend(self.avatar_rows(cx));
+        self.render_group("Graph", rows, cx)
     }
 
     pub(super) fn clear_cache(&mut self, cx: &mut Context<Self>) {

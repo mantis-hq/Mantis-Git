@@ -5,6 +5,7 @@
 //! Going through the CLI keeps this working with everything the user's git understands
 //! (reftables, SHA-256, partial clones, the commit-graph cache) without a libgit2 build.
 
+pub mod avatar;
 pub mod columns;
 pub mod lanes;
 pub mod picks;
@@ -31,6 +32,8 @@ pub struct Commit {
     pub oid: Arc<str>,
     pub parents: Box<[Arc<str>]>,
     pub author: Arc<str>,
+    /// The author's address, which the avatar is looked up by. Empty when unknown.
+    pub email: Arc<str>,
     /// Author date, seconds since the Unix epoch.
     pub time: i64,
     pub subject: Arc<str>,
@@ -255,6 +258,7 @@ fn working_entry(files: u32, builder: &mut GraphBuilder) -> Entry {
             oid: "".into(),
             parents: Box::default(),
             author: "".into(),
+            email: "".into(),
             time: 0,
             subject: format!("Working changes in {}", count(files, "file")).into(),
         },
@@ -285,7 +289,7 @@ fn stream_commits(
         "--no-color",
         // log.showSignature would otherwise mix gpg output into the records.
         "--no-show-signature",
-        "--format=%H%x00%P%x00%aN%x00%at%x00%s",
+        "--format=%H%x00%P%x00%aN%x00%aE%x00%at%x00%s",
     ]);
     // Dropping the process, as every early return below does, stops git.
     let mut process = Process::spawn(&mut command, true)?;
@@ -344,13 +348,14 @@ fn parse_commit(line: &[u8]) -> Result<Commit, String> {
     let line = String::from_utf8_lossy(line);
     let line = line.strip_suffix('\n').unwrap_or(&line);
     let fields: Vec<&str> = line.split('\0').collect();
-    let [oid, parents, author, time, subject] = fields[..] else {
+    let [oid, parents, author, email, time, subject] = fields[..] else {
         return Err(format!("unexpected output from git log: {line:?}"));
     };
     Ok(Commit {
         oid: oid.into(),
         parents: parents.split_ascii_whitespace().map(Arc::from).collect(),
         author: author.into(),
+        email: email.into(),
         time: time.parse().unwrap_or(0),
         subject: subject.into(),
     })

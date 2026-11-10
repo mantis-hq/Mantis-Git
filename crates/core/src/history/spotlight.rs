@@ -106,6 +106,7 @@ mod tests {
                         oid: (*oid).into(),
                         parents,
                         author: "a".into(),
+                        email: "".into(),
                         time: 0,
                         subject: (*oid).into(),
                     },

@@ -1,6 +1,7 @@
 //! The commit rows: lanes on a canvas, then the subject, author and time.
 
 use super::GraphView;
+use super::avatars::{self, avatar_mark};
 use super::menu::wire_ref;
 use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
 use crate::theme::{lane_color, selected_row, tokens};
@@ -195,7 +196,7 @@ impl GraphView {
     }
 
     pub(super) fn render_rows(
-        &self,
+        &mut self,
         range: Range<usize>,
         cx: &mut Context<Self>,
     ) -> Vec<Stateful<Div>> {
@@ -203,12 +204,17 @@ impl GraphView {
         let is_dark = theme.is_dark();
         let (foreground, muted) = (theme.foreground, theme.muted_foreground);
         let head = theme.primary;
+        let on_tint = theme.primary_foreground;
         let (background, hover, active) = (theme.background, theme.list_hover, selected_row(theme));
         let subtext0 = tokens(is_dark).subtext0;
         let graph_width = self.graph_width();
 
         let mut rows = Vec::with_capacity(range.len());
         for index in range {
+            let face = {
+                let commit = self.entries[index].commit.clone();
+                self.avatar_face(&commit, cx)
+            };
             let entry = &self.entries[index];
             let commit = &entry.commit;
             let selected = self.selection.contains(&self.entries, self.selected, index);
@@ -256,7 +262,23 @@ impl GraphView {
                                 .w(px(graph_width))
                                 .h_full()
                                 .flex_none()
+                                .relative()
                                 .overflow_hidden()
+                                .when(!(is_working || is_stash || is_clipped(&lane_row)), |cell| {
+                                    let ring = if is_head {
+                                        head
+                                    } else {
+                                        lane_color(lane_row.color, is_dark)
+                                    };
+                                    cell.child(avatar_mark(
+                                        face,
+                                        GRAPH_PADDING + lane_row.column as f32 * LANE_WIDTH,
+                                        (f32::from(ROW_HEIGHT) - avatars::SIZE) / 2.,
+                                        ring,
+                                        is_dark,
+                                        on_tint,
+                                    ))
+                                })
                                 .child(
                                     canvas(
                                         |_, _, _| (),
@@ -734,6 +756,7 @@ mod tests {
             oid: "a".into(),
             parents: Box::new([]),
             author: "a".into(),
+            email: "".into(),
             time,
             subject: "s".into(),
         }
