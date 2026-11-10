@@ -809,6 +809,10 @@ impl GraphView {
                         .tooltip_show_delay(std::time::Duration::ZERO)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.scroll.scroll_to_item(0, ScrollStrategy::Top);
+                            // The list only moves when it is next painted, so this
+                            // render would still see the old position and keep the button.
+                            let handle = this.scroll.0.borrow().base_handle.clone();
+                            handle.set_offset(point(handle.offset().x, px(0.)));
                             cx.notify();
                         }))
                         .child(
