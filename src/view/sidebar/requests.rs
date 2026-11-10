@@ -137,7 +137,7 @@ impl GraphView {
                 format!("{} has no {}s.", remote.name, site.forge.noun()),
                 false,
             )),
-            Load::Done(found) => Some((found.caveat(site.forge), false)),
+            Load::Done(_) => None,
         }
     }
 

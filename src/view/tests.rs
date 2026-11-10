@@ -1710,16 +1710,10 @@ fn the_requests_of_a_forge_are_listed_under_its_own_word_for_them(cx: &mut TestA
                 },
             ],
             total: 80,
-            open_only: true,
         }));
         assert_eq!(
             view.request_rows_for_test(),
-            [
-                "Merge requests",
-                "!8 fix: the cat",
-                "!5 9f8e7d6",
-                "The newest 2 of 80 merge requests. Open ones only; one that conflicts with its base isn't listed."
-            ]
+            ["Merge requests", "!8 fix: the cat", "!5 9f8e7d6"]
         );
         view.set_requests_for_test(Load::Failed("Couldn't ask origin for its requests.".into()));
         assert_eq!(
