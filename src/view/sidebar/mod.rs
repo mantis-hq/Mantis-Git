@@ -714,18 +714,22 @@ impl GraphView {
                                 .relative()
                                 .size_full()
                                 .child(
-                                    uniform_list(
-                                        "sidebar-rows",
-                                        items.len(),
-                                        cx.processor(move |this, range: Range<usize>, _, cx| {
-                                            range
-                                                .filter_map(|index| items.get(index))
-                                                .map(|item| this.render_item(item, cx))
-                                                .collect::<Vec<_>>()
-                                        }),
-                                    )
-                                    .track_scroll(&self.sidebar.scroll)
-                                    .size_full(),
+                                    div().size_full().pr_3().child(
+                                        uniform_list(
+                                            "sidebar-rows",
+                                            items.len(),
+                                            cx.processor(
+                                                move |this, range: Range<usize>, _, cx| {
+                                                    range
+                                                        .filter_map(|index| items.get(index))
+                                                        .map(|item| this.render_item(item, cx))
+                                                        .collect::<Vec<_>>()
+                                                },
+                                            ),
+                                        )
+                                        .track_scroll(&self.sidebar.scroll)
+                                        .size_full(),
+                                    ),
                                 )
                                 .scrollbar(&self.sidebar.scroll, ScrollbarAxis::Vertical),
                         ),
