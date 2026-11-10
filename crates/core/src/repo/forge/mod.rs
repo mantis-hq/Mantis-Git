@@ -3,8 +3,9 @@
 //!
 //! This uses git alone. Hosts publish each request as a ref (`refs/pull/42/head`,
 //! `refs/merge-requests/42/head`), so `git ls-remote` lists them with no sign-in and no API.
-//! What git can't say is a request's title or whether it is still open, so the list is the
-//! newest few and says so.
+//! What git can't say is a request's title. GitHub and GitLab drop a request's test merge
+//! ref (`…/merge`) once it is closed, so a missing one means closed; Gitea has none, so its
+//! list can't tell. The list is the newest few and says what it leaves out.
 
 pub mod choice;
 pub mod probe;
@@ -78,12 +79,18 @@ impl Forge {
         }
     }
 
-    /// Which refs of the remote hold the requests' tips.
-    fn ref_pattern(self) -> &'static str {
+    /// Which refs of the remote hold the requests' tips, and then the test merges.
+    fn ref_patterns(self) -> [&'static str; 2] {
         match self {
-            Self::GitLab => "refs/merge-requests/*/head",
-            Self::GitHub | Self::Gitea => "refs/pull/*/head",
+            Self::GitLab => ["refs/merge-requests/*/head", "refs/merge-requests/*/merge"],
+            Self::GitHub | Self::Gitea => ["refs/pull/*/head", "refs/pull/*/merge"],
         }
+    }
+
+    /// Whether the host drops a request's test merge ref when it is closed or merged, which
+    /// is the one thing git can see of a request being open. Gitea has no such ref.
+    fn tells_open_by_merge_ref(self) -> bool {
+        !matches!(self, Self::Gitea)
     }
 
     /// The forge a host is, by its name. A host that doesn't say stays unknown.
@@ -332,62 +339,94 @@ pub struct Requests {
     pub newest: Vec<Request>,
     /// How many the remote has, shown or not.
     pub total: usize,
+    /// Whether closed requests were left out, which only some hosts let git see.
+    pub open_only: bool,
 }
 
 impl Requests {
     /// A sentence under the list, saying what it leaves out.
     pub fn caveat(&self, forge: Forge) -> String {
         let noun = forge.noun();
+        let rest = if self.open_only {
+            "Open ones only; one that conflicts with its base isn't listed."
+        } else {
+            "Git can't say which are still open."
+        };
         if self.total > self.newest.len() {
             format!(
-                "The newest {} of {}. Git can't say which are still open.",
+                "The newest {} of {}. {rest}",
                 self.newest.len(),
                 count(self.total, noun)
             )
         } else {
-            "Git can't say which are still open.".to_owned()
+            rest.to_owned()
         }
     }
 }
 
 /// Reads `git ls-remote`'s answer: an object name, a tab and a ref. Anything that isn't a
 /// request's ref is skipped. Newest (highest number) first.
-pub fn parse_listing(listing: &str) -> Vec<(u64, String)> {
-    let mut found: Vec<(u64, String)> = listing
-        .lines()
-        .filter_map(|line| {
-            let (oid, name) = line.split_once('\t')?;
-            let number = name
-                .strip_suffix("/head")?
-                .rsplit('/')
-                .next()?
-                .parse::<u64>()
-                .ok()?;
-            Some((number, oid.to_owned()))
-        })
-        .collect();
-    found.sort_by_key(|(number, _)| std::cmp::Reverse(*number));
-    found.dedup_by_key(|(number, _)| *number);
+pub fn parse_listing(listing: &str) -> Vec<Listed> {
+    let mut found: HashMap<u64, Listed> = HashMap::new();
+    for line in listing.lines() {
+        let Some((oid, name)) = line.split_once('\t') else {
+            continue;
+        };
+        let (rest, is_head) = match (name.strip_suffix("/head"), name.strip_suffix("/merge")) {
+            (Some(rest), _) => (rest, true),
+            (_, Some(rest)) => (rest, false),
+            _ => continue,
+        };
+        let Some(number) = rest.rsplit('/').next().and_then(|n| n.parse::<u64>().ok()) else {
+            continue;
+        };
+        let entry = found.entry(number).or_insert_with(|| Listed {
+            number,
+            tip: String::new(),
+            has_merge_ref: false,
+        });
+        if is_head {
+            entry.tip = oid.to_owned();
+        } else {
+            entry.has_merge_ref = true;
+        }
+    }
+    let mut found: Vec<Listed> = found.into_values().filter(|l| !l.tip.is_empty()).collect();
+    found.sort_by_key(|l| std::cmp::Reverse(l.number));
     found
+}
+
+/// One request in `git ls-remote`'s answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Listed {
+    pub number: u64,
+    pub tip: String,
+    /// Whether the host also published a test merge for it, which it does while the request
+    /// is open and merges cleanly.
+    pub has_merge_ref: bool,
 }
 
 /// Asks `remote` for its requests. This reaches over the network, so call it off the UI
 /// thread.
 pub fn list(repo: &Path, remote: &Remote, site: &Site) -> Result<Requests, String> {
-    let pattern = site.forge.ref_pattern();
+    let [head, merge] = site.forge.ref_patterns();
     let listing =
-        ops::run(repo, &["ls-remote", "--refs", &remote.name, pattern]).map_err(|message| {
+        ops::run(repo, &["ls-remote", "--refs", &remote.name, head, merge]).map_err(|message| {
             let reason = message.lines().next().unwrap_or("").trim();
             format!("Couldn't ask {} for its requests. {reason}", remote.name)
         })?;
-    let found = parse_listing(&listing);
+    let mut found = parse_listing(&listing);
+    let open_only = site.forge.tells_open_by_merge_ref();
+    if open_only {
+        found.retain(|listed| listed.has_merge_ref);
+    }
     let total = found.len();
     let mut newest: Vec<Request> = found
         .into_iter()
         .take(SHOWN)
-        .map(|(number, tip)| Request {
-            number,
-            tip,
+        .map(|listed| Request {
+            number: listed.number,
+            tip: listed.tip,
             subject: None,
         })
         .collect();
@@ -395,7 +434,11 @@ pub fn list(repo: &Path, remote: &Remote, site: &Site) -> Result<Requests, Strin
     for request in &mut newest {
         request.subject = subjects.get(&request.tip).cloned();
     }
-    Ok(Requests { newest, total })
+    Ok(Requests {
+        newest,
+        total,
+        open_only,
+    })
 }
 
 /// The subject of each commit that this repository has. A request from a fork usually
@@ -581,9 +624,21 @@ mod tests {
         assert_eq!(
             parse_listing(listing),
             [
-                (10, "bbb".to_owned()),
-                (9, "aaa".to_owned()),
-                (3, "eee".to_owned())
+                Listed {
+                    number: 10,
+                    tip: "bbb".to_owned(),
+                    has_merge_ref: true
+                },
+                Listed {
+                    number: 9,
+                    tip: "aaa".to_owned(),
+                    has_merge_ref: false
+                },
+                Listed {
+                    number: 3,
+                    tip: "eee".to_owned(),
+                    has_merge_ref: false
+                },
             ]
         );
     }
@@ -597,11 +652,17 @@ mod tests {
                 subject: None,
             }],
             total,
+            open_only: false,
         };
         assert_eq!(
             some(1).caveat(Forge::GitHub),
             "Git can't say which are still open."
         );
+        let open = Requests {
+            open_only: true,
+            ..some(1)
+        };
+        assert!(open.caveat(Forge::GitHub).starts_with("Open ones only"));
         assert_eq!(
             some(40).caveat(Forge::GitLab),
             "The newest 1 of 40 merge requests. Git can't say which are still open."
@@ -615,7 +676,10 @@ mod tests {
         let tip = upstream.commit("fix: the cat");
         upstream.git(&["update-ref", "refs/pull/7/head", &tip]);
         upstream.git(&["update-ref", "refs/pull/12/head", &tip]);
-        upstream.git(&["update-ref", "refs/pull/3/merge", &tip]);
+        upstream.git(&["update-ref", "refs/pull/12/merge", &tip]);
+        upstream.git(&["update-ref", "refs/pull/7/merge", &tip]);
+        // A closed request keeps its head but loses its test merge.
+        upstream.git(&["update-ref", "refs/pull/3/head", &tip]);
 
         let local = Repo::new();
         let address = upstream.path().to_string_lossy().into_owned();
