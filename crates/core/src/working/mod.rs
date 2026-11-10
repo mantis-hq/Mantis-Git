@@ -201,6 +201,10 @@ const SETTLED: Duration = Duration::from_secs(2);
 /// An untracked file's listing with the time and size of the file it was read from.
 type Remembered = (SystemTime, u64, FileChange);
 
+/// A file's position in the list, its counted change, and the size and time it was counted at,
+/// when that is worth remembering for the next look.
+type Counted = (usize, FileChange, Option<(SystemTime, u64)>);
+
 /// Untracked files as listed at the last read, per repository, so that a refresh only
 /// reads the ones that changed.
 static REMEMBERED: Mutex<Option<HashMap<PathBuf, HashMap<String, Remembered>>>> = Mutex::new(None);
@@ -221,7 +225,7 @@ fn untracked_files(
 
     let now = SystemTime::now();
     let next = AtomicUsize::new(0);
-    let found: Mutex<Vec<(usize, FileChange, Option<(SystemTime, u64)>)>> = Mutex::new(Vec::new());
+    let found: Mutex<Vec<Counted>> = Mutex::new(Vec::new());
     let threads = std::thread::available_parallelism()
         .map_or(4, usize::from)
         .min(8);

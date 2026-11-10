@@ -228,7 +228,7 @@ pub fn initials(name: &str) -> String {
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty());
     let first = words.next();
-    let last = words.last();
+    let last = words.next_back();
     let letters: String = [first, last]
         .into_iter()
         .flatten()
