@@ -160,6 +160,10 @@ pub struct GraphView {
     /// The running git operation, in words. Only one runs at a time.
     busy: Option<SharedString>,
     notice: Option<Notice>,
+    /// The notice whose closing timer is running, so a new one starts a timer of its own.
+    toast_timed: Option<Notice>,
+    /// The pointer is over the toast, which keeps it open while it is read.
+    toast_hovered: bool,
     /// Why counting the branches was slow, when a missing commit graph is the reason.
     graph_hint: Option<SharedString>,
     /// Repositories whose hint was dismissed, so it isn't shown again this session.
@@ -230,6 +234,8 @@ impl GraphView {
             load_task: None,
             busy: None,
             notice: None,
+            toast_timed: None,
+            toast_hovered: false,
             graph_hint: None,
             graph_hint_dismissed: HashSet::new(),
             load_started: None,
@@ -811,6 +817,8 @@ impl Render for GraphView {
         let bar = Some(self.render_toolbar(cx).into_any_element());
         let content = self.render_graph(cx);
         let notice = self.render_notice(cx);
+        self.sync_toast(cx);
+        let toast = self.render_toast(cx);
         let graph_hint = self.render_graph_hint(cx);
         let menu = self.render_menu(cx);
         let dialog = self.render_dialog(window, cx);
@@ -873,6 +881,7 @@ impl Render for GraphView {
             .children(graph_hint)
             .child(content)
             .children(menu)
+            .children(toast)
             .children(dialog)
     }
 }

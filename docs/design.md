@@ -450,6 +450,16 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   shown once, whatever the answer, and the band says what was written and how to take it
   away. Settings → App adds or removes the launcher from then on. On a window too short for
   it, the panel scrolls.
+- **Toast:** what just happened (and why a step failed, in Peach) is a card over the top
+  right of the window, 420 px wide, on Mantle with a Surface 0 border and 8 px radius, and
+  ends in a quiet `×` that closes it. It floats over the graph, so the rows never move. A
+  question that waits for a second click stays a band under the header. Where this
+  document says "the band says" for an outcome, it means the toast. How long it stays
+  follows what it says (`toast_lifetime` in `gitclient_core::text`): a confirmation such as
+  "Copied 1a2b3c4" closes itself after 4 seconds, a longer one that says how to undo a step
+  gets 50 ms more for each character past 30, up to 12 seconds, and a failure stays until
+  its `×` is pressed. Hovering a toast holds it open, and it closes 2 seconds after the
+  pointer leaves. A new one replaces the one showing.
 - **Commit graph band:** a band under the header, below the band that says what happened,
   drawn only when a step took 2 seconds or more (`SLOW_AFTER` in
   `gitclient_core::repo::commit_graph`) and the repository has no commit graph that git
