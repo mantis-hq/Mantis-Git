@@ -1,10 +1,10 @@
-# gitclient
+# Mantis Git
 
 A desktop Git client written in Rust on `gpui-kit`.
 
 ## Layout
 
-`crates/core` (`gitclient-core`) is everything about a repository, and `src` is the
+`crates/core` (`mantisgit-core`) is everything about a repository, and `src` is the
 interface on top of it. If something doesn't need a window, it belongs in `crates/core`.
 
 - `crates/core` must never depend on gpui-kit. Lane colours stay abstract there, and
@@ -19,7 +19,7 @@ interface on top of it. If something doesn't need a window, it belongs in `crate
   `GraphView::spawn_blocking` or `GraphView::run_operation`, never on the UI thread.
 - Before adding a helper, look for one to reuse: `crates/core/src/text.rs` for wording
   and `src/view/parts.rs` for anything more than one region draws.
-- Tests that need a repository use `gitclient_core::testing::Repo`, not their own fixture.
+- Tests that need a repository use `mantisgit_core::testing::Repo`, not their own fixture.
 
 Where things go in `crates/core/src`:
 

@@ -47,7 +47,7 @@ impl Ask for Web {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(PATIENCE))
             .http_status_as_error(false)
-            .user_agent("gitclient")
+            .user_agent("mantisgit")
             .build()
             .into();
         let mut response = agent.get(url).call().ok()?;
@@ -144,7 +144,7 @@ pub fn ask_all(address: &Address, ask: &dyn Ask) -> Outcome {
     }
 }
 
-/// Servers that are known not to be a forge gitclient speaks of, so that asking them three
+/// Servers that are known not to be a forge Mantis Git speaks of, so that asking them three
 /// questions would be pointless.
 pub fn worth_asking(address: &Address) -> bool {
     let host = address.host.split(':').next().unwrap_or(&address.host);

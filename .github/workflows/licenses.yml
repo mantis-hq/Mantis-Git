@@ -56,7 +56,7 @@ jobs:
           # as another user than the folder's owner, so git calls it "not a git repository".
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git diff --quiet THIRD-PARTY-LICENSES.txt && exit 0
-          git config user.name "gitclient licenses"
+          git config user.name "mantisgit licenses"
           git config user.email "licenses@users.noreply.invalid"
           git switch -c chore/licenses
           git add THIRD-PARTY-LICENSES.txt

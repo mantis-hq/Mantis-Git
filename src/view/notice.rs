@@ -6,14 +6,14 @@
 use super::GraphView;
 use super::parts::{card, card_actions};
 use crate::theme::tokens;
-use gitclient_core::about;
-use gitclient_core::repo::commit_graph;
-use gitclient_core::settings::config::{self, Version};
-use gitclient_core::text;
 use gpui_kit::component::button::*;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::about;
+use mantisgit_core::repo::commit_graph;
+use mantisgit_core::settings::config::{self, Version};
+use mantisgit_core::text;
 use std::path::Path;
 use std::time::Duration;
 
@@ -39,7 +39,7 @@ pub(super) enum After {
 
 impl GraphView {
     /// At launch: asks which git this is, and says so in a toast when it is older than
-    /// gitclient is made for.
+    /// Mantis Git is made for.
     pub fn warn_if_git_is_old(&mut self, cx: &mut Context<Self>) {
         Self::spawn_blocking(
             config::git_version,

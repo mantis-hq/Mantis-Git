@@ -1,11 +1,11 @@
 //! The About page: which build this is, how it updates, where its source is, and the licenses
-//! that have to be shown for everything in it. What it says lives in `gitclient_core::about`;
+//! that have to be shown for everything in it. What it says lives in `mantisgit_core::about`;
 //! this only draws it.
 
 use super::*;
-use gitclient_core::about::{self, License};
-use gitclient_core::install::update::Build;
 use gpui_kit::component::scroll::ScrollableElement as _;
+use mantisgit_core::about::{self, License};
+use mantisgit_core::install::update::Build;
 use std::ops::Range;
 
 /// The height of one license in the list. Every row shares it, so the list can draw only
@@ -25,7 +25,7 @@ impl Settings {
 
     /// The "Version" card: the build and where its source is, then how it updates.
     fn render_version_group(&self, cx: &mut Context<Self>) -> AnyElement {
-        let build = Build::current(option_env!("GITCLIENT_COMMIT"));
+        let build = Build::current(option_env!("MANTISGIT_COMMIT"));
         let version = div()
             .px_4()
             .py_3()
@@ -46,7 +46,7 @@ impl Settings {
         self.render_group("Version", rows, cx)
     }
 
-    /// Which git this is, with a way to get a newer one when it is older than gitclient
+    /// Which git this is, with a way to get a newer one when it is older than Mantis Git
     /// is made for. Not drawn until git has been asked.
     fn git_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let row = about::git_row(self.git.as_ref()?);

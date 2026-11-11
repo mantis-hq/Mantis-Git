@@ -7,17 +7,17 @@ use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL, status_icon};
 use crate::icons::Icon;
 use crate::theme::{lane_color, selected_row, tokens};
 use chrono::{Datelike, Local, TimeZone, Utc};
-use gitclient_core::history::columns::{COUNT, Column, ColumnOrder};
-use gitclient_core::history::lanes::{Lane, Row};
-use gitclient_core::history::refs::{Chip, RefKind};
-use gitclient_core::history::spotlight::Spotlight;
-use gitclient_core::history::{Commit, Signature, split_subject};
-use gitclient_core::repo::branch::Dragged;
-use gitclient_core::text::short_oid;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::history::columns::{COUNT, Column, ColumnOrder};
+use mantisgit_core::history::lanes::{Lane, Row};
+use mantisgit_core::history::refs::{Chip, RefKind};
+use mantisgit_core::history::spotlight::Spotlight;
+use mantisgit_core::history::{Commit, Signature, split_subject};
+use mantisgit_core::repo::branch::Dragged;
+use mantisgit_core::text::short_oid;
 use std::ops::Range;
 use std::time::Duration;
 
@@ -769,8 +769,8 @@ fn paint_circle(x: Pixels, y: Pixels, radius: f32, color: Hsla, window: &mut Win
 mod tests {
     use super::{MAX_VISIBLE_LANES, format_when, is_clipped};
     use chrono::{Local, TimeZone};
-    use gitclient_core::history::Commit;
-    use gitclient_core::history::lanes::GraphBuilder;
+    use mantisgit_core::history::Commit;
+    use mantisgit_core::history::lanes::GraphBuilder;
     use std::sync::Arc;
 
     #[test]

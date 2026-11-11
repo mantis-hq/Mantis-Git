@@ -1,6 +1,6 @@
 //! Context menus and drag and drop: drawing the lines core asks for, and running the one
 //! that is chosen. What a menu offers, and what each line does, is decided in
-//! `gitclient_core::menu`.
+//! `mantisgit_core::menu`.
 
 use super::dialog::Confirm;
 use super::notice::Notice;
@@ -8,15 +8,15 @@ use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
 use super::{GraphView, OpenWorktreeInTab, SwitchWorktree};
 use crate::icons::Icon;
 use crate::theme::{selected_row, tokens};
-use gitclient_core::history::refs::RefKind;
-use gitclient_core::menu::command::{Command, Weight};
-use gitclient_core::menu::{self, FileSource, Glyph, Line};
-use gitclient_core::repo::branch::{self, Dragged, Relation};
-use gitclient_core::repo::forge;
-use gitclient_core::working::Side;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::history::refs::RefKind;
+use mantisgit_core::menu::command::{Command, Weight};
+use mantisgit_core::menu::{self, FileSource, Glyph, Line};
+use mantisgit_core::repo::branch::{self, Dragged, Relation};
+use mantisgit_core::repo::forge;
+use mantisgit_core::working::Side;
 use std::path::Path;
 
 const MENU_WIDTH: Pixels = px(300.);

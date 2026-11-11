@@ -3,8 +3,8 @@
 //! and offers to write what is missing.
 
 use super::*;
-use gitclient_core::repo::commit_graph::{self, Report};
-use gitclient_core::repo::forge::{self, Forge};
+use mantisgit_core::repo::commit_graph::{self, Report};
+use mantisgit_core::repo::forge::{self, Forge};
 
 /// How the open repository's commit graph stands, as the page last read it.
 #[derive(Default)]
@@ -97,7 +97,7 @@ impl Settings {
         .detach();
     }
 
-    /// Chooses the forge the repository is on, or with `None` leaves it to gitclient.
+    /// Chooses the forge the repository is on, or with `None` leaves it to Mantis Git.
     pub(super) fn choose_forge(&mut self, forge: Option<Forge>, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
@@ -120,7 +120,9 @@ impl Settings {
                                 "Pull and merge requests are now made for {}.",
                                 forge.name()
                             ),
-                            None => "gitclient tells which forge it is by itself again.".to_owned(),
+                            None => {
+                                "Mantis Git tells which forge it is by itself again.".to_owned()
+                            }
                         });
                         this.forge_choice = Some(choice);
                     }
@@ -178,7 +180,7 @@ impl Settings {
                             .child(
                                 "Choose one when the address doesn't say, such as a server \
                                  your company runs. It is kept in this repository's own git \
-                                 config as gitclient.forge.",
+                                 config as mantisgit.forge.",
                             ),
                     ),
             )

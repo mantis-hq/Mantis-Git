@@ -1,9 +1,9 @@
 use super::{Feedback, Match, Page, Scope, Settings, Target, config, identity};
-use gitclient_core::cache::keys::Usage;
-use gitclient_core::settings::state::AppState;
-use gitclient_core::testing::Repo;
 use gpui_kit::component::input::InputEvent;
 use gpui_kit::{Entity, Focusable as _, TestAppContext, VisualTestContext};
+use mantisgit_core::cache::keys::Usage;
+use mantisgit_core::settings::state::AppState;
+use mantisgit_core::testing::Repo;
 use std::path::PathBuf;
 
 fn open(
@@ -409,7 +409,7 @@ fn a_repository_is_switched_between_identities_in_one_step(cx: &mut TestAppConte
 
     view.update_in(&mut cx, |view, window, cx| {
         view.pick_identity(
-            gitclient_core::settings::identity::Choice::Identity("work".into()),
+            mantisgit_core::settings::identity::Choice::Identity("work".into()),
             window,
             cx,
         );
@@ -422,7 +422,7 @@ fn a_repository_is_switched_between_identities_in_one_step(cx: &mut TestAppConte
 
     view.update_in(&mut cx, |view, window, cx| {
         view.pick_identity(
-            gitclient_core::settings::identity::Choice::Identity("home".into()),
+            mantisgit_core::settings::identity::Choice::Identity("home".into()),
             window,
             cx,
         );
@@ -436,7 +436,7 @@ fn a_repository_is_switched_between_identities_in_one_step(cx: &mut TestAppConte
 
     view.update_in(&mut cx, |view, window, cx| {
         view.pick_identity(
-            gitclient_core::settings::identity::Choice::Automatic,
+            mantisgit_core::settings::identity::Choice::Automatic,
             window,
             cx,
         );
@@ -600,7 +600,7 @@ fn a_state_file_that_cannot_be_written_is_reported_and_changes_nothing(cx: &mut 
 #[gpui_kit::test]
 fn the_repository_page_writes_a_missing_commit_graph(cx: &mut TestAppContext) {
     use super::repository::GraphState;
-    use gitclient_core::repo::commit_graph::Health;
+    use mantisgit_core::repo::commit_graph::Health;
 
     let repo = Repo::new();
     repo.commit("a");
@@ -647,7 +647,7 @@ fn the_repository_page_writes_a_missing_commit_graph(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn the_repository_page_sets_and_clears_the_forge_the_repository_is_on(cx: &mut TestAppContext) {
-    use gitclient_core::repo::forge::{Forge, choice};
+    use mantisgit_core::repo::forge::{Forge, choice};
 
     let repo = Repo::new();
     repo.commit("a");
@@ -664,7 +664,7 @@ fn the_repository_page_sets_and_clears_the_forge_the_repository_is_on(cx: &mut T
         assert!(
             choice
                 .sentence()
-                .starts_with("gitclient can't tell whether origin")
+                .starts_with("Mantis Git can't tell whether origin")
         );
     });
 
@@ -690,7 +690,7 @@ fn the_repository_page_sets_and_clears_the_forge_the_repository_is_on(cx: &mut T
     view.read_with(&cx, |settings, _| {
         assert!(matches!(
             &settings.feedback,
-            Feedback::Saved(message) if message == "gitclient tells which forge it is by itself again."
+            Feedback::Saved(message) if message == "Mantis Git tells which forge it is by itself again."
         ));
     });
     draw(&view, &mut cx);
@@ -711,9 +711,9 @@ fn with_launcher(
     view: &Entity<Settings>,
     dir: &std::path::Path,
     cx: &mut VisualTestContext,
-) -> (PathBuf, gitclient_core::install::menu_entry::Launcher) {
-    use gitclient_core::install::Channel;
-    use gitclient_core::install::menu_entry::Launcher;
+) -> (PathBuf, mantisgit_core::install::menu_entry::Launcher) {
+    use mantisgit_core::install::Channel;
+    use mantisgit_core::install::menu_entry::Launcher;
     let file = dir.join("state");
     AppState {
         tabs: vec!["/work/a".into()],
@@ -736,8 +736,8 @@ fn with_launcher(
 fn the_launcher_switch_adds_and_removes_the_menu_entry_and_settles_the_question(
     cx: &mut TestAppContext,
 ) {
-    use gitclient_core::install::exe_path;
-    use gitclient_core::install::menu_entry::Status;
+    use mantisgit_core::install::exe_path;
+    use mantisgit_core::install::menu_entry::Status;
     let dir = tempfile::tempdir().unwrap();
     let (_scope_dir, scope) = file_scope();
     let (view, mut cx) = open(None, scope, cx);
@@ -763,7 +763,7 @@ fn the_launcher_switch_adds_and_removes_the_menu_entry_and_settles_the_question(
     view.read_with(&cx, |settings, _| {
         assert!(matches!(
             &settings.feedback,
-            Feedback::Saved(message) if message.starts_with("Added gitclient")
+            Feedback::Saved(message) if message.starts_with("Added Mantis Git")
         ));
         assert!(matches!(
             settings.launcher_status,
@@ -778,22 +778,22 @@ fn the_launcher_switch_adds_and_removes_the_menu_entry_and_settles_the_question(
     view.read_with(&cx, |settings, _| {
         assert!(matches!(
             &settings.feedback,
-            Feedback::Saved(message) if message.starts_with("Took gitclient out")
+            Feedback::Saved(message) if message.starts_with("Took Mantis Git out")
         ));
     });
 }
 
 #[gpui_kit::test]
 fn a_launcher_somebody_else_wrote_cannot_be_replaced_from_settings(cx: &mut TestAppContext) {
-    use gitclient_core::install::exe_path;
-    use gitclient_core::install::menu_entry::Status;
+    use mantisgit_core::install::exe_path;
+    use mantisgit_core::install::menu_entry::Status;
     let dir = tempfile::tempdir().unwrap();
     let (_scope_dir, scope) = file_scope();
     let (view, mut cx) = open(None, scope, cx);
     let (_file, launcher) = with_launcher(&view, dir.path(), &mut cx);
     let folder = dir.path().join("data").join("applications");
     std::fs::create_dir_all(&folder).unwrap();
-    let theirs = folder.join("gitclient.desktop");
+    let theirs = folder.join("mantisgit.desktop");
     std::fs::write(&theirs, "[Desktop Entry]\nName=Mine\n").unwrap();
     view.update(&mut cx, |settings, _| settings.load_launcher());
     assert_eq!(launcher.status(&exe_path()), Status::Foreign);
@@ -838,7 +838,7 @@ fn the_update_check_switch_saves_at_once_and_keeps_the_tabs(cx: &mut TestAppCont
 
 #[gpui_kit::test]
 fn avatars_default_to_initials_and_the_choices_save_at_once(cx: &mut TestAppContext) {
-    use gitclient_core::history::avatar::Style;
+    use mantisgit_core::history::avatar::Style;
     let dir = tempfile::tempdir().unwrap();
     let (_scope_dir, scope) = file_scope();
     let (view, mut cx) = open(None, scope, cx);
@@ -870,7 +870,7 @@ fn avatars_default_to_initials_and_the_choices_save_at_once(cx: &mut TestAppCont
 
 #[gpui_kit::test]
 fn the_update_track_saves_at_once_and_defaults_to_full_releases(cx: &mut TestAppContext) {
-    use gitclient_core::install::update::Track;
+    use mantisgit_core::install::update::Track;
     let dir = tempfile::tempdir().unwrap();
     let (_scope_dir, scope) = file_scope();
     let (view, mut cx) = open(None, scope, cx);
@@ -898,7 +898,7 @@ fn the_update_track_saves_at_once_and_defaults_to_full_releases(cx: &mut TestApp
 fn the_app_page_draws_for_a_portable_copy_and_for_one_a_package_manager_installed(
     cx: &mut TestAppContext,
 ) {
-    use gitclient_core::install::Channel;
+    use mantisgit_core::install::Channel;
     let dir = tempfile::tempdir().unwrap();
     let (_scope_dir, scope) = file_scope();
     let (view, mut cx) = open(None, scope, cx);

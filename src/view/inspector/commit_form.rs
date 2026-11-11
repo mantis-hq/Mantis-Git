@@ -3,19 +3,19 @@
 use crate::theme::tokens;
 use crate::view::parts::{TEXT_CHIP, TEXT_SMALL, checkbox, section_label};
 use crate::view::{GraphView, Notice};
-use gitclient_core::history::columns::Column;
-use gitclient_core::menu::command::Command;
-use gitclient_core::repo::stash;
-use gitclient_core::settings::state::{self, AppState};
-use gitclient_core::tree::FileView;
-use gitclient_core::working;
-use gitclient_core::working::message::{self, COMMIT_TYPES};
-use gitclient_core::working::version::{self, Bump, Version};
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::history::columns::Column;
+use mantisgit_core::menu::command::Command;
+use mantisgit_core::repo::stash;
+use mantisgit_core::settings::state::{self, AppState};
+use mantisgit_core::tree::FileView;
+use mantisgit_core::working;
+use mantisgit_core::working::message::{self, COMMIT_TYPES};
+use mantisgit_core::working::version::{self, Bump, Version};
 use std::path::PathBuf;
 
 const SUBJECT_LIMIT: usize = 72;

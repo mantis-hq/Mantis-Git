@@ -14,8 +14,6 @@ use super::parts::{
 };
 use super::{GraphView, Notice};
 use crate::theme::{lane_color, tokens};
-use gitclient_core::repo::conflict::{self, Decision, Piece, Progress, ResultCheck, Side};
-use gitclient_core::working;
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
@@ -23,6 +21,8 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::repo::conflict::{self, Decision, Piece, Progress, ResultCheck, Side};
+use mantisgit_core::working;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;

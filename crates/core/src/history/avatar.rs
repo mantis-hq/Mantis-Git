@@ -122,7 +122,7 @@ pub fn fetch(email: &str) -> Result<Option<Vec<u8>>, String> {
     }
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(PATIENCE))
-        .user_agent("gitclient")
+        .user_agent("mantisgit")
         .build()
         .into();
     let mut response = match agent.get(&url(email)).call() {
@@ -440,7 +440,7 @@ mod tests {
     }
 
     /// Reaches the real gravatar.com with the address its own documentation uses, so it
-    /// needs a network and is run by hand: `cargo test -p gitclient-core -- --ignored gravatar`.
+    /// needs a network and is run by hand: `cargo test -p mantisgit-core -- --ignored gravatar`.
     #[test]
     #[ignore = "needs the network"]
     fn gravatar_answers_for_a_known_address_and_not_for_an_unknown_one() {

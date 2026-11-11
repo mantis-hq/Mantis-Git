@@ -4,14 +4,14 @@ use super::parts::{LineStyle, checkbox, chip, expand_tabs, file_path, line_style
 use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
 use super::{GraphView, Notice};
 use crate::theme::tokens;
-use gitclient_core::commit::details::{self, FileChange};
-use gitclient_core::patch::{DiffView, FilePatch, Line, LineKind};
-use gitclient_core::working::{self, Side};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::commit::details::{self, FileChange};
+use mantisgit_core::patch::{DiffView, FilePatch, Line, LineKind};
+use mantisgit_core::working::{self, Side};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -637,7 +637,7 @@ fn render_rows(shown: &Shown, range: Range<usize>, cx: &mut Context<GraphView>) 
 mod tests {
     // Not `super::*`: that would bring in GPUI's `test` macro, which shadows Rust's.
     use super::{FileChange, FilePatch, LineKind, Row, Shown};
-    use gitclient_core::patch;
+    use mantisgit_core::patch;
 
     #[test]
     fn hunks_flatten_into_rows_and_the_longest_row_is_found() {

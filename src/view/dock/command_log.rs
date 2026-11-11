@@ -372,8 +372,8 @@ fn output_lines(
 mod tests {
     // Not `super::*`: that would bring in GPUI's `test` macro, which shadows Rust's.
     use super::Dock;
-    use gitclient_core::log;
     use gpui_kit::{TestAppContext, VisualTestContext};
+    use mantisgit_core::log;
     use std::process::Command;
 
     fn command(name: &str) -> log::Handle {

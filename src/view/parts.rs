@@ -1,12 +1,12 @@
 //! Pieces of the interface that more than one region draws, so they can't drift apart.
 
 use crate::theme::{selected_row, tokens};
-use gitclient_core::patch::LineKind;
-use gitclient_core::text::split_path;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::patch::LineKind;
+use mantisgit_core::text::split_path;
 use std::time::Duration;
 
 const TAB: &str = "    ";

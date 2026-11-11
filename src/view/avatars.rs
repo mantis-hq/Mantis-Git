@@ -1,16 +1,16 @@
 //! The author's mark on a commit's dot: a picture, or their initials on a colour. What is
-//! drawn is decided in `gitclient_core::history::avatar`; this reads the setting, loads the
+//! drawn is decided in `mantisgit_core::history::avatar`; this reads the setting, loads the
 //! pictures off the UI thread and draws the result.
 
 use super::GraphView;
 use crate::theme::lane_color;
-use gitclient_core::history::Commit;
-use gitclient_core::history::avatar::{self, Asked, Gravatar, Kind, Style};
-use gitclient_core::history::lanes::LaneColor;
-use gitclient_core::settings::state::AppState;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::history::Commit;
+use mantisgit_core::history::avatar::{self, Asked, Gravatar, Kind, Style};
+use mantisgit_core::history::lanes::LaneColor;
+use mantisgit_core::settings::state::AppState;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;

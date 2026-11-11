@@ -1,4 +1,4 @@
-//! The welcome panel, shown once the first time gitclient runs. It says in a few pictures
+//! The welcome panel, shown once the first time Mantis Git runs. It says in a few pictures
 //! how the window thinks (your branch is the straight line, buttons name their result,
 //! branches are named and never "ours" or "theirs"), lists the keys worth knowing, and
 //! holds the one choice a portable copy has to make: whether to add itself to the
@@ -13,14 +13,14 @@ use super::{Dialog, backdrop};
 use crate::theme::{lane_color, selected_row};
 use crate::view::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL, TEXT_STATUS, TEXT_TITLE, checkbox};
 use crate::view::{GraphView, Notice};
-use gitclient_core::history::lanes::LaneColor;
-use gitclient_core::install::exe_path;
-use gitclient_core::install::menu_entry::{Launcher, Offer, Status};
-use gitclient_core::settings::state::AppState;
 use gpui_kit::component::button::*;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::history::lanes::LaneColor;
+use mantisgit_core::install::exe_path;
+use mantisgit_core::install::menu_entry::{Launcher, Offer, Status};
+use mantisgit_core::settings::state::AppState;
 use std::path::Path;
 
 const WIDTH: Pixels = px(640.);
@@ -153,7 +153,7 @@ impl GraphView {
                             .text_size(TEXT_TITLE)
                             .line_height(px(22.))
                             .font_semibold()
-                            .child("Welcome to gitclient"),
+                            .child("Welcome to Mantis Git"),
                     )
                     .child(
                         div()
@@ -180,7 +180,7 @@ impl GraphView {
             .child(idea(
                 button_picture(cx),
                 "Say what will happen",
-                "“Commit 2 files”, not “Commit”. Before a risky step, gitclient tells you how \
+                "“Commit 2 files”, not “Commit”. Before a risky step, Mantis Git tells you how \
                  to undo it.",
                 cx,
             ))

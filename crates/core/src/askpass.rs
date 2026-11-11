@@ -15,7 +15,7 @@ use std::sync::{Mutex, OnceLock};
 /// What the helper reads its socket path from. Its presence is what makes the app run as
 /// the helper rather than open a window.
 #[cfg(unix)]
-const SOCKET_VAR: &str = "GITCLIENT_ASKPASS_SOCKET";
+const SOCKET_VAR: &str = "MANTISGIT_ASKPASS_SOCKET";
 
 /// The questions as they come, from [`serve`].
 pub type Questions = async_channel::Receiver<Request>;
@@ -73,7 +73,7 @@ impl Request {
     /// The line naming the keys.
     pub fn hint(&self) -> String {
         let kept = if self.is_secret() {
-            " It is kept until gitclient closes."
+            " It is kept until Mantis Git closes."
         } else {
             ""
         };
@@ -224,7 +224,7 @@ mod unix {
     /// Starts listening for questions from git and ssh, and returns them as they come. Call
     /// it once; the socket lives in a folder only this user can open.
     pub fn serve() -> Option<Questions> {
-        let dir = std::env::temp_dir().join(format!("gitclient-askpass-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mantisgit-askpass-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::DirBuilder::new().mode(0o700).create(&dir).ok()?;
         let path = dir.join("socket");

@@ -4,16 +4,16 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// What a package recipe sets at build time (`GITCLIENT_INSTALL_CHANNEL=pacman cargo build`)
+/// What a package recipe sets at build time (`MANTISGIT_INSTALL_CHANNEL=pacman cargo build`)
 /// to say that the build is installed by a package manager. Release archives leave it unset.
-const BUILT_FOR: Option<&str> = option_env!("GITCLIENT_INSTALL_CHANNEL");
+const BUILT_FOR: Option<&str> = option_env!("MANTISGIT_INSTALL_CHANNEL");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Channel {
     /// Unpacked from a release archive, so it is the app's own to launch and update.
     Portable,
     /// Installed by something else that keeps it up to date. `by` completes a sentence
-    /// such as "gitclient was installed with Flatpak".
+    /// such as "Mantis Git was installed with Flatpak".
     Packaged { by: &'static str },
 }
 
@@ -85,7 +85,7 @@ fn classify(
 pub fn exe_path() -> PathBuf {
     static EXE: OnceLock<PathBuf> = OnceLock::new();
     EXE.get_or_init(|| {
-        clean(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("gitclient")))
+        clean(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mantisgit")))
     })
     .clone()
 }
@@ -118,10 +118,10 @@ mod tests {
     #[test]
     fn a_folder_the_user_unpacked_into_is_portable() {
         for exe in [
-            "/home/me/Apps/gitclient/gitclient",
-            "/opt/gitclient/gitclient",
-            "/usr/local/bin/gitclient",
-            "C:\\Users\\me\\Apps\\gitclient\\gitclient.exe",
+            "/home/me/Apps/mantisgit/mantisgit",
+            "/opt/mantisgit/mantisgit",
+            "/usr/local/bin/mantisgit",
+            "C:\\Users\\me\\Apps\\mantisgit\\mantisgit.exe",
         ] {
             assert_eq!(detect(exe, None, &[], false), Channel::Portable, "{exe}");
         }
@@ -129,10 +129,10 @@ mod tests {
 
     #[test]
     fn a_build_made_for_a_package_is_never_portable() {
-        assert!(!detect("/home/me/gitclient", Some("pacman"), &[], false).is_portable());
+        assert!(!detect("/home/me/mantisgit", Some("pacman"), &[], false).is_portable());
         // The release archives name themselves portable, or say nothing.
-        assert!(detect("/home/me/gitclient", Some("portable"), &[], false).is_portable());
-        assert!(detect("/home/me/gitclient", Some(""), &[], false).is_portable());
+        assert!(detect("/home/me/mantisgit", Some("portable"), &[], false).is_portable());
+        assert!(detect("/home/me/mantisgit", Some(""), &[], false).is_portable());
     }
 
     #[test]
@@ -141,49 +141,49 @@ mod tests {
             Channel::Packaged { by } => by,
             Channel::Portable => "portable",
         };
-        assert_eq!(by("/usr/bin/gitclient"), "a package manager");
-        assert_eq!(by("/nix/store/abc-gitclient/bin/gitclient"), "Nix");
+        assert_eq!(by("/usr/bin/mantisgit"), "a package manager");
+        assert_eq!(by("/nix/store/abc-mantisgit/bin/mantisgit"), "Nix");
         assert_eq!(
-            by("/opt/homebrew/Cellar/gitclient/1/bin/gitclient"),
+            by("/opt/homebrew/Cellar/mantisgit/1/bin/mantisgit"),
             "Homebrew"
         );
         assert_eq!(
-            by("C:\\Users\\me\\scoop\\apps\\gitclient\\current\\gitclient.exe"),
+            by("C:\\Users\\me\\scoop\\apps\\mantisgit\\current\\mantisgit.exe"),
             "Scoop"
         );
     }
 
     #[test]
     fn flatpak_and_appimage_are_told_by_their_environment() {
-        let flatpak = detect("/app/bin/gitclient", None, &[], true);
+        let flatpak = detect("/app/bin/mantisgit", None, &[], true);
         assert_eq!(flatpak, Channel::Packaged { by: "Flatpak" });
         let id = detect(
-            "/app/bin/gitclient",
+            "/app/bin/mantisgit",
             None,
             &[("FLATPAK_ID", "dev.x")],
             false,
         );
         assert_eq!(id, Channel::Packaged { by: "Flatpak" });
         let image = detect(
-            "/tmp/.mount_x/gitclient",
+            "/tmp/.mount_x/mantisgit",
             None,
             &[("APPIMAGE", "/h/g.AppImage")],
             false,
         );
         assert_eq!(image, Channel::Packaged { by: "an AppImage" });
         // An empty variable is not set.
-        assert!(detect("/h/gitclient", None, &[("APPIMAGE", "")], false).is_portable());
+        assert!(detect("/h/mantisgit", None, &[("APPIMAGE", "")], false).is_portable());
     }
 
     #[test]
     fn a_replaced_program_keeps_its_path() {
         assert_eq!(
-            clean(PathBuf::from("/h/gitclient (deleted)")),
-            PathBuf::from("/h/gitclient")
+            clean(PathBuf::from("/h/mantisgit (deleted)")),
+            PathBuf::from("/h/mantisgit")
         );
         assert_eq!(
-            clean(PathBuf::from("/h/gitclient")),
-            PathBuf::from("/h/gitclient")
+            clean(PathBuf::from("/h/mantisgit")),
+            PathBuf::from("/h/mantisgit")
         );
     }
 }

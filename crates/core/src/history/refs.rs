@@ -164,7 +164,7 @@ pub struct Refs {
     pub submodules: Vec<Submodule>,
     /// The remotes the repository is set up with, which can have no branches yet.
     pub remote_configs: Vec<Remote>,
-    /// The forge chosen for the repository when it can't be told, `gitclient.forge`.
+    /// The forge chosen for the repository when it can't be told, `mantisgit.forge`.
     pub forge: Option<Forge>,
     /// How to lay out the graph for this repository.
     pub plan: Plan,
