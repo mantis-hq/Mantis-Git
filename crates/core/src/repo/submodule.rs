@@ -237,9 +237,6 @@ pub fn update(workdir: &Path, path: &str) -> Result<Option<String>, String> {
     Ok(Some(format!("Updated {path}.")))
 }
 
-/// What the Submodules list says when the repository has none.
-pub const NONE: &str = "This repository has no submodules.";
-
 /// Why `path` can't be where a submodule lives, in words for the person typing it.
 /// An empty path is fine when adding, since git names the folder after the address.
 pub fn why_bad_path(path: &str) -> Option<&'static str> {

@@ -22,7 +22,7 @@ use mantisgit_core::history::spotlight::Spotlight;
 use mantisgit_core::menu::form::Form;
 use mantisgit_core::repo::branch::Dragged;
 use mantisgit_core::repo::stash::{self, Picks as StashPicks};
-use mantisgit_core::repo::submodule::{self, State as SubmoduleState};
+use mantisgit_core::repo::submodule::State as SubmoduleState;
 use mantisgit_core::tree::branches::{self, Folder};
 use std::ops::Range;
 use std::path::PathBuf;
@@ -740,23 +740,15 @@ impl GraphView {
     }
 
     /// The submodules, pinned to the foot of the panel under a border so they stay in
-    /// view however long the branches run. The header is always there, with "+ Add", and
-    /// says so in a sentence when the repository has none.
+    /// view however long the branches run. The header is always there, with "+ Add"; a
+    /// repository with none shows nothing else.
     fn render_submodules(&self, cx: &mut Context<Self>) -> Div {
-        let theme = cx.theme();
-        let (border, muted) = (theme.border, theme.muted_foreground);
+        let border = cx.theme().border;
         let section = Section::Submodules;
         let modules = self.refs.submodules.len();
-        let body = self.sidebar.expanded.contains(&section).then(|| {
-            if modules == 0 {
-                return div()
-                    .h_flex()
-                    .h(px(30.))
-                    .px_2()
-                    .text_color(muted)
-                    .child(div().min_w_0().truncate().child(submodule::NONE))
-                    .into_any_element();
-            }
+        // With none there is nothing to open: the header alone says so, with its "+ Add".
+        let open = modules > 0 && self.sidebar.expanded.contains(&section);
+        let body = open.then(|| {
             let shown = modules.min(PINNED_ROWS);
             div()
                 .relative()

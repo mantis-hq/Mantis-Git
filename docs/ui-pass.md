@@ -25,7 +25,7 @@ To do:
 - Width from the widest first chip, 48 to 180 px; `+n` and the hover card stay.
 - The subject column takes the freed width. Chip nearer its dot follows from the narrower column.
 
-## 3. Inspector  `[ ]`
+## 3. Inspector  `[x]`
 
 Decided: do the suggestions, but write no reason text under a disabled Commit button.
 
@@ -35,11 +35,11 @@ To do:
 - Unstaged and Staged lists size to their content up to a cap, instead of reserving blank space.
 - Disabled "Commit n files" only dims. No sentence.
 
-## 4. Sidebar sections  `[ ]`
+## 4. Sidebar sections  `[x]`
 
 Decided: sections may be closed by default.
 
-Open question: what happens to an empty Stashes (0) and Submodules ("no submodules").
+Decided: an empty section collapses to its header alone (Submodules loses its sentence; Stashes with none was already one line).
 
 ## 5. Type and symbols  `[ ]`
 

@@ -466,8 +466,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   and the app never forces it. With one working tree the section isn't drawn.
 - Submodules: the sidebar ends in a "Submodules" section pinned to its foot, under a
   Surface 0 border, so it stays in view however long the lists above run. It is open by
-  default and always drawn: with no submodules it says "This repository has no
-  submodules." Its header ends in a quiet blue "+ Add", as Remotes does, which opens a form
+  default and always drawn, but with no submodules it is its header alone, with a count of 0
+  and no sentence, like Stashes with none, so an empty section costs one line. Its header ends in a quiet blue "+ Add", as Remotes does, which opens a form
   popup ("Add a submodule") with an "Address" and a "Folder" input (left empty, git names
   the folder after the address) and "Add submodule" as its result. It shows up to 5 rows
   and scrolls past that. A row is the submodule's path, then where it stands in
@@ -821,7 +821,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   landing it would do to the version, shown only when the repository has `v1.2.3` style tags.
   It commits exactly what is staged. After a commit the form empties, and the band under the
   header says how to undo it. If a hook refuses, the message stays. The form takes at most
-  42% of the inspector and scrolls past that, and each list keeps at least 110 px.
+  42% of the inspector and scrolls past that. Each list is as tall as its rows, so one file
+  doesn't hold a screenful of blank space, and the form stays at the foot; when the lists
+  don't all fit, each gives way down to 110 px. "Discard all" is a quiet button in Overlay 2
+  that takes Text only under the pointer, so the step that loses work never out-shouts the
+  commit. The picked kind of change is ticked with the Surface 0 fill like every choice,
+  never solid blue, since the one blue fill is the commit button. A commit button that
+  can't be used only dims; it doesn't explain itself.
   A quiet "Stash 2 files" button sits beside the blue one and runs `git stash push --staged`,
   so only what is staged is set aside and unstaged changes stay. A typed summary names the
   stash. The band says how to bring it back. The inspector doesn't list stashes; the sidebar does.

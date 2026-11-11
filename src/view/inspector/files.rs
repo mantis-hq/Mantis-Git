@@ -5,10 +5,9 @@ use super::INDENT;
 use crate::theme::tokens;
 use crate::view::parts::TEXT_CHIP;
 use crate::view::parts::{
-    checkbox, chip, file_path, panel_row, section_label, status_color, working_note,
+    checkbox, chip, file_path, panel_row, quiet_button, section_label, status_color, working_note,
 };
 use crate::view::{GraphView, Notice};
-use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
@@ -23,6 +22,12 @@ use std::ops::Range;
 use std::sync::Arc;
 
 /// What the Unstaged list says while git is still walking the tree for untracked files.
+/// A list's header, and the gap under it.
+const LIST_HEADER: f32 = 26.;
+/// Every file or folder row, which the lists draw as many of as they hold.
+const FILE_ROW: f32 = 28.;
+/// What each of the two lists keeps when the window is short.
+const MIN_LIST: f32 = 110.;
 const SCANNING: &str = "Looking for untracked files…";
 
 /// One list of files the inspector can draw.
@@ -237,7 +242,13 @@ impl GraphView {
             .gap(px(2.))
             .mx(px(-8.))
             .when(empty, |list| list.flex_none())
-            .when(!empty, |list| list.flex_1().min_h(px(110.)))
+            // As tall as its rows, so one file doesn't hold a screenful of nothing, and it
+            // gives way when the two lists and the form don't all fit.
+            .when(!empty, |list| {
+                let (_, _, rows) = self.pane_rows(pane, details);
+                let height = LIST_HEADER + rows as f32 * FILE_ROW;
+                list.h(px(height)).min_h(px(height.min(MIN_LIST)))
+            })
             .child(
                 section_label(muted)
                     .h_flex()
@@ -258,14 +269,13 @@ impl GraphView {
                         header.child(working_note(SCANNING, muted))
                     })
                     .children(discard_all.map(|command| {
-                        Button::new("discard-all")
-                            .ghost()
-                            .small()
-                            .label("Discard all")
-                            .disabled(self.busy.is_some())
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.choose(command.clone(), cx)),
-                            )
+                        quiet_button("discard-all", "Discard all", cx).on_click(cx.listener(
+                            move |this, _, _, cx| {
+                                if this.busy.is_none() {
+                                    this.choose(command.clone(), cx)
+                                }
+                            },
+                        ))
                     })),
             )
             // "Nothing left to stage" isn't known until the untracked files are found.
@@ -280,13 +290,9 @@ impl GraphView {
             })
     }
 
-    /// The rows of one list, in the chosen way of listing, drawing only those in view.
-    fn render_file_pane(
-        &self,
-        pane: Pane,
-        details: &Arc<CommitDetails>,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    /// Where a list starts in the details, its tree lines (empty when listing by path) and
+    /// how many lines it draws.
+    fn pane_rows(&self, pane: Pane, details: &CommitDetails) -> (usize, Arc<Vec<TreeRow>>, usize) {
         let unstaged = self
             .working_changes()
             .map_or(0, |changes| changes.unstaged.len());
@@ -312,6 +318,18 @@ impl GraphView {
             Vec::new()
         });
         let listed_rows = if tree_view { rows.len() } else { range.len() };
+        (offset, rows, listed_rows)
+    }
+
+    /// The rows of one list, in the chosen way of listing, drawing only those in view.
+    fn render_file_pane(
+        &self,
+        pane: Pane,
+        details: &Arc<CommitDetails>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let (offset, rows, listed_rows) = self.pane_rows(pane, details);
+        let tree_view = self.commit.files_view == FileView::Tree;
         let listed = details.clone();
         let scroll = self.scroll_of(pane);
 

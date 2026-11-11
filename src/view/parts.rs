@@ -162,8 +162,38 @@ pub(super) fn tab(id: impl Into<ElementId>, active: bool, cx: &App) -> Stateful<
         })
 }
 
+/// A button that stays out of the way until the pointer is on it: Overlay 2 text, Text and
+/// a faint fill on hover. For steps that must not draw the eye, such as discarding.
+pub(super) fn quiet_button(id: impl Into<ElementId>, label: &str, cx: &App) -> Stateful<Div> {
+    let theme = cx.theme();
+    let hover = theme.list_hover;
+    let (muted, text) = (theme.muted_foreground, theme.foreground);
+    div()
+        .id(id)
+        .h_flex()
+        .h(px(24.))
+        .px_2()
+        .rounded(px(6.))
+        .cursor_pointer()
+        .text_size(TEXT_SMALL)
+        .text_color(muted)
+        .hover(|button| button.bg(hover).text_color(text))
+        .child(label.to_owned())
+}
+
 /// One option of a choice, with a tick when picked so that colour isn't the only cue.
 pub(super) fn chip(id: impl Into<ElementId>, label: &str, on: bool, cx: &App) -> Stateful<Div> {
+    chip_padded(id, label, on, 8., cx)
+}
+
+/// A [`chip`] with its own side padding, for a row of them that has to fit on one line.
+pub(super) fn chip_padded(
+    id: impl Into<ElementId>,
+    label: &str,
+    on: bool,
+    padding: f32,
+    cx: &App,
+) -> Stateful<Div> {
     let theme = cx.theme();
     let (selected, hover) = (selected_row(theme), theme.list_hover);
     let (text, quiet) = (theme.foreground, theme.secondary_foreground);
@@ -171,7 +201,7 @@ pub(super) fn chip(id: impl Into<ElementId>, label: &str, on: bool, cx: &App) ->
         .id(id)
         .h_flex()
         .h(px(26.))
-        .px_2()
+        .px(px(padding))
         .gap_1()
         .rounded(px(6.))
         .cursor_pointer()
