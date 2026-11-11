@@ -1042,9 +1042,16 @@ mod tests {
         repo.git(&["tag", "v1"]);
         repo.git(&["tag", "v2"]);
 
+        assert!(
+            crate::repo::remote::tags_on(repo.path(), "origin")
+                .unwrap()
+                .is_empty()
+        );
         push_tag(repo.path(), "origin", "v1").unwrap();
         push_tag(repo.path(), "origin", "v2").unwrap();
         assert!(remote.git(&["tag"]).contains("v1"));
+        let held = crate::repo::remote::tags_on(repo.path(), "origin").unwrap();
+        assert!(held.contains("v1") && held.contains("v2"));
 
         delete_remote_tag(repo.path(), "origin", "v1", false).unwrap();
         assert!(!remote.git(&["tag"]).contains("v1"));

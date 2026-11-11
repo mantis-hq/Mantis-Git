@@ -164,6 +164,10 @@ pub struct Refs {
     pub submodules: Vec<Submodule>,
     /// The remotes the repository is set up with, which can have no branches yet.
     pub remote_configs: Vec<Remote>,
+    /// The tags each remote is known to hold, as `git ls-remote` last said. A remote that
+    /// is missing here is one nobody has asked (or that couldn't be reached), so any tag
+    /// may be on it. Set by the interface; not part of what a load reads.
+    pub remote_tags: HashMap<String, HashSet<String>>,
     /// The forge chosen for the repository when it can't be told, `mantisgit.forge`.
     pub forge: Option<Forge>,
     /// How to lay out the graph for this repository.
@@ -181,6 +185,13 @@ pub struct Refs {
 }
 
 impl Refs {
+    /// Whether `remote` is known to hold the tag.
+    pub fn remote_has_tag(&self, remote: &str, tag: &str) -> bool {
+        self.remote_tags
+            .get(remote)
+            .is_some_and(|tags| tags.contains(tag))
+    }
+
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
     }
