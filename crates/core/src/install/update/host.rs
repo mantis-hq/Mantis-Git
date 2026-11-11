@@ -6,7 +6,7 @@
 //! To update from a Gitea server instead, change [`HOST`] to `Host::gitea(site, "owner/name")`.
 
 /// The forge this copy updates from.
-pub const HOST: Host = Host::github("pretext8335/gitclient");
+pub const HOST: Host = Host::github("mantis-hq/Mantis-Git");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {

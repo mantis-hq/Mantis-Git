@@ -26,7 +26,7 @@ installed `git`.
 ## Installing
 
 Download the archive for your system from the
-[releases](https://github.com/pretext8335/gitclient/releases) page, unpack it and run
+[releases](https://github.com/mantis-hq/Mantis-Git/releases) page, unpack it and run
 `mantisgit`.
 
 It needs `git` on your `PATH`. Version 2.41 or newer is recommended, as the sidebar's
@@ -65,6 +65,8 @@ sudo dnf install pkgconf-pkg-config libxcb-devel libxkbcommon-devel \
 Then:
 
 ```sh
+git clone git@github.com:mantis-hq/Mantis-Git.git
+cd Mantis-Git
 cargo run --release
 ```
 
