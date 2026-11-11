@@ -335,7 +335,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   commits past the last lane keep their own marks. Merges lose their hollow dot to the
   avatar; the inspector still says a commit is a merge.
 - Signed commits: a signed commit ends its subject in a 14 px shield with a check, in
-  Overlay 2, with the tooltip "Signed" (or "Signed, but git can't check the signature" when
+  Green at 70% opacity (finished, but quieter than the subject), with the tooltip "Signed" (or "Signed, but git can't check the signature" when
   the key is missing, expired or there is nothing to check an SSH signature against). A
   signature that does not match the commit is a shield with an exclamation mark in Red and
   says so. Unsigned commits show nothing. The shape and the tooltip carry the meaning, not

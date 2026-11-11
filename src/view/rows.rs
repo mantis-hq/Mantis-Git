@@ -35,6 +35,9 @@ const MAX_VISIBLE_REFS: usize = 1;
 const REFS_WIDTH: f32 = 180.;
 /// Long enough to cross from a chip onto the card that lists its siblings.
 const REFS_CLOSE_DELAY: Duration = Duration::from_millis(150);
+/// How much of Green a signed commit's shield keeps.
+const SIGNED_MARK: f32 = 0.7;
+
 /// How far things outside a spotlighted branch fade.
 const FADED_ROW: f32 = 0.28;
 const FADED_LINE: f32 = 0.16;
@@ -214,6 +217,8 @@ impl GraphView {
         let (foreground, muted) = (theme.foreground, theme.muted_foreground);
         let head = theme.primary;
         let danger = theme.danger;
+        // Green, toned down so a column of signed commits stays quieter than the subjects.
+        let signed = theme.success.opacity(SIGNED_MARK);
         let on_tint = theme.primary_foreground;
         let (background, hover, active) = (theme.background, theme.list_hover, selected_row(theme));
         let subtext0 = tokens(is_dark).subtext0;
@@ -346,7 +351,7 @@ impl GraphView {
                                 .children(commit.signature.hint().map(|hint| {
                                     let (icon, color) = match commit.signature {
                                         Signature::Bad => (Icon::ShieldAlert, danger),
-                                        _ => (Icon::ShieldCheck, muted),
+                                        _ => (Icon::ShieldCheck, signed),
                                     };
                                     status_icon(
                                         (ElementId::from(("signature", index)), "signed"),
