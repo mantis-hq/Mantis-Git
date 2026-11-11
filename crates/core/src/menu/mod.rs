@@ -1000,20 +1000,26 @@ pub fn push_drop_menu(
         Ok(Relation::Same | Relation::Contained) => {
             said(format!("Nothing to push: {to} has all of {branch}."))
         }
-        Ok(Relation::Diverged) => said(format!(
-            "{to} has commits {branch} lacks, so pushing would need a force. Pull or rebase first."
-        )),
-        Ok(Relation::FastForward) => vec![
-            heading,
-            Line::item(
-                format!("Push {branch} to {to}"),
-                Command::PushTo {
-                    branch: branch.clone(),
-                    remote: remote.name.clone(),
-                    name: name.to_owned(),
-                },
-            ),
-        ],
+        // The push is tried as usual; git refuses it, and the force popup follows.
+        Ok(relation @ (Relation::Diverged | Relation::FastForward)) => {
+            let needs_force = relation == Relation::Diverged;
+            let label = if needs_force {
+                format!("Push {branch} to {to} (needs a force)")
+            } else {
+                format!("Push {branch} to {to}")
+            };
+            vec![
+                heading,
+                Line::item(
+                    label,
+                    Command::PushTo {
+                        branch: branch.clone(),
+                        remote: remote.name.clone(),
+                        name: name.to_owned(),
+                    },
+                ),
+            ]
+        }
     }
 }
 
@@ -1866,13 +1872,23 @@ mod tests {
                 name: "main".into()
             })
         );
-        for relation in [Relation::Same, Relation::Contained, Relation::Diverged] {
+        for relation in [Relation::Same, Relation::Contained] {
             let lines = push_drop_menu(&refs, &from, &onto, Ok(relation));
             assert!(
                 lines.iter().all(|line| line.command().is_none()),
                 "{relation:?}"
             );
         }
+        // Diverged still pushes: git refuses it and the force popup follows.
+        let diverged = push_drop_menu(&refs, &from, &onto, Ok(Relation::Diverged));
+        assert_eq!(
+            labels(&diverged),
+            ["Push feat/x to origin/main (needs a force)"]
+        );
+        assert!(matches!(
+            diverged[1].command(),
+            Some(Command::PushTo { .. })
+        ));
     }
 
     #[test]
