@@ -351,6 +351,10 @@ impl GraphView {
                                         .min_w_0()
                                         .truncate()
                                         .text_color(subject_color)
+                                        // Your place in the history, and the row you picked.
+                                        .when(is_head || selected, |subject| {
+                                            subject.font_semibold()
+                                        })
                                         .child(
                                             div()
                                                 .flex_none()
@@ -380,6 +384,7 @@ impl GraphView {
                             div()
                                 .w(HASH_WIDTH)
                                 .flex_none()
+                                .text_size(TEXT_SMALL)
                                 .text_color(muted)
                                 .when(!is_working, |hash| {
                                     hash.child(short_oid(&commit.oid).to_owned())
@@ -390,6 +395,7 @@ impl GraphView {
                                 .flex_none()
                                 .truncate()
                                 .text_right()
+                                .text_size(TEXT_SMALL)
                                 .text_color(muted)
                                 .child(SharedString::from(commit.author.clone()))
                                 .into_any_element(),
@@ -397,6 +403,7 @@ impl GraphView {
                                 .w(DATE_WIDTH)
                                 .flex_none()
                                 .text_right()
+                                .text_size(TEXT_SMALL)
                                 .text_color(muted)
                                 .when(!is_working, |date| {
                                     date.child(format_when(commit, Utc::now().timestamp()))
