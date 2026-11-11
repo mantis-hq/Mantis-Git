@@ -242,6 +242,7 @@ impl GraphView {
             let is_working = entry.working;
             let is_stash = self.refs.stash_at(&commit.oid).is_some();
             let chips = self.refs.chips_at(&commit.oid);
+            let signature = self.signature_of(&commit.oid);
             let (prefix, description) = split_subject(&commit.subject);
             let covered =
                 !matches!(face, Face::None) && !(is_working || is_stash || is_clipped(&lane_row));
@@ -348,8 +349,8 @@ impl GraphView {
                                                 .child(description.to_owned()),
                                         ),
                                 )
-                                .children(commit.signature.hint().map(|hint| {
-                                    let (icon, color) = match commit.signature {
+                                .children(signature.hint().map(|hint| {
+                                    let (icon, color) = match signature {
                                         Signature::Bad => (Icon::ShieldAlert, danger),
                                         _ => (Icon::ShieldCheck, signed),
                                     };

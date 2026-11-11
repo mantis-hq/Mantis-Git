@@ -273,7 +273,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     room the others leave (`Budget` in `mantisgit_core::cache`). A storage row says how much
     is in use ("Using 98 MB of 256 MB.") beside a quiet "Clear cache" button that empties
     every cache, and under it one 8 px bar, as long as the limit while the cache is on, cut
-    into what each cache holds (commit files, file diffs, avatars), largest first. The cuts
+    into what each cache holds (commits, file diffs, avatars; a commit's files and its signature check are one part), largest first. The cuts
     take three of the branch palette's colours (Teal, Pink, Sky) with a gap of Mantle
     between them on a Surface 0 track, and a legend names each, its name in Text and its
     size ("< 1 MB" when under a megabyte) in Overlay 2, so no meaning rests on colour alone. Changes apply at once to the running app. The cache lives in the
@@ -397,8 +397,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   the key is missing, expired or there is nothing to check an SSH signature against). A
   signature that does not match the commit is a shield with an exclamation mark in Red and
   says so. Unsigned commits show nothing. The shape and the tooltip carry the meaning, not
-  the colour. The status comes from `%G?` in the history read (`Signature` in
-  `mantisgit_core::history`), so git checks each signed commit as it loads.
+  the colour. The status is `%G?`, which makes git run gpg or ssh-keygen for each signed
+  commit and takes seconds in a repository of signed commits, so it is not part of the
+  history read. The rows in view ask for theirs afterwards (`signature::read` in
+  `mantisgit_core::history`), at most 64 commits to a call, and a shield appears when its
+  answer does. Answers are kept in the disk cache under "Commits", with a commit's files,
+  except "can't check", which is asked again in case the key has since been added.
 - Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide. Rows have no
   full hash: by default the refs column, the graph, the subject, the short hash (7
   characters, Overlay 2), then author and a short time ("12m", "3h", "Tue", "Oct 30"). The

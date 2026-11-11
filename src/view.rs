@@ -15,6 +15,7 @@ mod rows;
 mod search;
 mod settings;
 mod sidebar;
+mod signatures;
 mod updates;
 mod workspace;
 
@@ -202,6 +203,7 @@ pub struct GraphView {
     /// window coming back to the front.
     in_background: bool,
     avatars: avatars::State,
+    signatures: signatures::State,
     caches: Caches,
     /// What besides a commit decides how git reports it, which keys the caches. `None`
     /// until it has been read, and the caches go unused until then.
@@ -280,6 +282,7 @@ impl GraphView {
             conflict: Default::default(),
             in_background: false,
             avatars: avatars::State::new(),
+            signatures: Default::default(),
             caches: shared_caches(cx),
             fingerprint: None,
             _activation: activation,
@@ -329,6 +332,7 @@ impl GraphView {
         self.sidebar.spotlight = None;
         self.stop_loading_details();
         self.fingerprint = None;
+        self.signatures = Default::default();
         self.inspector = Default::default();
         self.diff = Default::default();
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -890,6 +894,7 @@ impl GraphView {
                                             cx.processor(|this, range: Range<usize>, _, cx| {
                                                 this.load_more_if_near_the_end(range.end, cx);
                                                 this.prepare_avatars(cx);
+                                                this.prepare_signatures(range.clone(), cx);
                                                 this.render_rows(range, cx)
                                             }),
                                         )

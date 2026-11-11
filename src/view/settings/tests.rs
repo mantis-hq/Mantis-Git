@@ -511,7 +511,7 @@ fn the_storage_bar_draws_with_the_cache_on_and_off(cx: &mut TestAppContext) {
         settings.page = Page::App;
         settings.cache_usage = Some(vec![
             Usage {
-                label: "Commit files",
+                label: "Commits",
                 bytes: 90 << 20,
             },
             Usage {
