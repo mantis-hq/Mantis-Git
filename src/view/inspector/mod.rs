@@ -503,12 +503,12 @@ impl GraphView {
                                 // Capped, so that a short window keeps some of its lists.
                                 div()
                                     .id("commit-form")
+                                    .v_flex()
                                     .flex_none()
                                     .max_h(relative(0.42))
                                     .pt_3()
                                     .border_t_1()
                                     .border_color(border)
-                                    .overflow_y_scroll()
                                     .child(self.render_commit_form(cx)),
                             ),
                     )

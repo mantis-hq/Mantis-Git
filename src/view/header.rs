@@ -47,7 +47,6 @@ impl GraphView {
                     })
             })
             .children(self.render_rebase_button(cx))
-            .children(self.render_sidebar_toggle(cx))
             .when(has_repo && self.refs.status.remote.is_some(), |bar| {
                 bar.child(
                     Button::new("fetch")

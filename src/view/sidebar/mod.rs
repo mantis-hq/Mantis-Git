@@ -11,7 +11,6 @@ use super::parts::{panel_row, section_label, status_icon};
 use super::{GraphView, OpenWorktreeInTab, SwitchWorktree};
 use crate::icons::Icon;
 use crate::theme::{lane_color, tokens};
-use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
@@ -665,22 +664,6 @@ impl GraphView {
     fn toggle_section(&mut self, section: Section, cx: &mut Context<Self>) {
         toggle(&mut self.sidebar.expanded, section);
         cx.notify();
-    }
-
-    pub(super) fn render_sidebar_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        self.refs.branches.first()?;
-        Some(
-            Button::new("toggle-sidebar")
-                .ghost()
-                .small()
-                .label(if self.sidebar_is_open() {
-                    "Hide branches"
-                } else {
-                    "Branches"
-                })
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))
-                .into_any_element(),
-        )
     }
 
     pub(super) fn render_sidebar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
