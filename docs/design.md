@@ -334,6 +334,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   With Gravatar, an author who has none keeps their initials. Working changes, stashes and
   commits past the last lane keep their own marks. Merges lose their hollow dot to the
   avatar; the inspector still says a commit is a merge.
+- Signed commits: a signed commit ends its subject in a 14 px shield with a check, in
+  Overlay 2, with the tooltip "Signed" (or "Signed, but git can't check the signature" when
+  the key is missing, expired or there is nothing to check an SSH signature against). A
+  signature that does not match the commit is a shield with an exclamation mark in Red and
+  says so. Unsigned commits show nothing. The shape and the tooltip carry the meaning, not
+  the colour. The status comes from `%G?` in the history read (`Signature` in
+  `gitclient_core::history`), so git checks each signed commit as it loads.
 - Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide. Rows have no
   full hash: by default the refs column, the graph, the subject, the short hash (7
   characters, Overlay 2), then author and a short time ("12m", "3h", "Tue", "Oct 30"). The

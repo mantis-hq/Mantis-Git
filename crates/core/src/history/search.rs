@@ -129,6 +129,8 @@ fn parse(line: &str) -> Option<Commit> {
         email: email.into(),
         time,
         subject: subject.into(),
+        // Search lists draw no mark, and checking signatures costs a gpg run each.
+        signature: Default::default(),
     })
 }
 

@@ -413,3 +413,20 @@ pub(super) fn on_resize<V: 'static, E: InteractiveElement>(
 pub(super) fn fit(size: Pixels, min: f32, max: f32) -> f32 {
     f32::from(size).clamp(min, max.max(min))
 }
+
+/// A 14 px picture at the end of a row, with its words as a tooltip.
+pub(super) fn status_icon(
+    id: (ElementId, &'static str),
+    icon: crate::icons::Icon,
+    hint: String,
+    color: Hsla,
+) -> Stateful<Div> {
+    div()
+        .id(ElementId::from(id))
+        .flex_none()
+        .tooltip(move |window, cx| {
+            gpui_kit::component::tooltip::Tooltip::new(hint.clone()).build(window, cx)
+        })
+        .tooltip_show_delay(Duration::ZERO)
+        .child(svg().path(icon.path()).size(px(14.)).text_color(color))
+}

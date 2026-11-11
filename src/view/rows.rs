@@ -3,14 +3,15 @@
 use super::GraphView;
 use super::avatars::{self, Face, avatar_mark};
 use super::menu::wire_ref;
-use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL};
+use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL, status_icon};
+use crate::icons::Icon;
 use crate::theme::{lane_color, selected_row, tokens};
 use chrono::{Datelike, Local, TimeZone, Utc};
 use gitclient_core::history::columns::{COUNT, Column, ColumnOrder};
 use gitclient_core::history::lanes::{Lane, Row};
 use gitclient_core::history::refs::{Chip, RefKind};
 use gitclient_core::history::spotlight::Spotlight;
-use gitclient_core::history::{Commit, split_subject};
+use gitclient_core::history::{Commit, Signature, split_subject};
 use gitclient_core::repo::branch::Dragged;
 use gitclient_core::text::short_oid;
 use gpui_kit::component::tooltip::Tooltip;
@@ -212,6 +213,7 @@ impl GraphView {
         let is_dark = theme.is_dark();
         let (foreground, muted) = (theme.foreground, theme.muted_foreground);
         let head = theme.primary;
+        let danger = theme.danger;
         let on_tint = theme.primary_foreground;
         let (background, hover, active) = (theme.background, theme.list_hover, selected_row(theme));
         let subtext0 = tokens(is_dark).subtext0;
@@ -341,6 +343,18 @@ impl GraphView {
                                                 .child(description.to_owned()),
                                         ),
                                 )
+                                .children(commit.signature.hint().map(|hint| {
+                                    let (icon, color) = match commit.signature {
+                                        Signature::Bad => (Icon::ShieldAlert, danger),
+                                        _ => (Icon::ShieldCheck, muted),
+                                    };
+                                    status_icon(
+                                        (ElementId::from(("signature", index)), "signed"),
+                                        icon,
+                                        hint.to_owned(),
+                                        color,
+                                    )
+                                }))
                                 .into_any_element(),
                             div()
                                 .w(HASH_WIDTH)
@@ -778,6 +792,7 @@ mod tests {
             email: "".into(),
             time,
             subject: "s".into(),
+            signature: Default::default(),
         }
     }
 

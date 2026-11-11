@@ -31,6 +31,7 @@ fn entries(names: &[&str]) -> Vec<Entry> {
                     email: "".into(),
                     time: 0,
                     subject: name.into(),
+                    signature: Default::default(),
                 },
             }
         })

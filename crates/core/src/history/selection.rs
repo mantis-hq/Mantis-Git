@@ -105,6 +105,7 @@ mod tests {
                         email: "".into(),
                         time: 0,
                         subject: format!("commit {index}").into(),
+                        signature: Default::default(),
                     },
                     working: index == 0,
                 }

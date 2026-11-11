@@ -750,6 +750,7 @@ mod tests {
             email: "".into(),
             time: 0,
             subject: "".into(),
+            signature: Default::default(),
         }
     }
 

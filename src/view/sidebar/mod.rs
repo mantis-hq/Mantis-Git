@@ -7,7 +7,7 @@ pub(super) use requests::Load;
 
 use super::menu::wire_ref;
 use super::parts::{TEXT_CHIP, TEXT_SMALL};
-use super::parts::{panel_row, section_label};
+use super::parts::{panel_row, section_label, status_icon};
 use super::{GraphView, OpenWorktreeInTab, SwitchWorktree};
 use crate::icons::Icon;
 use crate::theme::{lane_color, tokens};
@@ -21,7 +21,6 @@ use gitclient_core::repo::submodule::{self, State as SubmoduleState};
 use gitclient_core::tree::branches::{self, Folder};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
-use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -1108,19 +1107,4 @@ impl GraphView {
                     .child(count.to_string()),
             )
     }
-}
-
-/// A 14 px picture at the end of a branch row, with its words as a tooltip.
-fn status_icon(
-    id: (ElementId, &'static str),
-    icon: Icon,
-    hint: String,
-    color: Hsla,
-) -> Stateful<Div> {
-    div()
-        .id(ElementId::from(id))
-        .flex_none()
-        .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx))
-        .tooltip_show_delay(std::time::Duration::ZERO)
-        .child(svg().path(icon.path()).size(px(14.)).text_color(color))
 }

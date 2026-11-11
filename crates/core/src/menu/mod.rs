@@ -1192,6 +1192,7 @@ mod tests {
             author: "Ada".into(),
             email: "".into(),
             time: 0,
+            signature: Default::default(),
             subject: format!("subject of {oid}").into(),
         }
     }
