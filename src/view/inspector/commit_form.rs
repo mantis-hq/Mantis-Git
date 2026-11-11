@@ -1,7 +1,7 @@
 //! The form at the foot of the inspector that turns what is staged into a commit.
 
 use crate::theme::tokens;
-use crate::view::parts::{TEXT_CHIP, TEXT_SMALL, checkbox, chip_padded, section_label};
+use crate::view::parts::{TEXT_CHIP, checkbox, chip_padded, section_label};
 use crate::view::{GraphView, Notice};
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
@@ -15,7 +15,6 @@ use mantisgit_core::settings::state::{self, AppState};
 use mantisgit_core::tree::FileView;
 use mantisgit_core::working;
 use mantisgit_core::working::message::{self, COMMIT_TYPES};
-use mantisgit_core::working::version::{self, Bump, Version};
 use std::path::PathBuf;
 
 const SUBJECT_LIMIT: usize = 72;
@@ -220,10 +219,6 @@ impl GraphView {
             })
             .collect();
 
-        let bump = self
-            .refs
-            .latest_version()
-            .map(|version| (version, version::bump(kind, breaking, version)));
         let breaking_box =
             checkbox("breaking", breaking, false, cx).on_click(cx.listener(|this, _, _, cx| {
                 this.commit.breaking = !this.commit.breaking;
@@ -325,20 +320,16 @@ impl GraphView {
         if let Some(input) = &self.commit.details {
             body = body.child(div().h(px(52.)).child(Textarea::new(input).h_full()));
         }
-        let body = body
-            .when(message::can_break(kind), |body| {
-                body.child(
-                    div()
-                        .h_flex()
-                        .gap_2()
-                        .text_color(quiet)
-                        .child(breaking_box)
-                        .child("Breaking change"),
-                )
-            })
-            .when_some(bump, |body, (version, bump)| {
-                body.child(render_bump(version, bump, cx))
-            });
+        let body = body.when(message::can_break(kind), |body| {
+            body.child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .text_color(quiet)
+                    .child(breaking_box)
+                    .child("Breaking change"),
+            )
+        });
 
         div()
             .v_flex()
@@ -346,35 +337,4 @@ impl GraphView {
             .child(heading)
             .when(!collapsed, |root| root.child(body))
     }
-}
-
-/// What landing this commit on main would do to the version, in one line.
-fn render_bump(version: Version, bump: Bump, cx: &App) -> Div {
-    let theme = cx.theme();
-    let (background, border) = (theme.background, theme.border);
-    let (success, quiet) = (theme.success, theme.secondary_foreground);
-    let (name, next) = match bump {
-        Bump::None => ("No release", None),
-        Bump::Patch(next) => ("Patch release", Some(next)),
-        Bump::Minor(next) => ("Minor release", Some(next)),
-        Bump::Major(next) => ("Major release", Some(next)),
-        Bump::BreakingMinor(next) => ("Minor release, breaking", Some(next)),
-    };
-    let (change, color) = match next {
-        Some(next) => (format!("{version} → {next}"), success),
-        None => (format!("stays {version}"), quiet),
-    };
-    div()
-        .h_flex()
-        .h(px(30.))
-        .px_3()
-        .justify_between()
-        .gap_2()
-        .rounded(px(8.))
-        .bg(background)
-        .border_1()
-        .border_color(border)
-        .text_size(TEXT_SMALL)
-        .child(div().font_semibold().text_color(color).child(name))
-        .child(div().text_color(quiet).child(change))
 }

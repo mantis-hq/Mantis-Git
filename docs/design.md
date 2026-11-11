@@ -407,7 +407,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Commit rows are 32 px, or 28 px in compact density. Lanes are 16 px wide. Rows have no
   full hash: by default the refs column, the graph, the subject, the short hash (7
   characters, Overlay 2), then author and a short time ("12m", "3h", "Tue", "Oct 30"). The
-  full hash belongs to the inspector.
+  full hash belongs to the inspector. The subject is the row's one loud cell: semibold on the
+  HEAD row and on a picked row, regular elsewhere. Hash, author and time are 12 px in
+  Overlay 2, so they are read when looked for and never compete with it.
 - Column headings: a 28 px row on Mantle with a Surface 0 bottom border sits over the commits,
   with one heading per column ("Refs", "Graph", "Subject", "Hash", "Author", "Date") in the section
   label type, Overlay 2, and the same width as its column, inset 12 px from both edges like
@@ -817,8 +819,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   button, named for its result ("Commit 2 files", or "Stage a file to commit" while nothing
   is staged and nothing can happen), so it is never out of sight. Under it: the kinds of
   change as chips in one line, the commit line as it will be written with its length against
-  72, the summary, a details box, "Breaking change" for `feat`, and a one-line card for what
-  landing it would do to the version, shown only when the repository has `v1.2.3` style tags.
+  72, the summary, a details box and "Breaking change" for `feat`. Nothing predicts a version
+  or a release: the form says what the commit is, not what a release process might do with it.
   It commits exactly what is staged. After a commit the form empties, and the band under the
   header says how to undo it. If a hook refuses, the message stays. The form takes at most
   42% of the inspector and scrolls past that. Each list is as tall as its rows, so one file

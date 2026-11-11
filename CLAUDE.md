@@ -27,7 +27,7 @@ Where things go in `crates/core/src`:
   which commits and branches are picked.
 - `commit/`: one commit's files and diffs (`details.rs`) and the commands that act on it
   (`actions.rs`).
-- `working/`: staging and committing, with the commit's wording and version bumps.
+- `working/`: staging and committing, with the commit's wording.
 - `repo/`: branches, remotes, worktrees, submodules, a paused operation, and status. Where
   a remote is hosted (`forge.rs`) lives here too: GitHub, GitLab and Gitea pages and their
   pull and merge requests, read with git alone.

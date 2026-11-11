@@ -41,8 +41,9 @@ Decided: sections may be closed by default.
 
 Decided: an empty section collapses to its header alone (Submodules loses its sentence; Stashes with none was already one line).
 
-## 5. Type and symbols  `[ ]`
+## 5. Type and symbols  `[x]`
 
-Not yet discussed:
-- Weight and colour hierarchy in the graph rows (HEAD row semibold; Hash, Author, Date quieter).
-- The bare ✓ for "merged" and the green release card.
+Decided:
+- Graph rows: subject semibold on the HEAD row and the picked row; Hash, Author and Date 12 px, Overlay 2.
+- Keep the ✓ on merged branches. The word "merged" is too long, and the tooltip says it.
+- Remove the green "Minor release 0.1.0 → 0.2.0" card, and the version module behind it.
