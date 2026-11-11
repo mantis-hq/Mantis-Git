@@ -6,6 +6,7 @@ use mantisgit_core::cache::keys::Caches;
 use mantisgit_core::install::menu_entry::Launcher;
 use mantisgit_core::install::{Channel, exe_path, update};
 use mantisgit_core::settings::state::{self, AppState};
+use mantisgit_core::settings::themes;
 use std::path::PathBuf;
 
 fn main() {
@@ -33,7 +34,8 @@ fn main() {
     let dock = saved.dock;
     let check_updates = saved.check_updates;
     let update_track = saved.update_track;
-    let (theme_dark, theme_light) = (saved.theme_dark.clone(), saved.theme_light.clone());
+    let theme_state = saved.clone();
+    let theme_file = state_file.clone();
     // Only a portable copy manages its own launcher; a package puts one in place itself.
     let launcher = channel.is_portable().then(Launcher::this_system).flatten();
     // Without a cache folder the caches still work, from memory.
@@ -47,9 +49,8 @@ fn main() {
         .run(move |cx| {
             gpui_kit::init(cx);
             theme::init(cx);
-            if !theme_dark.is_empty() || !theme_light.is_empty() {
-                theme::apply(theme_dark, theme_light, cx);
-            }
+            theme::sync(&theme_state, themes::folder().as_deref(), cx);
+            theme::watch(theme_file, cx);
             view::show_tooltips_at_once(cx);
             view::bind_keys(cx);
             view::install_caches(caches, cx);

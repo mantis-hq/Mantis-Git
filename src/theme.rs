@@ -4,10 +4,14 @@
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeRegistry};
 use gpui_kit::{App, Hsla, Window, rgb};
 use mantisgit_core::history::lanes::LaneColor;
+use mantisgit_core::settings::state::AppState;
 use mantisgit_core::settings::theme::{Overrides, Slot};
+use mantisgit_core::settings::themes;
 use std::borrow::Cow;
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 static GENERATION: AtomicUsize = AtomicUsize::new(0);
 
@@ -35,6 +39,11 @@ const LANES: [Slot; 6] = [
 /// What the user changed, for dark and for light. The colours are read from here by
 /// everything that draws without going through the gpui-kit theme.
 static USER: RwLock<(Overrides, Overrides)> = RwLock::new((Overrides::new(), Overrides::new()));
+
+/// The colours changed from Catppuccin that are showing now, for one appearance.
+pub fn showing(is_dark: bool) -> Overrides {
+    user(is_dark)
+}
 
 /// The user's colours for one appearance.
 fn user(is_dark: bool) -> Overrides {
@@ -111,6 +120,52 @@ pub fn apply(dark: Overrides, light: Overrides, cx: &mut App) {
     *USER.write().unwrap_or_else(|e| e.into_inner()) = (dark, light);
     install(cx);
     cx.refresh_windows();
+}
+
+/// Puts in force what `state` says: the picked theme file of each appearance, else the
+/// colours changed on the Theme page. Does nothing when that is what already shows, so it
+/// is cheap to call often. Returns what is worth saying, such as a file with a bad line.
+pub fn sync(state: &AppState, folder: Option<&Path>, cx: &mut App) -> Vec<String> {
+    let (dark_now, light_now) = (user(true), user(false));
+    let (dark, dark_note) = themes::in_force(
+        folder,
+        state.theme_dark_file.as_deref(),
+        &state.theme_dark,
+        true,
+        &dark_now,
+    );
+    let (light, light_note) = themes::in_force(
+        folder,
+        state.theme_light_file.as_deref(),
+        &state.theme_light,
+        false,
+        &light_now,
+    );
+    if dark != dark_now || light != light_now {
+        apply(dark, light, cx);
+    }
+    dark_note.into_iter().chain(light_note).collect()
+}
+
+/// How often the picked theme files are read again, so that saving one in an editor shows
+/// in the window without any action.
+const WATCH_EVERY: Duration = Duration::from_secs(2);
+
+/// Follows the picked theme files for as long as the app runs.
+pub fn watch(state_file: Option<PathBuf>, cx: &mut App) {
+    let Some(state_file) = state_file else {
+        return;
+    };
+    cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor().timer(WATCH_EVERY).await;
+            let state = AppState::load(&state_file);
+            cx.update(|cx| {
+                sync(&state, themes::folder().as_deref(), cx);
+            });
+        }
+    })
+    .detach();
 }
 
 /// Matches the theme to the OS appearance now and whenever it changes.
