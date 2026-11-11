@@ -13,12 +13,14 @@ pub mod refs;
 pub mod reload;
 pub mod search;
 pub mod selection;
+pub mod signature;
 pub mod spotlight;
 
 use crate::ops::{Process, git, stderr_message};
 use crate::text::count;
 use lanes::{GraphBuilder, Row};
 use refs::{Refs, StashGraph, read_refs};
+pub use signature::Signature;
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -37,42 +39,10 @@ pub struct Commit {
     /// Author date, seconds since the Unix epoch.
     pub time: i64,
     pub subject: Arc<str>,
+    /// Not read with the history, because git checks each signature by running gpg or
+    /// ssh-keygen, which takes seconds in a repository of signed commits. It starts as
+    /// `None` and is filled in by [`signature::read`] for the rows in view.
     pub signature: Signature,
-}
-
-/// What git says about a commit's signature (`%G?`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Signature {
-    #[default]
-    None,
-    /// Signed, and the signature checks out.
-    Good,
-    /// Signed, but git can't say whether to trust it: the key is missing, expired,
-    /// revoked or unknown, or there is nothing to check an SSH signature against.
-    Unchecked,
-    /// Signed, and the signature does not match the commit.
-    Bad,
-}
-
-impl Signature {
-    fn from_status(status: &str) -> Self {
-        match status {
-            "G" | "U" => Self::Good,
-            "B" => Self::Bad,
-            "N" | "" => Self::None,
-            _ => Self::Unchecked,
-        }
-    }
-
-    /// The tooltip of the mark a signed commit gets, or `None` for an unsigned one.
-    pub fn hint(self) -> Option<&'static str> {
-        match self {
-            Self::None => None,
-            Self::Good => Some("Signed"),
-            Self::Unchecked => Some("Signed, but git can't check the signature"),
-            Self::Bad => Some("Signature does not match this commit"),
-        }
-    }
 }
 
 impl Commit {
@@ -326,7 +296,7 @@ fn stream_commits(
         "--no-color",
         // log.showSignature would otherwise mix gpg output into the records.
         "--no-show-signature",
-        "--format=%H%x00%P%x00%aN%x00%aE%x00%at%x00%G?%x00%s",
+        "--format=%H%x00%P%x00%aN%x00%aE%x00%at%x00%s",
     ]);
     // Dropping the process, as every early return below does, stops git.
     let mut process = Process::spawn(&mut command, true)?;
@@ -385,7 +355,7 @@ fn parse_commit(line: &[u8]) -> Result<Commit, String> {
     let line = String::from_utf8_lossy(line);
     let line = line.strip_suffix('\n').unwrap_or(&line);
     let fields: Vec<&str> = line.split('\0').collect();
-    let [oid, parents, author, email, time, signature, subject] = fields[..] else {
+    let [oid, parents, author, email, time, subject] = fields[..] else {
         return Err(format!("unexpected output from git log: {line:?}"));
     };
     Ok(Commit {
@@ -394,7 +364,7 @@ fn parse_commit(line: &[u8]) -> Result<Commit, String> {
         author: author.into(),
         email: email.into(),
         time: time.parse().unwrap_or(0),
-        signature: Signature::from_status(signature),
+        signature: Signature::None,
         subject: subject.into(),
     })
 }
@@ -408,24 +378,6 @@ mod tests {
     use std::collections::HashMap;
     use std::process::{Command, Stdio};
     use tempfile::TempDir;
-
-    #[test]
-    fn signature_status_maps_to_what_the_row_shows() {
-        for (status, expected) in [
-            ("N", Signature::None),
-            ("G", Signature::Good),
-            ("U", Signature::Good),
-            ("B", Signature::Bad),
-            ("E", Signature::Unchecked),
-            ("X", Signature::Unchecked),
-            ("Y", Signature::Unchecked),
-            ("R", Signature::Unchecked),
-        ] {
-            assert_eq!(Signature::from_status(status), expected, "{status}");
-        }
-        assert!(Signature::None.hint().is_none());
-        assert!(Signature::Good.hint().is_some());
-    }
 
     #[test]
     fn an_unsigned_commit_has_no_signature() {

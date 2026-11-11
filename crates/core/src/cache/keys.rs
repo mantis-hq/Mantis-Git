@@ -10,6 +10,7 @@
 
 use super::{Budget, Cache, Config, DiskSettings, hash64};
 use crate::commit::details::{self, CommitDetails, FileChange};
+use crate::history::Signature;
 use crate::history::avatar::Gravatar;
 use crate::ops::{self, Cancel};
 use crate::patch::{DiffView, FilePatch};
@@ -30,14 +31,24 @@ pub struct Usage {
 pub struct Caches {
     details: Cache<CommitDetails>,
     diffs: Cache<FilePatch>,
+    signatures: Cache<Signature>,
     avatars: Cache<Gravatar>,
 }
 
 impl Caches {
+    const COMMITS: &'static str = "Commits";
+
     const DETAILS: Config = Config {
         name: "commit-files",
-        label: "Commit files",
+        label: Self::COMMITS,
         memory_bytes: MEMORY,
+    };
+    /// Signatures sit beside a commit's files under one name, since both are what git says
+    /// about a commit, and the settings show them as one part of the bar.
+    const SIGNATURES: Config = Config {
+        name: "signatures",
+        label: Self::COMMITS,
+        memory_bytes: 1024 * 1024,
     };
     const DIFFS: Config = Config {
         name: "file-diffs",
@@ -56,6 +67,7 @@ impl Caches {
         Self {
             details: Cache::memory_only(Self::DETAILS),
             diffs: Cache::memory_only(Self::DIFFS),
+            signatures: Cache::memory_only(Self::SIGNATURES),
             avatars: Cache::memory_only(Self::AVATARS),
         }
     }
@@ -68,6 +80,7 @@ impl Caches {
         Self {
             details: Cache::in_pool(Self::DETAILS, &budget, disk.enabled),
             diffs: Cache::in_pool(Self::DIFFS, &budget, disk.enabled),
+            signatures: Cache::in_pool(Self::SIGNATURES, &budget, disk.enabled),
             avatars: Cache::in_pool(Self::AVATARS, &budget, disk.enabled),
         }
     }
@@ -77,6 +90,7 @@ impl Caches {
         // The limit is shared, so one of them setting it is the same as all of them.
         self.details.set_disk(disk);
         self.diffs.set_enabled(disk.enabled);
+        self.signatures.set_enabled(disk.enabled);
         self.avatars.set_enabled(disk.enabled);
     }
 
@@ -84,6 +98,7 @@ impl Caches {
     pub fn clear(&self) {
         self.details.clear();
         self.diffs.clear();
+        self.signatures.clear();
         self.avatars.clear();
     }
 
@@ -96,8 +111,8 @@ impl Caches {
     pub fn usage(&self) -> Vec<Usage> {
         let mut parts = vec![
             Usage {
-                label: Self::DETAILS.label,
-                bytes: self.details.disk_size(),
+                label: Self::COMMITS,
+                bytes: self.details.disk_size() + self.signatures.disk_size(),
             },
             Usage {
                 label: Self::DIFFS.label,
@@ -130,6 +145,31 @@ impl Caches {
     pub fn store_no_avatar(&self, email: &str) {
         self.avatars
             .insert(&crate::history::avatar::key(email), Gravatar::missing());
+    }
+
+    /// What git says about each of `oids`' signatures, from the cache where it has been
+    /// asked before and from git for the rest, which is then kept. Blocks, and runs gpg for
+    /// the commits that aren't cached, so call it off the UI thread and for few commits.
+    pub fn read_signatures(
+        &self,
+        repo: &Path,
+        oids: &[Arc<str>],
+    ) -> Result<Vec<(Arc<str>, Signature)>, String> {
+        let mut known = Vec::with_capacity(oids.len());
+        let mut missing = Vec::new();
+        for oid in oids {
+            match self.signatures.get(&signature_key(oid)) {
+                Some(signature) => known.push((oid.clone(), *signature)),
+                None => missing.push(oid.clone()),
+            }
+        }
+        for (oid, signature) in crate::history::signature::read(repo, &missing)? {
+            if signature.is_final() {
+                self.signatures.insert(&signature_key(&oid), signature);
+            }
+            known.push((oid, signature));
+        }
+        Ok(known)
     }
 
     /// A commit's details if they are in memory. Safe on the UI thread.
@@ -191,6 +231,10 @@ impl Caches {
                 details::file_diff(repo, commit, file, DiffView::default())
             })
     }
+}
+
+fn signature_key(oid: &str) -> String {
+    format!("signature/{oid}")
 }
 
 fn details_key(fingerprint: &str, oid: &str) -> String {
@@ -369,6 +413,36 @@ mod tests {
         );
         second.clear();
         second.avatars.flush();
+        assert_eq!(second.disk_size(), 0);
+    }
+
+    #[test]
+    fn signatures_are_kept_with_the_commits_and_counted_as_one_part() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repo::new();
+        let oid: Arc<str> = repo.commit("one").into();
+        let caches = Caches::on_disk(root.path().to_owned(), DiskSettings::default());
+        let first = caches
+            .read_signatures(repo.path(), std::slice::from_ref(&oid))
+            .unwrap();
+        assert_eq!(first, vec![(oid.clone(), Signature::None)]);
+        caches.signatures.flush();
+
+        // A new run answers from the disk, so a repository that is gone isn't asked.
+        let second = Caches::on_disk(root.path().to_owned(), DiskSettings::default());
+        let gone = std::path::Path::new("/nonexistent/repository");
+        assert_eq!(
+            second
+                .read_signatures(gone, std::slice::from_ref(&oid))
+                .unwrap(),
+            first
+        );
+
+        let usage = second.usage();
+        assert_eq!(usage.iter().filter(|u| u.label == "Commits").count(), 1);
+        assert!(usage.iter().find(|u| u.label == "Commits").unwrap().bytes > 0);
+        second.clear();
+        second.signatures.flush();
         assert_eq!(second.disk_size(), 0);
     }
 
