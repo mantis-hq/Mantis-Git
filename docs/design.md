@@ -586,7 +586,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - **Primary button:** 32 px, Blue fill, Crust text, weight 600. One per screen.
 - **Quiet button:** text only, Subtext 1, with a faint hover fill.
 - **Ref chips:** tinted with 14% of the branch colour, text in full colour. Only the
-  current branch gets a solid fill. Chips sit in their own 180 px column left of the graph (one chip, then `+n`), so subjects stay aligned. Hovering a commit with more
+  current branch gets a solid fill. Chips sit in their own column left of the graph (one chip, then `+n`), so subjects stay aligned. The column is as wide as the widest chip in the repository needs, from 48 to 180 px (`Refs::widest_chips`), so short names leave no empty strip. Hovering a commit with more
   refs opens a card over the column that lists every one, and each chip on it drags and
   right-clicks like the first.
   A branch and its remote at the same commit are one chip with a small cloud.

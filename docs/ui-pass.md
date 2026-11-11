@@ -17,13 +17,13 @@ To do:
 - Merge rows: hollow dot, no avatar (reverses "Merges lose their hollow dot to the avatar" in `docs/design.md`).
 - Update `docs/design.md` (Avatars, Graph table) and add a test in core for what a merge draws.
 
-## 2. Refs column  `[ ]`
+## 2. Refs column  `[x]`
 
-Decided: shrink it.
+Decided: it scales with what is in it (not a fixed 128 px).
 
 To do:
-- Narrower column (proposal: 128 px, was 180 px); chips ellipsize, `+n` and the hover card stay.
-- Move the chip nearer its dot; the subject column takes the freed width.
+- Width from the widest first chip, 48 to 180 px; `+n` and the hover card stay.
+- The subject column takes the freed width. Chip nearer its dot follows from the narrower column.
 
 ## 3. Inspector  `[ ]`
 
