@@ -466,8 +466,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   and the app never forces it. With one working tree the section isn't drawn.
 - Submodules: the sidebar ends in a "Submodules" section pinned to its foot, under a
   Surface 0 border, so it stays in view however long the lists above run. It is open by
-  default and always drawn: with no submodules it says "This repository has no
-  submodules." Its header ends in a quiet blue "+ Add", as Remotes does, which opens a form
+  default and always drawn, but with no submodules it is its header alone, with a count of 0
+  and no sentence, like Stashes with none, so an empty section costs one line. Its header ends in a quiet blue "+ Add", as Remotes does, which opens a form
   popup ("Add a submodule") with an "Address" and a "Folder" input (left empty, git names
   the folder after the address) and "Add submodule" as its result. It shows up to 5 rows
   and scrolls past that. A row is the submodule's path, then where it stands in

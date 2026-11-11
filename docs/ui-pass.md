@@ -35,11 +35,11 @@ To do:
 - Unstaged and Staged lists size to their content up to a cap, instead of reserving blank space.
 - Disabled "Commit n files" only dims. No sentence.
 
-## 4. Sidebar sections  `[~]`
+## 4. Sidebar sections  `[x]`
 
 Decided: sections may be closed by default.
 
-Open question: what happens to an empty Stashes (0) and Submodules ("no submodules").
+Decided: an empty section collapses to its header alone (Submodules loses its sentence; Stashes with none was already one line).
 
 ## 5. Type and symbols  `[ ]`
 
