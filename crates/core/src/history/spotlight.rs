@@ -109,6 +109,7 @@ mod tests {
                         email: "".into(),
                         time: 0,
                         subject: (*oid).into(),
+                        signature: Default::default(),
                     },
                 }
             })
