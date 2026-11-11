@@ -417,10 +417,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   removes the branch for everyone who uses the remote and gives the `git push origin
   <hash>:refs/heads/feat/x` that brings it back, and runs `git push origin --delete`.
 - Push by dropping: a local branch also drops on a remote branch, which tints like a
-  local one. The menu holds one line, "Push feat/x to origin/main", only when that
-  fast-forwards the remote branch. When the remote branch already has everything, or has
-  commits the branch lacks (a push would need a force, which is only offered after a push
-  fails; see "Force push"), the line says so and can't be used. The band says how to undo a push.
+  local one. The menu holds one line, "Push feat/x to origin/main" when that
+  fast-forwards the remote branch. When the remote branch has commits the branch lacks, the
+  line reads "Push feat/x to origin/main (needs a force)": it still tries a plain push, git
+  refuses it, and the force popup follows (see "Force push"), so nothing is forced unasked.
+  When the remote branch already has everything, the line says so and can't be used. The
+  band says how to undo a push.
 - Pull and push from the menu: the menu of a local branch that follows a remote branch, checked
   out or not, has "Pull origin/x into x" and "Push 2 commits to origin/x". Pull
   asks the remote and only fast-forwards, so nothing is merged; on a branch that isn't checked
