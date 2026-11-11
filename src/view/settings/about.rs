@@ -46,7 +46,7 @@ impl Settings {
         self.render_group("Version", rows, cx)
     }
 
-    /// Which git this is, with a way to get a newer one when it is older than gitclient
+    /// Which git this is, with a way to get a newer one when it is older than Mantis Git
     /// is made for. Not drawn until git has been asked.
     fn git_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let row = about::git_row(self.git.as_ref()?);

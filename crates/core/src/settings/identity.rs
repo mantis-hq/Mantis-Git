@@ -473,7 +473,7 @@ pub fn save_default(scope: &Scope, profile: &Profile) -> Result<(), String> {
 }
 
 /// Sets the default's SSH key and leaves its name, email and signing key as they are. An
-/// empty key takes out a key that gitclient set, and leaves a command written by hand.
+/// empty key takes out a key that Mantis Git set, and leaves a command written by hand.
 pub fn save_default_ssh_key(scope: &Scope, key: &str) -> Result<(), String> {
     let profile = Profile {
         ssh_key: key.to_owned(),

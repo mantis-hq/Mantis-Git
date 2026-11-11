@@ -7,7 +7,7 @@
 use super::Status;
 use std::path::{Path, PathBuf};
 
-/// A line in the file that says gitclient wrote it, and so may rewrite or remove it.
+/// A line in the file that says Mantis Git wrote it, and so may rewrite or remove it.
 pub const MARKER: &str = "X-Gitclient-Managed=true";
 const ENTRY_NAME: &str = "gitclient.desktop";
 const ICON_NAME: &str = "gitclient.svg";
@@ -59,12 +59,12 @@ pub fn render(exe: &Path, icon: &Path) -> Result<String, String> {
     let exe = exe
         .to_str()
         .filter(|exe| !exe.contains('\n'))
-        .ok_or("gitclient's path isn't plain text, which a launcher can't hold.")?;
+        .ok_or("Mantis Git's path isn't plain text, which a launcher can't hold.")?;
     let icon = icon.to_string_lossy().replace('\n', "");
     Ok(format!(
         "[Desktop Entry]\n\
          Type=Application\n\
-         Name=gitclient\n\
+         Name=Mantis Git\n\
          GenericName=Git client\n\
          Comment=See where you are in a repository, and what to do next\n\
          Exec={exec}\n\
@@ -114,7 +114,7 @@ pub fn status(places: &Places, exe: &Path) -> Status {
 
 fn foreign(places: &Places) -> String {
     format!(
-        "There is already a gitclient.desktop in {} that gitclient didn't write, so it was \
+        "There is already a gitclient.desktop in {} that Mantis Git didn't write, so it was \
          left alone.",
         places.folder().display()
     )
@@ -210,7 +210,7 @@ mod tests {
         for line in [
             "[Desktop Entry]",
             "Type=Application",
-            "Name=gitclient",
+            "Name=Mantis Git",
             "Exec=\"/h/gitclient\"",
             "Icon=/i/gitclient.svg",
             "Terminal=false",
@@ -219,7 +219,7 @@ mod tests {
         ] {
             assert!(text.lines().any(|l| l == line), "missing {line}\n{text}");
         }
-        // No MimeType, which would make gitclient the handler for every folder.
+        // No MimeType, which would make Mantis Git the handler for every folder.
         assert!(!text.contains("MimeType"));
     }
 

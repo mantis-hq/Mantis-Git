@@ -144,7 +144,7 @@ pub fn ask_all(address: &Address, ask: &dyn Ask) -> Outcome {
     }
 }
 
-/// Servers that are known not to be a forge gitclient speaks of, so that asking them three
+/// Servers that are known not to be a forge Mantis Git speaks of, so that asking them three
 /// questions would be pointless.
 pub fn worth_asking(address: &Address) -> bool {
     let host = address.host.split(':').next().unwrap_or(&address.host);

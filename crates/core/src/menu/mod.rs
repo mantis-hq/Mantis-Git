@@ -1948,7 +1948,7 @@ mod tests {
         assert!(
             ask.forge_question()
                 .unwrap()
-                .starts_with("gitclient can't tell whether origin is on GitHub, GitLab or Gitea")
+                .starts_with("Mantis Git can't tell whether origin is on GitHub, GitLab or Gitea")
         );
         assert_eq!(ask.run(Path::new(".")), Ok(None));
         assert!(ask.confirmation().is_none());

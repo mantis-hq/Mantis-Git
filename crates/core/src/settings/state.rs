@@ -44,7 +44,7 @@ pub struct AppState {
     /// How the dock along the bottom of the window was left.
     pub dock: DockLayout,
     /// Whether the welcome panel has been shown. It shows once, and holds the choice of
-    /// adding gitclient to the application menu; what the menu holds is read from disk.
+    /// adding Mantis Git to the application menu; what the menu holds is read from disk.
     pub welcome_seen: bool,
     /// Whether a portable copy looks for a newer release when it starts.
     pub check_updates: bool,
@@ -187,7 +187,7 @@ impl AppState {
 
     pub fn render(&self) -> String {
         let mut text =
-            String::from("# Remembered by gitclient. Safe to edit while it is closed.\n");
+            String::from("# Remembered by Mantis Git. Safe to edit while it is closed.\n");
         text.push_str(&format!("reopen_tabs={}\n", self.reopen_tabs));
         text.push_str(&format!("disk_cache={}\n", self.disk_cache));
         text.push_str(&format!("cache_mb={}\n", self.cache_mb));
@@ -271,7 +271,7 @@ impl AppState {
                 cache_size_label(self.cache_mb)
             )
         } else {
-            "Commits are read from git each time you open gitclient.".to_owned()
+            "Commits are read from git each time you open Mantis Git.".to_owned()
         }
     }
 
@@ -317,9 +317,9 @@ impl AppState {
     /// What the header says after the "Reopen repositories" switch is flipped.
     pub fn reopen_saved_message(&self) -> &'static str {
         if self.reopen_tabs {
-            "Saved. gitclient will reopen your repositories when it starts."
+            "Saved. Mantis Git will reopen your repositories when it starts."
         } else {
-            "Saved. gitclient will start without reopening repositories."
+            "Saved. Mantis Git will start without reopening repositories."
         }
     }
 
@@ -343,9 +343,9 @@ impl AppState {
     /// The sentence under the "Reopen repositories" switch, saying what it does now.
     pub fn reopen_sentence(&self) -> &'static str {
         if self.reopen_tabs {
-            "The repositories you leave open come back when you start gitclient."
+            "The repositories you leave open come back when you start Mantis Git."
         } else {
-            "gitclient starts with the folder it was launched from, or an empty tab."
+            "Mantis Git starts with the folder it was launched from, or an empty tab."
         }
     }
 }

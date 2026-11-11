@@ -39,7 +39,7 @@ impl State {
 
 impl GraphView {
     /// The remote whose requests are shown, with where it is on the web. `None` when no
-    /// remote is on a forge gitclient knows, and then the section isn't drawn.
+    /// remote is on a forge Mantis Git knows, and then the section isn't drawn.
     pub(super) fn request_source(&self) -> Option<(Remote, Site)> {
         let (remote, site) = forge::pick(&self.refs.remote_configs, self.refs.forge)?;
         Some((remote.clone(), site))

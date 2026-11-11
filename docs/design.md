@@ -1,6 +1,6 @@
-# gitclient UI style
+# Mantis Git UI style
 
-Every window, panel, and component in gitclient follows this document. The visual
+Every window, panel, and component in Mantis Git follows this document. The visual
 reference is the design canvas, which is kept outside the repository
 and private to its owner. If the canvas and this file disagree, this file wins until it
 is updated.
@@ -173,7 +173,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     key is a path, typed or picked from chips for the key pairs in `~/.ssh`, and makes git
     fetch, pull and push with that key alone wherever the identity applies. There is no
     page for SSH config: the app never reads or writes it beyond suggesting host names.
-  - **App** holds what gitclient itself remembers, apart from git. The first is "Reopen
+  - **App** holds what Mantis Git itself remembers, apart from git. The first is "Reopen
     repositories on launch", on by default: a tick box in a card under "Startup", with a
     sentence that says what it does now. The open repositories and the front tab are saved
     as they change, in a small text file in the system's config folder (`state` inside
@@ -233,21 +233,21 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     portable. One a package manager installed (found by a build flag, `/usr`, Flatpak, an
     AppImage, Homebrew, Nix, Scoop and the like) leaves its launcher and its updates to the
     package manager, shows no "Launcher" card, and says on the About page who updates it.
-    Under "Launcher", a tick box "Add gitclient to the application menu" ("Start menu" on
+    Under "Launcher", a tick box "Add Mantis Git to the application menu" ("Start menu" on
     Windows) is ticked when a launcher is on disk: on Linux a `gitclient.desktop` and an SVG
     icon under `$XDG_DATA_HOME` (`~/.local/share` by default), on Windows one shortcut in the
     user's Start menu folder, and nothing on a system with neither. The sentence says where
-    gitclient starts from. What is on disk is the truth, so a launcher added or removed by
-    hand shows as it is; a `gitclient.desktop` without gitclient's marker line is someone
+    Mantis Git starts from. What is on disk is the truth, so a launcher added or removed by
+    hand shows as it is; a `gitclient.desktop` without Mantis Git's marker line is someone
     else's, is never replaced or removed, and has no tick box. Ticking or clearing it applies
-    at once, and the header says how to undo it. Every start mends a launcher of gitclient's
+    at once, and the header says how to undo it. Every start mends a launcher of Mantis Git's
     own that points at a copy that has moved, and never adds one that was taken away.
   - **Repository** holds what belongs to the open repository alone, apart from its git
     config, and is only in the side panel while a repository is open. The header says which
-    one. Under "Hosting", a "Forge" row says which forge the remote is on ("gitclient can tell
+    one. Under "Hosting", a "Forge" row says which forge the remote is on ("Mantis Git can tell
     that origin is on GitLab", or that it can't tell) beside a row of chips, Automatic then
     GitHub, GitLab and Gitea, the picked one ticked and never blue. Automatic leaves it to
-    gitclient (see "Forges"), and a choice is kept in the repository's own git config as
+    Mantis Git (see "Forges"), and a choice is kept in the repository's own git config as
     `gitclient.forge`. A choice applies at once, and the header says what it now does. Under "History", a "Commit graph" row says whether git's commit graph lists every
     commit the branches and tags reach ("The commit graph lists 72712 of the 73143 commits
     your branches and tags reach."), and why git can't use one in a shallow clone, with
@@ -260,8 +260,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     "Commit graph card"). Both sentences for a missing or behind graph add that in a large
     repository it makes branch counts, search and loading history slow.
   - **About** is the last page, always in the side panel. Its "Version" card says which
-    build this is ("gitclient 0.1.0", with the commit in brackets for a nightly), what
-    gitclient is licensed under and that it contains so many projects by others, with a quiet
+    build this is ("Mantis Git 0.1.0", with the commit in brackets for a nightly), what
+    Mantis Git is licensed under and that it contains so many projects by others, with a quiet
     "Open the source on GitHub" button, then a row that names the installed git ("git 2.56")
     with a sentence under it, and under that holds everything about updating, in rows. A git
     older than 2.41 (`RECOMMENDED` in `gitclient_core::settings::config`), which is the first
@@ -272,10 +272,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     git also gets a toast at launch, in the front tab, which gives way to any message already
     showing and closes like any other (`about::old_git_notice`). A git that is recent enough
     says only that it is; one that can't be run is said on the Git config page already, and
-    the row repeats it. A tick box "Look for a newer version when gitclient starts" (on by default,
+    the row repeats it. A tick box "Look for a newer version when Mantis Git starts" (on by default,
     `check_updates` in the `state` file), a row of chips "Which versions to update to"
     ("Full releases", the default, or "Nightly builds", kept as `update_track`, the picked one
-    ticked and never blue) and a row that says where an update stands ("gitclient 0.2.0 is
+    ticked and never blue) and a row that says where an update stands ("Mantis Git 0.2.0 is
     available. This is 0.1.0.") beside one quiet button named for its result: "Check now",
     "Update to 0.2.0" or "Restart now". A copy a package manager installed has one row saying
     who updates it, instead. Full releases are the newest tag that is a plain version
@@ -291,7 +291,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     crate under "MIT License" is in one row (`combine`). The list is a virtual list of 48 px
     rows across the card's full width, about six in view with a scrollbar, that draws only
     the rows in view. A row has the license's name and how many projects are under it, and
-    the projects in Overlay 2 on a line under it. The first is gitclient's own, then Maple
+    the projects in Overlay 2 on a line under it. The first is Mantis Git's own, then Maple
     Mono's, then the crates'. A click picks one, which takes the selected-row fill and a bold
     name, and clicking it again puts it down. The picked license's text shows under the list,
     on Base in a pane of its own that scrolls past 320 px. Crates word a license a little
@@ -467,7 +467,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   in, saved with "Save <name>"; renaming also renames its remote branches), "Copy address",
   and in red "Remove remote <name>", which asks first and gives the `git remote add` that
   brings it back. Names that can't work are turned down in the popup, before git runs.
-- Forges: gitclient tells which of GitHub, GitLab and Gitea a remote is on in this order.
+- Forges: Mantis Git tells which of GitHub, GitLab and Gitea a remote is on in this order.
   The forge chosen for the repository wins (the Repository page, kept as `gitclient.forge`
   in its git config). Then the host's name: `github.com` or `github.*`, `gitlab.com` or
   `gitlab.*`, `gitea.com`, `codeberg.org`, `gitea.*` or `forgejo.*`. Then, for a server
@@ -570,12 +570,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     under the inputs, whether the form found it or git refused, and typing clears it. On
     success the popup closes and the band says what happened. What each form asks lives in
     core (`Form` in `crates/core/src/menu/form.rs`).
-- **Welcome panel:** the first time gitclient runs, with a place to remember that it has,
+- **Welcome panel:** the first time Mantis Git runs, with a place to remember that it has,
   a 640 px panel opens over the front tab, on Mantle with a 1 px Blue outline and 8 px
   radius, drawn by the popup module so it shares the backdrop and keys. Its parts, top to
   bottom, each under a Surface 0 rule:
   - The app's mark (the icon, drawn at 56 px: a blue lane with HEAD on it and a branch
-    bending away), "Welcome to gitclient" as a commit title, and one status sentence.
+    bending away), "Welcome to Mantis Git" as a commit title, and one status sentence.
   - Three ideas side by side, each a picture on Base over a one-line heading and a few words:
     "Your branch is straight" (a small graph: HEAD's blue lane, `main` below the fork in
     its own colour, another branch bending away), "Say what will happen" (a primary button
@@ -584,10 +584,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     buttons as they are drawn elsewhere.
   - "Keys worth knowing": keycaps in Surface 0 (`Ctrl O` open a repository, `Ctrl T` new
     tab, `Ctrl B` sidebar, `Ctrl ,` settings).
-  - For a portable copy that has no launcher, a tick box, ticked: "Add gitclient to the
+  - For a portable copy that has no launcher, a tick box, ticked: "Add Mantis Git to the
     application menu" ("Start menu" on Windows), with a muted sentence that names what will
     be written and where, and says Settings → App takes it away. A launcher that is already
-    there, one gitclient didn't write, or a package manager's copy shows no box.
+    there, one Mantis Git didn't write, or a package manager's copy shows no box.
   - A footer with the key line, "Skip" as a quiet button and the one blue button, named for
     its result: "Add to menu and start" while the box is ticked, otherwise "Get started".
   `Enter` goes on and does what the button says, `Space` ticks or clears the box, `Esc` or
@@ -624,13 +624,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   graph that is only behind, or any other reason for being slow shows nothing. A branch level
   with the default branch is counted without asking git at all.
 - **Update card:** when a newer release is found, a card in that corner:
-  a blue "Update" pill, "gitclient 0.2.0 is available.", and under it a quiet "Later" (hides
+  a blue "Update" pill, "Mantis Git 0.2.0 is available.", and under it a quiet "Later" (hides
   it until a newer release) and the blue "Update to 0.2.0". Nothing is downloaded until the button is pressed. It then says
-  "Downloading gitclient 0.2.0…", and when the new program is in place "gitclient 0.2.0 is
+  "Downloading Mantis Git 0.2.0…", and when the new program is in place "Mantis Git 0.2.0 is
   installed and starts the next time you open it. To go back, download 0.1.0 from
   github.com/…/releases/tag/v0.1.0." with "Restart now". A failure is said in Peach with
   "Try again". Looking and finding nothing, or failing to look, is only said in Settings.
-  The same card offers a nightly ("gitclient nightly 1a2b3c4 is available.") on that track.
+  The same card offers a nightly ("Mantis Git nightly 1a2b3c4 is available.") on that track.
   The release archive is checked against the release's `SHA256SUMS.txt` before anything is
   replaced, and a mismatch installs nothing. What is said and decided lives in core
   (`gitclient_core::install`).
@@ -654,10 +654,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   and the menu then proposes a pull or merge request bringing the dragged branch into the
   one it was dropped on: "Open a pull request for feat/x into main", which opens the page
   that starts one on the forge in the browser, with the forge's mark before it, and "Copy
-  link". Git can't make a request, so gitclient opens the page and the band says so. The
+  link". Git can't make a request, so Mantis Git opens the page and the band says so. The
   heading names the branches without their remote ("feat/x onto main"). When the forge isn't
   known, even after asking the server, the line is still there as "Open a request for feat/x
-  into main", with a Peach question mark. Choosing it opens a popup that says gitclient can't
+  into main", with a Peach question mark. Choosing it opens a popup that says Mantis Git can't
   tell which forge the remote is on, so it doesn't know which page starts a request, and that
   the repository's settings can say; its result is "Open settings", which opens the
   Repository page. A line that can't be used says why, briefly: the base already has all of

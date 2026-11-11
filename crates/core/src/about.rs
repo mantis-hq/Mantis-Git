@@ -68,7 +68,7 @@ impl License {
         count(self.used_by.len(), "project")
     }
 
-    /// Whether this is gitclient's own license.
+    /// Whether this is Mantis Git's own license.
     pub fn is_own(&self) -> bool {
         self.used_by
             .iter()
@@ -120,7 +120,7 @@ const NO_NOTICE: [&str; 3] = [
 ];
 
 /// The licenses that have to be shown for everything in this program, one for each name:
-/// gitclient's own first, then the font, then the crates' in the order they were written.
+/// Mantis Git's own first, then the font, then the crates' in the order they were written.
 pub fn licenses() -> &'static [License] {
     static ALL: OnceLock<Vec<License>> = OnceLock::new();
     ALL.get_or_init(|| {
@@ -286,9 +286,9 @@ fn same_words(a: &str, b: &str) -> bool {
     a.split_whitespace().eq(b.split_whitespace())
 }
 
-/// "gitclient 0.1.0", with the commit when the build knows it ("gitclient 0.1.0 (1a2b3c4)").
+/// "Mantis Git 0.1.0", with the commit when the build knows it ("Mantis Git 0.1.0 (1a2b3c4)").
 pub fn version_line(build: &Build) -> String {
-    format!("gitclient {}", build.label())
+    format!("Mantis Git {}", build.label())
 }
 
 /// Where to get a newer git.
@@ -316,7 +316,7 @@ pub fn git_row(git: &Result<Version, String>) -> GitRow {
         },
         Ok(version) => GitRow {
             title: format!("git {version}"),
-            sentence: "Recent enough for everything gitclient does.".to_owned(),
+            sentence: "Recent enough for everything Mantis Git does.".to_owned(),
             update: false,
         },
         Err(message) => GitRow {
@@ -342,7 +342,7 @@ pub fn page_sentence() -> String {
     "What you're running, and what's inside it.".to_owned()
 }
 
-/// What gitclient is licensed under, and what else is in it.
+/// What Mantis Git is licensed under, and what else is in it.
 pub fn license_sentence() -> String {
     let others = licenses()
         .iter()
@@ -612,7 +612,7 @@ mod tests {
     fn says_which_build_this_is() {
         assert_eq!(
             version_line(&Build::current(None)),
-            format!("gitclient {}", env!("CARGO_PKG_VERSION"))
+            format!("Mantis Git {}", env!("CARGO_PKG_VERSION"))
         );
         let commit = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
         assert!(version_line(&Build::current(Some(commit))).ends_with("(1a2b3c4)"));

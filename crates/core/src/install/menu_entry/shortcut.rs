@@ -56,7 +56,7 @@ fn write_link(exe: &Path, to: &Path) -> Result<(), String> {
         format!("Couldn't write {}: {error}", to.display())
     }
     let mut link = ShellLink::new(exe).map_err(|error| failed(to, error))?;
-    link.set_name(Some("gitclient".to_owned()));
+    link.set_name(Some("Mantis Git".to_owned()));
     if let Some(folder) = exe.parent() {
         link.set_working_dir(Some(folder.to_string_lossy().into_owned()));
     }

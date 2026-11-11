@@ -1,4 +1,4 @@
-//! Updating a portable copy of gitclient from its releases. One model for the whole
+//! Updating a portable copy of Mantis Git from its releases. One model for the whole
 //! app: the band over the window offers the step, and Settings → App shows where it stands.
 //!
 //! Everything about releases, downloads and wording is in `gitclient_core::install::update`.

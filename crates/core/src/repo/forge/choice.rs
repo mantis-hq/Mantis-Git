@@ -1,4 +1,4 @@
-//! Which forge a repository is on when gitclient can't tell, and the choice that says. The
+//! Which forge a repository is on when Mantis Git can't tell, and the choice that says. The
 //! Repository page shows and sets it; it lives in the repository's own git config as
 //! `gitclient.forge`, which is where a name and an email already live.
 
@@ -18,7 +18,7 @@ pub fn chosen(repo: &Path) -> Option<Forge> {
 }
 
 /// Chooses `forge` for the repository, or with `None` takes the choice back so that
-/// gitclient tells by itself.
+/// Mantis Git tells by itself.
 pub fn set(repo: &Path, forge: Option<Forge>) -> Result<(), String> {
     let scope = Scope::Repository(repo.to_owned());
     config::set(&scope, KEY, forge.map_or("", Forge::config_value))
@@ -30,7 +30,7 @@ pub struct Choice {
     pub chosen: Option<Forge>,
     /// The remote on the web that the rest is about, `origin` if it is on the web.
     pub remote: Option<String>,
-    /// The forge gitclient can tell it is without being told.
+    /// The forge Mantis Git can tell it is without being told.
     pub detected: Option<Forge>,
 }
 
@@ -53,7 +53,7 @@ pub fn read(repo: &Path) -> Choice {
 /// What the popup says when a request was asked for on a remote whose forge isn't known.
 pub fn unknown_question(remote: &str) -> String {
     format!(
-        "gitclient can't tell whether {remote} is on GitHub, GitLab or Gitea, so it doesn't \
+        "Mantis Git can't tell whether {remote} is on GitHub, GitLab or Gitea, so it doesn't \
          know which page starts a request. If it is on one of them, say which in this \
          repository's settings."
     )
@@ -68,14 +68,14 @@ impl Choice {
         };
         match (self.chosen, self.detected) {
             (Some(forge), _) => format!(
-                "gitclient treats {remote} as hosted on {}, as chosen here.",
+                "Mantis Git treats {remote} as hosted on {}, as chosen here.",
                 forge.name()
             ),
             (None, Some(forge)) => {
-                format!("gitclient can tell that {remote} is on {}.", forge.name())
+                format!("Mantis Git can tell that {remote} is on {}.", forge.name())
             }
             (None, None) => format!(
-                "gitclient can't tell whether {remote} is on GitHub, GitLab or Gitea. \
+                "Mantis Git can't tell whether {remote} is on GitHub, GitLab or Gitea. \
                  Choose the one it is on, if any."
             ),
         }
@@ -114,7 +114,7 @@ mod tests {
         assert_eq!(choice.detected, Some(Forge::GitLab));
         assert_eq!(
             choice.sentence(),
-            "gitclient can tell that origin is on GitLab."
+            "Mantis Git can tell that origin is on GitLab."
         );
 
         // Nothing at this address answers, so only a choice can settle it.
@@ -129,13 +129,13 @@ mod tests {
         assert!(
             choice
                 .sentence()
-                .starts_with("gitclient can't tell whether origin")
+                .starts_with("Mantis Git can't tell whether origin")
         );
 
         set(repo.path(), Some(Forge::Gitea)).unwrap();
         assert_eq!(
             read(repo.path()).sentence(),
-            "gitclient treats origin as hosted on Gitea, as chosen here."
+            "Mantis Git treats origin as hosted on Gitea, as chosen here."
         );
     }
 }

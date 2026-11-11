@@ -114,7 +114,7 @@ fn a_newer_release_is_offered_and_later_hides_the_offer_until_a_newer_one(cx: &m
     look(&model, &mut cx);
 
     let band = band_of(&model, &cx).expect("an offer");
-    assert_eq!(band.message, "gitclient 999.0.0 is available.");
+    assert_eq!(band.message, "Mantis Git 999.0.0 is available.");
     assert_eq!(band.action.as_deref(), Some("Update to 999.0.0"));
 
     // "Later" hides the band, and Settings still says it is available.
@@ -191,7 +191,7 @@ fn a_copy_a_package_manager_installed_never_looks_and_says_why(cx: &mut TestAppC
     let reason = model.read_with(&cx, |updates, _| updates.reason().map(str::to_owned));
     assert_eq!(
         reason.as_deref(),
-        Some("gitclient was installed with Flatpak, which updates it.")
+        Some("Mantis Git was installed with Flatpak, which updates it.")
     );
 }
 

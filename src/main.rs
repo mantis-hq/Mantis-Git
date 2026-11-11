@@ -65,7 +65,7 @@ fn main() {
 
             let options = WindowOptions {
                 titlebar: Some(TitlebarOptions {
-                    title: Some("gitclient".into()),
+                    title: Some("Mantis Git".into()),
                     // On Windows the tab strip is the title bar, with its own controls.
                     appears_transparent: cfg!(windows),
                     ..Default::default()

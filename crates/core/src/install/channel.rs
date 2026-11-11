@@ -13,7 +13,7 @@ pub enum Channel {
     /// Unpacked from a release archive, so it is the app's own to launch and update.
     Portable,
     /// Installed by something else that keeps it up to date. `by` completes a sentence
-    /// such as "gitclient was installed with Flatpak".
+    /// such as "Mantis Git was installed with Flatpak".
     Packaged { by: &'static str },
 }
 

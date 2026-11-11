@@ -664,7 +664,7 @@ fn the_repository_page_sets_and_clears_the_forge_the_repository_is_on(cx: &mut T
         assert!(
             choice
                 .sentence()
-                .starts_with("gitclient can't tell whether origin")
+                .starts_with("Mantis Git can't tell whether origin")
         );
     });
 
@@ -690,7 +690,7 @@ fn the_repository_page_sets_and_clears_the_forge_the_repository_is_on(cx: &mut T
     view.read_with(&cx, |settings, _| {
         assert!(matches!(
             &settings.feedback,
-            Feedback::Saved(message) if message == "gitclient tells which forge it is by itself again."
+            Feedback::Saved(message) if message == "Mantis Git tells which forge it is by itself again."
         ));
     });
     draw(&view, &mut cx);
@@ -763,7 +763,7 @@ fn the_launcher_switch_adds_and_removes_the_menu_entry_and_settles_the_question(
     view.read_with(&cx, |settings, _| {
         assert!(matches!(
             &settings.feedback,
-            Feedback::Saved(message) if message.starts_with("Added gitclient")
+            Feedback::Saved(message) if message.starts_with("Added Mantis Git")
         ));
         assert!(matches!(
             settings.launcher_status,
@@ -778,7 +778,7 @@ fn the_launcher_switch_adds_and_removes_the_menu_entry_and_settles_the_question(
     view.read_with(&cx, |settings, _| {
         assert!(matches!(
             &settings.feedback,
-            Feedback::Saved(message) if message.starts_with("Took gitclient out")
+            Feedback::Saved(message) if message.starts_with("Took Mantis Git out")
         ));
     });
 }

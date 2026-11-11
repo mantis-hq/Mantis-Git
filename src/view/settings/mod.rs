@@ -812,7 +812,7 @@ impl Settings {
                             .to_owned()
                     }
                     Page::App => "App preferences save as you make them.".to_owned(),
-                    Page::About => "gitclient, and what is in it.".to_owned(),
+                    Page::About => "Mantis Git, and what is in it.".to_owned(),
                     Page::Repository => format!(
                         "Showing {}, the repository in the front tab.",
                         self.repo.as_deref().map(repository_name).unwrap_or_default()

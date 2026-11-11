@@ -1,4 +1,4 @@
-# gitclient
+# Mantis Git
 
 A desktop Git client written in Rust on `gpui-kit`.
 

@@ -73,7 +73,7 @@ impl Request {
     /// The line naming the keys.
     pub fn hint(&self) -> String {
         let kept = if self.is_secret() {
-            " It is kept until gitclient closes."
+            " It is kept until Mantis Git closes."
         } else {
             ""
         };

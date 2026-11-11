@@ -592,9 +592,9 @@ fn packaged_copies_and_unknown_systems_cannot_update_and_say_why() {
     };
     assert_eq!(
         why(Channel::Packaged { by: "Flatpak" }, Some(linux())),
-        "gitclient was installed with Flatpak, which updates it."
+        "Mantis Git was installed with Flatpak, which updates it."
     );
-    assert!(why(Channel::Portable, None).contains("no build of gitclient"));
+    assert!(why(Channel::Portable, None).contains("no build of Mantis Git"));
     assert_eq!(why(Channel::Portable, Some(linux())), "yes");
     // A package manager wins even where there is a build.
     assert_ne!(why(Channel::Packaged { by: "Nix" }, Some(linux())), "yes");
@@ -604,7 +604,7 @@ fn packaged_copies_and_unknown_systems_cannot_update_and_say_why() {
 fn the_band_offers_the_next_step_and_stays_quiet_otherwise() {
     let (found, _) = release(linux(), b"x", None);
     let band = Status::Available(found.clone()).band().unwrap();
-    assert_eq!(band.message, "gitclient 0.2.0 is available.");
+    assert_eq!(band.message, "Mantis Git 0.2.0 is available.");
     assert_eq!(band.action.as_deref(), Some("Update to 0.2.0"));
     assert!(!band.warning);
 
@@ -613,7 +613,7 @@ fn the_band_offers_the_next_step_and_stays_quiet_otherwise() {
 
     let ready = Status::installed(&found);
     let band = ready.band().unwrap();
-    assert!(band.message.starts_with("gitclient 0.2.0 is installed"));
+    assert!(band.message.starts_with("Mantis Git 0.2.0 is installed"));
     // It says how to undo the step.
     assert!(band.message.contains(
         "To go back, download 0.1.0 from git.example.com/example/gitclient/releases/tag/v0.1.0."
@@ -643,20 +643,20 @@ fn the_settings_sentence_and_button_follow_the_status() {
     let (found, _) = release(linux(), b"x", None);
     assert_eq!(
         Status::Idle.sentence(current, stable),
-        "This is gitclient 0.1.0."
+        "This is Mantis Git 0.1.0."
     );
     assert_eq!(Status::Idle.button().as_deref(), Some("Check now"));
     assert_eq!(
         Status::UpToDate.sentence(current, stable),
-        "gitclient 0.1.0 is the newest version."
+        "Mantis Git 0.1.0 is the newest version."
     );
     assert_eq!(
         Status::UpToDate.sentence(&build_at(Some(COMMIT_A)), Track::Nightly),
-        "gitclient 0.1.0 (1a2b3c4) is the newest nightly build."
+        "Mantis Git 0.1.0 (1a2b3c4) is the newest nightly build."
     );
     assert_eq!(
         Status::Available(found.clone()).sentence(current, stable),
-        "gitclient 0.2.0 is available. This is 0.1.0."
+        "Mantis Git 0.2.0 is available. This is 0.1.0."
     );
     assert_eq!(
         Status::Available(found.clone()).button().as_deref(),
@@ -675,7 +675,7 @@ fn the_settings_sentence_and_button_follow_the_status() {
     );
     assert_eq!(
         check_saved_message(true),
-        "Saved. gitclient will look for a newer version when it starts."
+        "Saved. Mantis Git will look for a newer version when it starts."
     );
     assert!(check_sentence(false).contains("Check now"));
 }

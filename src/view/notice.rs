@@ -39,7 +39,7 @@ pub(super) enum After {
 
 impl GraphView {
     /// At launch: asks which git this is, and says so in a toast when it is older than
-    /// gitclient is made for.
+    /// Mantis Git is made for.
     pub fn warn_if_git_is_old(&mut self, cx: &mut Context<Self>) {
         Self::spawn_blocking(
             config::git_version,
