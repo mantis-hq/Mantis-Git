@@ -1,15 +1,15 @@
 //! A question from git or ssh that waits for typing: a key's passphrase, an HTTPS login,
-//! whether to trust a host. What it says lives in `gitclient_core::askpass`; this draws
+//! whether to trust a host. What it says lives in `mantisgit_core::askpass`; this draws
 //! it in the shared frame, with the answer hidden when it is a secret. Dropping the popup
 //! cancels the question, so Escape needs no code of its own.
 
 use super::{Dialog, Frame};
 use crate::view::GraphView;
-use gitclient_core::askpass::Request;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::askpass::Request;
 
 /// An open question. Its input is made on the next draw, when there is a window.
 pub(in crate::view) struct AskDialog {

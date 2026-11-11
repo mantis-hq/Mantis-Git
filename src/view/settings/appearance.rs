@@ -3,7 +3,7 @@
 //! Catppuccin, and each colour is a hex input.
 
 use super::*;
-use gitclient_core::settings::theme::{self as palette, Overrides, Slot};
+use mantisgit_core::settings::theme::{self as palette, Overrides, Slot};
 
 /// One colour's input, which saves when Enter is pressed or the input is left.
 pub(super) struct ColorField {
@@ -164,7 +164,7 @@ impl Settings {
         cx: &mut Context<Self>,
     ) {
         let found = palette::Locations::this_system().and_then(|places| places.read(source));
-        match found.ok_or_else(|| format!("gitclient found no {} to read.", source.name())) {
+        match found.ok_or_else(|| format!("Mantis Git found no {} to read.", source.name())) {
             Ok(found) => {
                 self.editing_dark = found.dark;
                 let said = found.saved_message();
@@ -290,7 +290,7 @@ impl Settings {
                     .child(if can_save {
                         palette::describe(self.theme_edited(), dark)
                     } else {
-                        "gitclient can't find a folder to keep this in.".to_owned()
+                        "Mantis Git can't find a folder to keep this in.".to_owned()
                     }),
             )
             .into_any_element();
@@ -328,7 +328,7 @@ impl Settings {
             .max_w(PAGE_WIDTH)
             .child(self.page_head(
                 "Theme",
-                "Change the colours of gitclient. Blue stays the one next action, and branches keep \
+                "Change the colours of Mantis Git. Blue stays the one next action, and branches keep \
                  one colour each wherever they are drawn.",
                 cx,
             ))

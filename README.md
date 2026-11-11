@@ -1,11 +1,11 @@
-# gitclient
+# Mantis Git
 
 A desktop Git client built for performance.
 
 It's written in Rust on [gpui-kit](https://crates.io/crates/gpui-kit) and talks to your
 installed `git`.
 
-![gitclient showing a repository's branches, its history as a lane graph, and the working changes](docs/screenshot.png)
+![Mantis Git showing a repository's branches, its history as a lane graph, and the working changes](docs/screenshot.png)
 
 ## Project goals & features
 
@@ -27,7 +27,7 @@ installed `git`.
 
 Download the archive for your system from the
 [releases](https://github.com/pretext8335/gitclient/releases) page, unpack it and run
-`gitclient`.
+`mantisgit`.
 
 It needs `git` on your `PATH`. Version 2.41 or newer is recommended, as the sidebar's
 branch counts need it.

@@ -1,10 +1,10 @@
 //! The app's look, per `docs/design.md`: Catppuccin colours, the bundled Maple Mono, and
 //! following the OS appearance.
 
-use gitclient_core::history::lanes::LaneColor;
-use gitclient_core::settings::theme::{Overrides, Slot};
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeRegistry};
 use gpui_kit::{App, Hsla, Window, rgb};
+use mantisgit_core::history::lanes::LaneColor;
+use mantisgit_core::settings::theme::{Overrides, Slot};
 use std::borrow::Cow;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};

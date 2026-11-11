@@ -1,6 +1,6 @@
 use super::{AppUpdates, Arc, Channel, Http, Status, Target, Updates, update};
-use gitclient_core::install::update::{HOST, Track, Version};
 use gpui_kit::{AppContext as _, Entity, TestAppContext, VisualTestContext};
+use mantisgit_core::install::update::{HOST, Track, Version};
 use std::io::Write;
 use std::sync::Mutex;
 
@@ -83,7 +83,7 @@ fn updates(
     let model = cx.new(|_| {
         Updates::new(
             channel,
-            "/apps/gitclient/gitclient".into(),
+            "/apps/mantisgit/mantisgit".into(),
             Some(linux()),
             http,
         )
@@ -114,7 +114,7 @@ fn a_newer_release_is_offered_and_later_hides_the_offer_until_a_newer_one(cx: &m
     look(&model, &mut cx);
 
     let band = band_of(&model, &cx).expect("an offer");
-    assert_eq!(band.message, "gitclient 999.0.0 is available.");
+    assert_eq!(band.message, "Mantis Git 999.0.0 is available.");
     assert_eq!(band.action.as_deref(), Some("Update to 999.0.0"));
 
     // "Later" hides the band, and Settings still says it is available.
@@ -191,7 +191,7 @@ fn a_copy_a_package_manager_installed_never_looks_and_says_why(cx: &mut TestAppC
     let reason = model.read_with(&cx, |updates, _| updates.reason().map(str::to_owned));
     assert_eq!(
         reason.as_deref(),
-        Some("gitclient was installed with Flatpak, which updates it.")
+        Some("Mantis Git was installed with Flatpak, which updates it.")
     );
 }
 
@@ -227,7 +227,7 @@ fn the_band_is_drawn_over_the_window_in_every_state_it_can_take(cx: &mut TestApp
     let model = cx.new(|_| {
         Updates::new(
             Channel::Portable,
-            "/apps/gitclient/gitclient".into(),
+            "/apps/mantisgit/mantisgit".into(),
             Some(linux()),
             Releases::at("v999.0.0"),
         )

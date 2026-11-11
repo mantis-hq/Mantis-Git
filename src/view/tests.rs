@@ -3,11 +3,11 @@
 
 // Not `super::*`: that would bring in GPUI's `test` macro, which shadows Rust's.
 use super::{Entry, GraphView, LoadEvent, Status, bind_keys};
-use gitclient_core::history::Commit;
-use gitclient_core::history::lanes::GraphBuilder;
-use gitclient_core::history::refs::RefKind;
-use gitclient_core::repo::branch::Dragged;
 use gpui_kit::{Entity, Modifiers, TestAppContext, VisualTestContext, point, px};
+use mantisgit_core::history::Commit;
+use mantisgit_core::history::lanes::GraphBuilder;
+use mantisgit_core::history::refs::RefKind;
+use mantisgit_core::repo::branch::Dragged;
 use std::sync::Arc;
 
 fn entries(names: &[&str]) -> Vec<Entry> {
@@ -52,7 +52,7 @@ fn open_view(cx: &mut TestAppContext) -> (Entity<GraphView>, VisualTestContext) 
 #[gpui_kit::test]
 fn an_old_git_is_said_in_a_toast_that_never_covers_another_message(cx: &mut TestAppContext) {
     use super::notice::Notice;
-    use gitclient_core::settings::config::Version;
+    use mantisgit_core::settings::config::Version;
     let (view, mut cx) = open_view(cx);
     view.update(&mut cx, |view, cx| {
         view.say_if_git_is_old(&Ok(Version(2, 56)), cx);
@@ -70,8 +70,8 @@ fn an_old_git_is_said_in_a_toast_that_never_covers_another_message(cx: &mut Test
 
 #[gpui_kit::test]
 fn the_way_files_are_listed_is_saved_for_every_repository(cx: &mut TestAppContext) {
-    use gitclient_core::settings::state::AppState;
-    use gitclient_core::tree::FileView;
+    use mantisgit_core::settings::state::AppState;
+    use mantisgit_core::tree::FileView;
     let (view, mut cx) = open_view(cx);
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("state");
@@ -92,8 +92,8 @@ fn the_way_files_are_listed_is_saved_for_every_repository(cx: &mut TestAppContex
 
 #[gpui_kit::test]
 fn the_order_of_the_graph_columns_is_saved_and_comes_back(cx: &mut TestAppContext) {
-    use gitclient_core::history::columns::Column;
-    use gitclient_core::settings::state::AppState;
+    use mantisgit_core::history::columns::Column;
+    use mantisgit_core::settings::state::AppState;
     let (view, mut cx) = open_view(cx);
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("state");
@@ -139,7 +139,7 @@ fn load(view: &Entity<GraphView>, names: &[&str], cx: &mut VisualTestContext) {
 fn load_with(
     view: &Entity<GraphView>,
     names: &[&str],
-    refs: Arc<gitclient_core::history::refs::Refs>,
+    refs: Arc<mantisgit_core::history::refs::Refs>,
     cx: &mut VisualTestContext,
 ) {
     view.update(cx, |view, cx| {
@@ -152,8 +152,8 @@ fn load_with(
 
 #[gpui_kit::test]
 fn searching_for_a_file_lists_its_commits_and_picking_one_selects_it(cx: &mut TestAppContext) {
-    use gitclient_core::history::search::Mode;
-    use gitclient_core::testing::Repo;
+    use mantisgit_core::history::search::Mode;
+    use mantisgit_core::testing::Repo;
     let repo = Repo::new();
     repo.write("a.txt", "1");
     let first = repo.commit("first");
@@ -283,7 +283,7 @@ fn a_failed_operation_says_why_and_a_quiet_one_says_nothing(cx: &mut TestAppCont
 
 #[gpui_kit::test]
 fn a_force_push_waits_for_confirmation_and_others_do_not(cx: &mut TestAppContext) {
-    use gitclient_core::repo::status::NextAction;
+    use mantisgit_core::repo::status::NextAction;
     let (view, mut cx) = open_view(cx);
     view.update(&mut cx, |view, cx| {
         let force = NextAction::ForcePush {
@@ -310,7 +310,7 @@ fn a_deletion_popup_takes_enter_and_escape_and_the_risky_one_needs_two_presses(
     cx: &mut TestAppContext,
 ) {
     use super::dialog::Confirm;
-    use gitclient_core::menu::command::Weight;
+    use mantisgit_core::menu::command::Weight;
     use std::cell::Cell;
     use std::rc::Rc;
     let (view, mut cx) = open_view(cx);
@@ -356,7 +356,7 @@ fn a_deletion_popup_takes_enter_and_escape_and_the_risky_one_needs_two_presses(
 #[gpui_kit::test]
 fn the_keys_reach_a_popup_even_when_focus_was_elsewhere(cx: &mut TestAppContext) {
     use super::dialog::Confirm;
-    use gitclient_core::menu::command::Weight;
+    use mantisgit_core::menu::command::Weight;
     use std::cell::Cell;
     use std::rc::Rc;
     let (view, mut cx) = open_view(cx);
@@ -399,11 +399,11 @@ fn the_sidebar_stays_out_of_narrow_windows_until_asked_for(cx: &mut TestAppConte
 }
 
 /// Refs for branches named like the commits they point at.
-fn branches(names: &[&str]) -> Arc<gitclient_core::history::refs::Refs> {
-    let mut refs = gitclient_core::history::refs::Refs::default();
+fn branches(names: &[&str]) -> Arc<mantisgit_core::history::refs::Refs> {
+    let mut refs = mantisgit_core::history::refs::Refs::default();
     refs.branches = names
         .iter()
-        .map(|name| gitclient_core::history::refs::Branch {
+        .map(|name| mantisgit_core::history::refs::Branch {
             name: (*name).into(),
             tip: (*name).into(),
             color: Default::default(),
@@ -441,6 +441,23 @@ fn picking_twice_turns_it_off_and_a_reload_keeps_it(cx: &mut TestAppContext) {
     view.read_with(&cx, |view, _| {
         let spot = view.sidebar.spotlight.as_ref().unwrap();
         assert!(spot.commit_is_lit(2) && !spot.commit_is_lit(0));
+    });
+}
+
+#[gpui_kit::test]
+fn clicking_a_commit_outside_the_picked_branch_lets_go_of_it(cx: &mut TestAppContext) {
+    let (view, mut cx) = open_view(cx);
+    load_with(&view, &["b", "a"], branches(&["a", "b"]), &mut cx);
+    let rows = [branch("a"), branch("b")];
+    view.update(&mut cx, |view, cx| {
+        view.pick(&rows[0], Modifiers::none(), &rows, cx);
+        // Row 1 is in the history of `a`, so the pick stays.
+        view.click_row(1, Modifiers::none(), cx);
+        assert!(view.sidebar.spotlight.is_some());
+        // Row 0 is not.
+        view.click_row(0, Modifiers::none(), cx);
+        assert!(view.sidebar.spotlight.is_none());
+        assert!(view.sidebar.picks.is_empty());
     });
 }
 
@@ -495,7 +512,7 @@ fn right_clicking_a_picked_branch_offers_to_delete_all_picked(cx: &mut TestAppCo
         let lines = view.menu.as_ref().unwrap().lines();
         assert!(lines.iter().any(|line| matches!(
             line.command(),
-            Some(gitclient_core::menu::command::Command::DeleteMany { refs }) if refs.len() == 2
+            Some(mantisgit_core::menu::command::Command::DeleteMany { refs }) if refs.len() == 2
         )));
 
         // A branch outside the picks keeps its own menu.
@@ -503,7 +520,7 @@ fn right_clicking_a_picked_branch_offers_to_delete_all_picked(cx: &mut TestAppCo
         let lines = view.menu.as_ref().unwrap().lines();
         assert!(!lines.iter().any(|line| matches!(
             line.command(),
-            Some(gitclient_core::menu::command::Command::DeleteMany { .. })
+            Some(mantisgit_core::menu::command::Command::DeleteMany { .. })
         )));
     });
 }
@@ -525,7 +542,7 @@ fn clicking_a_row_selects_it(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_read_of_tracked_files_alone_keeps_the_untracked_ones_it_had(cx: &mut TestAppContext) {
     use super::inspector::Scan;
-    use gitclient_core::testing::Repo;
+    use mantisgit_core::testing::Repo;
     let repo = Repo::new();
     repo.write("a", "1\n");
     repo.commit("base");
@@ -572,9 +589,9 @@ fn a_read_of_tracked_files_alone_keeps_the_untracked_ones_it_had(cx: &mut TestAp
 
 #[gpui_kit::test]
 fn ticking_a_file_moves_it_between_the_lists_and_its_menu_follows(cx: &mut TestAppContext) {
-    use gitclient_core::menu::command::Command;
-    use gitclient_core::testing::Repo;
-    use gitclient_core::working::Side;
+    use mantisgit_core::menu::command::Command;
+    use mantisgit_core::testing::Repo;
+    use mantisgit_core::working::Side;
     let repo = Repo::new();
     repo.write("a", "1\n");
     repo.commit("base");
@@ -636,7 +653,7 @@ fn ticking_a_file_moves_it_between_the_lists_and_its_menu_follows(cx: &mut TestA
 
 #[gpui_kit::test]
 fn ticking_a_hunk_in_the_diff_stages_only_that_hunk(cx: &mut TestAppContext) {
-    use gitclient_core::testing::Repo;
+    use mantisgit_core::testing::Repo;
     let long = |top: &str, bottom: &str| {
         let middle: String = (0..18).map(|n| format!("line {n}\n")).collect();
         format!("{top}\n{middle}{bottom}\n")
@@ -673,8 +690,8 @@ fn ticking_a_hunk_in_the_diff_stages_only_that_hunk(cx: &mut TestAppContext) {
 fn a_conflict_is_listed_in_the_inspector_resolved_from_its_menu_and_continued(
     cx: &mut TestAppContext,
 ) {
-    use gitclient_core::menu::command::Command;
-    use gitclient_core::testing::Repo;
+    use mantisgit_core::menu::command::Command;
+    use mantisgit_core::testing::Repo;
     let repo = Repo::new();
     repo.git(&["config", "user.name", "Ada"]);
     repo.git(&["config", "user.email", "ada@example.com"]);
@@ -723,14 +740,14 @@ fn a_conflict_is_listed_in_the_inspector_resolved_from_its_menu_and_continued(
             matches!(
                 line.command(),
                 Some(Command::UseSide {
-                    side: gitclient_core::repo::conflict::Side::Other,
+                    side: mantisgit_core::repo::conflict::Side::Other,
                     ..
                 })
             )
         });
         assert!(taking_other);
         view.close_menu(cx);
-        view.use_side_for_file("a", gitclient_core::repo::conflict::Side::Mine, cx);
+        view.use_side_for_file("a", mantisgit_core::repo::conflict::Side::Mine, cx);
     });
     cx.run_until_parked();
     view.update(&mut cx, |view, cx| view.check_paused_operation(cx));
@@ -757,7 +774,7 @@ fn a_conflict_is_listed_in_the_inspector_resolved_from_its_menu_and_continued(
 fn resolving_a_conflict(
     cx: &mut TestAppContext,
 ) -> (
-    gitclient_core::testing::Repo,
+    mantisgit_core::testing::Repo,
     Entity<GraphView>,
     VisualTestContext,
 ) {
@@ -770,11 +787,11 @@ fn resolving_a_conflict_between(
     above: &str,
     below: &str,
 ) -> (
-    gitclient_core::testing::Repo,
+    mantisgit_core::testing::Repo,
     Entity<GraphView>,
     VisualTestContext,
 ) {
-    use gitclient_core::testing::Repo;
+    use mantisgit_core::testing::Repo;
     let repo = Repo::new();
     repo.git(&["config", "user.name", "Ada"]);
     repo.git(&["config", "user.email", "ada@example.com"]);
@@ -816,7 +833,7 @@ fn resolving_a_conflict_between(
 
 #[gpui_kit::test]
 fn a_result_is_built_from_ticked_lines_and_saved_with_one_button(cx: &mut TestAppContext) {
-    use gitclient_core::repo::conflict::Side;
+    use mantisgit_core::repo::conflict::Side;
     let (repo, view, mut cx) = resolving_a_conflict(cx);
     let editor = view.read_with(&cx, |view, _| view.conflict_editor().unwrap());
     let in_editor =
@@ -924,7 +941,7 @@ fn the_two_versions_and_the_result_scroll_together(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn typing_over_picked_lines_keeps_what_was_typed(cx: &mut TestAppContext) {
-    use gitclient_core::repo::conflict::Side;
+    use mantisgit_core::repo::conflict::Side;
     let (_repo, view, mut cx) = resolving_a_conflict(cx);
     let editor = view.read_with(&cx, |view, _| view.conflict_editor().unwrap());
     view.update_in(&mut cx, |view, window, cx| {
@@ -993,7 +1010,7 @@ fn typing_in_the_result_is_checked_once_it_pauses(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_saved_conflict_counts_as_resolved_before_git_is_done(cx: &mut TestAppContext) {
-    use gitclient_core::repo::conflict::Side;
+    use mantisgit_core::repo::conflict::Side;
     let (_repo, view, mut cx) = resolving_a_conflict(cx);
     view.update_in(&mut cx, |view, window, cx| {
         view.use_chunk(0, Side::Mine, window, cx)
@@ -1040,7 +1057,7 @@ fn a_file_resolved_before_the_window_knew_of_the_stop_is_still_listed(cx: &mut T
 
 #[gpui_kit::test]
 fn a_conflict_git_refuses_to_save_comes_back_with_the_reason(cx: &mut TestAppContext) {
-    use gitclient_core::repo::conflict::Side;
+    use mantisgit_core::repo::conflict::Side;
     let (repo, view, mut cx) = resolving_a_conflict(cx);
     view.update_in(&mut cx, |view, window, cx| {
         view.use_chunk(0, Side::Mine, window, cx)
@@ -1155,7 +1172,7 @@ fn right_clicking_opens_a_menu_for_the_whole_selection_and_escape_closes_it(
                 menu.lines()
                     .iter()
                     .filter_map(|line| match line {
-                        gitclient_core::menu::Line::Item { label, .. } => Some(label.clone()),
+                        mantisgit_core::menu::Line::Item { label, .. } => Some(label.clone()),
                         _ => None,
                     })
                     .collect()
@@ -1181,12 +1198,12 @@ fn right_clicking_opens_a_menu_for_the_whole_selection_and_escape_closes_it(
 
 #[gpui_kit::test]
 fn editing_a_remote_opens_a_form_that_starts_from_it_and_escape_closes_it(cx: &mut TestAppContext) {
-    use gitclient_core::menu::command::Command;
-    use gitclient_core::menu::form::Form;
+    use mantisgit_core::menu::command::Command;
+    use mantisgit_core::menu::form::Form;
     let (view, mut cx) = open_view(cx);
     view.update(&mut cx, |view, cx| {
-        let mut refs = gitclient_core::history::refs::Refs::default();
-        refs.remote_configs = vec![gitclient_core::repo::remote::Remote {
+        let mut refs = mantisgit_core::history::refs::Refs::default();
+        refs.remote_configs = vec![mantisgit_core::repo::remote::Remote {
             name: "origin".into(),
             url: "git@host:a.git".into(),
             push_url: None,
@@ -1202,7 +1219,7 @@ fn editing_a_remote_opens_a_form_that_starts_from_it_and_escape_closes_it(cx: &m
             .lines()
             .iter()
             .find_map(|line| match line {
-                gitclient_core::menu::Line::Item {
+                mantisgit_core::menu::Line::Item {
                     command: Some(Command::Form(form)),
                     ..
                 } => Some(form.clone()),
@@ -1225,12 +1242,12 @@ fn editing_a_remote_opens_a_form_that_starts_from_it_and_escape_closes_it(cx: &m
 
 #[gpui_kit::test]
 fn editing_a_submodule_opens_a_form_that_starts_from_it(cx: &mut TestAppContext) {
-    use gitclient_core::menu::command::Command;
-    use gitclient_core::menu::form::Form;
-    use gitclient_core::repo::submodule::{State, Submodule};
+    use mantisgit_core::menu::command::Command;
+    use mantisgit_core::menu::form::Form;
+    use mantisgit_core::repo::submodule::{State, Submodule};
     let (view, mut cx) = open_view(cx);
     view.update(&mut cx, |view, cx| {
-        let mut refs = gitclient_core::history::refs::Refs::default();
+        let mut refs = mantisgit_core::history::refs::Refs::default();
         refs.submodules = vec![Submodule {
             name: "vendor/lib".into(),
             path: "vendor/lib".into(),
@@ -1250,7 +1267,7 @@ fn editing_a_submodule_opens_a_form_that_starts_from_it(cx: &mut TestAppContext)
             .lines()
             .iter()
             .find_map(|line| match line {
-                gitclient_core::menu::Line::Item {
+                mantisgit_core::menu::Line::Item {
                     command: Some(Command::Form(form)),
                     ..
                 } => Some(form.clone()),
@@ -1275,11 +1292,11 @@ fn editing_a_submodule_opens_a_form_that_starts_from_it(cx: &mut TestAppContext)
 fn open_repo(
     cx: &mut TestAppContext,
 ) -> (
-    gitclient_core::testing::Repo,
+    mantisgit_core::testing::Repo,
     Entity<GraphView>,
     VisualTestContext,
 ) {
-    let repo = gitclient_core::testing::Repo::new();
+    let repo = mantisgit_core::testing::Repo::new();
     repo.write("a", "1\n");
     repo.commit("base");
     let (view, mut cx) = open_view(cx);
@@ -1290,7 +1307,7 @@ fn open_repo(
 
 #[gpui_kit::test]
 fn a_new_branch_is_named_in_a_popup_and_made_on_enter(cx: &mut TestAppContext) {
-    use gitclient_core::menu::form::Form;
+    use mantisgit_core::menu::form::Form;
     let (repo, view, mut cx) = open_repo(cx);
     view.update(&mut cx, |view, cx| {
         view.open_form(Form::new_branch_here(&view.refs), cx)
@@ -1330,7 +1347,7 @@ fn a_new_branch_is_named_in_a_popup_and_made_on_enter(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_name_git_refuses_keeps_the_form_open_and_says_why(cx: &mut TestAppContext) {
-    use gitclient_core::menu::form::Form;
+    use mantisgit_core::menu::form::Form;
     let (repo, view, mut cx) = open_repo(cx);
     repo.git(&["branch", "taken"]);
     view.update(&mut cx, |view, cx| {
@@ -1353,7 +1370,7 @@ fn a_name_git_refuses_keeps_the_form_open_and_says_why(cx: &mut TestAppContext) 
 
 #[gpui_kit::test]
 fn tab_moves_between_a_forms_fields_and_a_held_enter_does_nothing(cx: &mut TestAppContext) {
-    use gitclient_core::menu::form::Form;
+    use mantisgit_core::menu::form::Form;
     let (repo, view, mut cx) = open_repo(cx);
     view.update(&mut cx, |view, cx| {
         view.open_form(Form::Remote { original: None }, cx)
@@ -1385,7 +1402,7 @@ fn tab_moves_between_a_forms_fields_and_a_held_enter_does_nothing(cx: &mut TestA
 
 #[gpui_kit::test]
 fn a_question_from_git_is_answered_in_a_popup_and_cancelled_by_escape(cx: &mut TestAppContext) {
-    use gitclient_core::askpass::Request;
+    use mantisgit_core::askpass::Request;
     let (_repo, view, mut cx) = open_repo(cx);
 
     let (request, answer) = Request::new("Enter passphrase for key '/home/me/.ssh/id': ");
@@ -1516,11 +1533,11 @@ fn open_repo_with_remote(
     cx: &mut TestAppContext,
     url: &str,
 ) -> (
-    gitclient_core::testing::Repo,
+    mantisgit_core::testing::Repo,
     Entity<GraphView>,
     VisualTestContext,
 ) {
-    let repo = gitclient_core::testing::Repo::new();
+    let repo = mantisgit_core::testing::Repo::new();
     repo.write("a", "1\n");
     repo.commit("base");
     repo.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
@@ -1549,7 +1566,7 @@ fn wait_until_loaded(view: &Entity<GraphView>, cx: &mut VisualTestContext) {
 
 #[gpui_kit::test]
 fn branch_counts_arrive_after_the_load_without_holding_it_up(cx: &mut TestAppContext) {
-    let repo = gitclient_core::testing::Repo::new();
+    let repo = mantisgit_core::testing::Repo::new();
     repo.write("a", "1\n");
     repo.commit("base");
     repo.git(&["checkout", "-q", "-b", "side"]);
@@ -1603,7 +1620,7 @@ fn the_commit_graph_hint_writes_one_and_goes_away(cx: &mut TestAppContext) {
         let said = view.notice_text().unwrap_or_default();
         assert!(said.starts_with("Wrote the commit graph."), "{said}");
     });
-    assert!(!gitclient_core::repo::commit_graph::is_missing(repo.path()));
+    assert!(!mantisgit_core::repo::commit_graph::is_missing(repo.path()));
 }
 
 #[gpui_kit::test]
@@ -1634,7 +1651,7 @@ fn a_slow_step_is_explained_only_when_there_is_no_commit_graph(cx: &mut TestAppC
     );
 
     view.update(&mut cx, |view, _| view.graph_hint = None);
-    gitclient_core::repo::commit_graph::write(repo.path()).unwrap();
+    mantisgit_core::repo::commit_graph::write(repo.path()).unwrap();
     view.update(&mut cx, |view, cx| {
         view.explain_slowness("Loading the history", Duration::from_secs(8), cx)
     });
@@ -1665,7 +1682,7 @@ fn remote_branch(name: &str) -> Dragged {
 }
 
 fn menu_labels(view: &GraphView) -> Vec<String> {
-    use gitclient_core::menu::Line;
+    use mantisgit_core::menu::Line;
     view.menu
         .as_ref()
         .unwrap()
@@ -1719,7 +1736,7 @@ fn dropping_a_remote_branch_on_another_offers_a_request_on_the_forge(cx: &mut Te
 fn a_forge_that_is_not_known_is_still_offered_with_a_question_and_explained_in_a_popup(
     cx: &mut TestAppContext,
 ) {
-    use gitclient_core::menu::Glyph;
+    use mantisgit_core::menu::Glyph;
     // Nothing answers at this address, so no probe can say what is there.
     let (_repo, view, mut cx) = open_repo_with_remote(cx, "http://127.0.0.1:1/octo/cat.git");
     view.update(&mut cx, |view, cx| {
@@ -1751,7 +1768,7 @@ fn a_forge_that_is_not_known_is_still_offered_with_a_question_and_explained_in_a
 #[gpui_kit::test]
 fn the_requests_of_a_forge_are_listed_under_its_own_word_for_them(cx: &mut TestAppContext) {
     use super::sidebar::Load;
-    use gitclient_core::repo::forge::{Request, Requests};
+    use mantisgit_core::repo::forge::{Request, Requests};
     let (_repo, view, mut cx) = open_repo_with_remote(cx, "git@gitlab.com:team/cat.git");
     view.update(&mut cx, |view, _| {
         assert_eq!(
@@ -1793,8 +1810,8 @@ fn the_requests_of_a_forge_are_listed_under_its_own_word_for_them(cx: &mut TestA
 
 #[gpui_kit::test]
 fn a_branch_made_as_an_upstream_shows_in_the_sidebar_at_once(cx: &mut TestAppContext) {
-    use gitclient_core::menu::form::Form;
-    let remote = gitclient_core::testing::Repo::new();
+    use mantisgit_core::menu::form::Form;
+    let remote = mantisgit_core::testing::Repo::new();
     remote.git(&["config", "receive.denyCurrentBranch", "ignore"]);
     let (repo, view, mut cx) = open_repo(cx);
     repo.git(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
@@ -1832,9 +1849,9 @@ fn a_branch_made_as_an_upstream_shows_in_the_sidebar_at_once(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn a_branch_pushed_by_someone_else_shows_in_the_sidebar_after_a_fetch(cx: &mut TestAppContext) {
-    let remote = gitclient_core::testing::Repo::new();
+    let remote = mantisgit_core::testing::Repo::new();
     remote.git(&["config", "receive.denyCurrentBranch", "ignore"]);
-    let repo = gitclient_core::testing::Repo::new();
+    let repo = mantisgit_core::testing::Repo::new();
     repo.write("a", "1\n");
     repo.commit("base");
     repo.git(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
@@ -1855,7 +1872,7 @@ fn a_branch_pushed_by_someone_else_shows_in_the_sidebar_after_a_fetch(cx: &mut T
     wait(&mut cx, &|view| *view.status() == Status::Loaded);
 
     // Someone else pushes a new branch with a new commit.
-    let other = gitclient_core::testing::Repo::new();
+    let other = mantisgit_core::testing::Repo::new();
     other.git(&["remote", "add", "origin", remote.path().to_str().unwrap()]);
     other.git(&["fetch", "-q", "origin", "main"]);
     other.git(&["checkout", "-q", "-b", "feat/z", "FETCH_HEAD"]);
@@ -1864,7 +1881,7 @@ fn a_branch_pushed_by_someone_else_shows_in_the_sidebar_after_a_fetch(cx: &mut T
     other.git(&["push", "-q", "origin", "feat/z"]);
 
     view.update(&mut cx, |view, cx| {
-        view.run_operation("Fetching", gitclient_core::repo::status::fetch, cx)
+        view.run_operation("Fetching", mantisgit_core::repo::status::fetch, cx)
     });
     wait(&mut cx, &|view| view.refs.remotes.len() == 2);
     view.read_with(&cx, |view, _| {
@@ -1883,11 +1900,11 @@ fn no_section_is_drawn_for_a_remote_on_no_known_forge(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_repository_is_cloned_from_an_address_in_a_tab_with_nothing_open(cx: &mut TestAppContext) {
-    use gitclient_core::menu::form::Form;
-    let source = gitclient_core::testing::Repo::new();
+    use mantisgit_core::menu::form::Form;
+    let source = mantisgit_core::testing::Repo::new();
     source.write("a", "1\n");
     source.commit("base");
-    let into = gitclient_core::testing::Repo::new();
+    let into = mantisgit_core::testing::Repo::new();
     let address = source.path().to_str().unwrap().to_owned();
     let (view, mut cx) = open_view(cx);
     let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
@@ -1931,8 +1948,8 @@ fn a_repository_is_cloned_from_an_address_in_a_tab_with_nothing_open(cx: &mut Te
 #[gpui_kit::test]
 #[ignore = "needs the network"]
 fn a_gravatar_replaces_the_initials_once_it_arrives(cx: &mut TestAppContext) {
-    use gitclient_core::history::avatar::Style;
-    use gitclient_core::settings::state::AppState;
+    use mantisgit_core::history::avatar::Style;
+    use mantisgit_core::settings::state::AppState;
 
     let (repo, view, mut cx) = open_repo(cx);
     repo.git(&[
@@ -1975,7 +1992,7 @@ fn a_gravatar_replaces_the_initials_once_it_arrives(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_hovered_branch_shows_its_count_against_the_default_and_draws(cx: &mut TestAppContext) {
-    let repo = gitclient_core::testing::Repo::new();
+    let repo = mantisgit_core::testing::Repo::new();
     repo.write("a", "1\n");
     repo.commit("base");
     repo.git(&["checkout", "-q", "-b", "side"]);

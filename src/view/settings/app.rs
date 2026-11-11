@@ -1,14 +1,14 @@
-//! The App page: what gitclient itself remembers, apart from git. Reopening tabs on
+//! The App page: what Mantis Git itself remembers, apart from git. Reopening tabs on
 //! launch, how many commits the graph loads, and the cache on disk.
 
 use super::super::avatars::{Face, disc};
 use super::*;
 use crate::theme::lane_color;
-use gitclient_core::history::avatar::{self, Style as AvatarStyle};
-use gitclient_core::history::lanes::LaneColor;
-use gitclient_core::install::exe_path;
-use gitclient_core::install::update::{self, Track};
-use gitclient_core::repo::auto_fetch;
+use mantisgit_core::history::avatar::{self, Style as AvatarStyle};
+use mantisgit_core::history::lanes::LaneColor;
+use mantisgit_core::install::exe_path;
+use mantisgit_core::install::update::{self, Track};
+use mantisgit_core::repo::auto_fetch;
 
 impl Settings {
     /// Reads how the launcher stands, which is what the page shows. Settings reads the disk
@@ -47,7 +47,7 @@ impl Settings {
         cx.notify();
     }
 
-    /// Turns "look for a newer version when gitclient starts" on or off, and saves it at once.
+    /// Turns "look for a newer version when Mantis Git starts" on or off, and saves it at once.
     pub(super) fn set_check_updates(&mut self, on: bool, cx: &mut Context<Self>) {
         let Some(file) = &self.state_file else {
             return;
@@ -91,7 +91,7 @@ impl Settings {
                 if enabled {
                     auto_fetch::sentence(on)
                 } else {
-                    "gitclient can't find a folder to keep this in."
+                    "Mantis Git can't find a folder to keep this in."
                 },
                 cx,
             ))
@@ -144,7 +144,7 @@ impl Settings {
             )
     }
 
-    /// The "Launcher" card: whether gitclient is in the application menu. Only a portable
+    /// The "Launcher" card: whether Mantis Git is in the application menu. Only a portable
     /// copy on a system with such a menu has one.
     fn render_launcher_group(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let launcher = self.launcher.as_ref()?;
@@ -175,7 +175,7 @@ impl Settings {
             Some(updates) => updates.read(cx).reason().map(str::to_owned),
             None => Some(match self.channel {
                 Channel::Packaged { by } => {
-                    format!("gitclient was installed with {by}, which updates it.")
+                    format!("Mantis Git was installed with {by}, which updates it.")
                 }
                 Channel::Portable => "Updates aren't set up in this window.".to_owned(),
             }),
@@ -197,11 +197,11 @@ impl Settings {
             .gap_3()
             .h_flex()
             .child(self.row_words(
-                "Look for a newer version when gitclient starts",
+                "Look for a newer version when Mantis Git starts",
                 if enabled {
                     update::check_sentence(on)
                 } else {
-                    "gitclient can't find a folder to keep this in."
+                    "Mantis Git can't find a folder to keep this in."
                 },
                 cx,
             ))
@@ -231,7 +231,7 @@ impl Settings {
                 if enabled {
                     track.sentence()
                 } else {
-                    "gitclient can't find a folder to keep this in."
+                    "Mantis Git can't find a folder to keep this in."
                 },
                 cx,
             ))
@@ -425,7 +425,7 @@ impl Settings {
                 .py_3()
                 .text_size(TEXT_SMALL)
                 .text_color(muted)
-                .child("gitclient can't find a folder to keep this in.")
+                .child("Mantis Git can't find a folder to keep this in.")
                 .into_any_element();
             return self.render_group("Avatars", vec![row], cx);
         }
@@ -596,7 +596,7 @@ impl Settings {
         let note = if self.state_file.is_some() {
             self.app.commit_limit_sentence()
         } else {
-            "gitclient can't find a folder to keep this in.".to_owned()
+            "Mantis Git can't find a folder to keep this in.".to_owned()
         };
         let row = div()
             .v_flex()
@@ -673,7 +673,7 @@ impl Settings {
                 if enabled {
                     self.app.disk_cache_sentence()
                 } else {
-                    "gitclient can't find a folder to keep this in.".to_owned()
+                    "Mantis Git can't find a folder to keep this in.".to_owned()
                 },
             ))
             .children(enabled.then(|| {
@@ -845,7 +845,7 @@ impl Settings {
                     .text_color(muted)
                     .child(match &self.state_file {
                         Some(_) => self.app.reopen_sentence(),
-                        None => "gitclient can't find a folder to keep this in.",
+                        None => "Mantis Git can't find a folder to keep this in.",
                     }),
             );
         let switch = self.state_file.is_some().then(|| {
@@ -859,7 +859,7 @@ impl Settings {
             .max_w(PAGE_WIDTH)
             .child(self.page_head(
                 "App",
-                "What gitclient itself remembers. Git settings are on the other pages.",
+                "What Mantis Git itself remembers. Git settings are on the other pages.",
                 cx,
             ))
             .child(self.render_group(

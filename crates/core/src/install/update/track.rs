@@ -49,8 +49,8 @@ impl Track {
     /// What the header says after the choice is saved.
     pub fn saved_message(self) -> &'static str {
         match self {
-            Self::Stable => "Saved. gitclient will update to full releases.",
-            Self::Nightly => "Saved. gitclient will update to nightly builds.",
+            Self::Stable => "Saved. Mantis Git will update to full releases.",
+            Self::Nightly => "Saved. Mantis Git will update to nightly builds.",
         }
     }
 }

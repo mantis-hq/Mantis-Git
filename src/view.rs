@@ -26,18 +26,18 @@ pub use workspace::Workspace;
 
 use crate::icons::Icon;
 use dialog::Dialog;
-use gitclient_core::cache::keys::{self, Caches};
-use gitclient_core::history::columns::ColumnOrder;
-use gitclient_core::history::refs::Refs;
-use gitclient_core::history::selection::Selection;
-use gitclient_core::history::{self, Entry, LoadEvent};
-use gitclient_core::repo::{auto_fetch, commit_graph};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::cache::keys::{self, Caches};
+use mantisgit_core::history::columns::ColumnOrder;
+use mantisgit_core::history::refs::Refs;
+use mantisgit_core::history::selection::Selection;
+use mantisgit_core::history::{self, Entry, LoadEvent};
+use mantisgit_core::repo::{auto_fetch, commit_graph};
 use notice::Notice;
 use std::collections::HashSet;
 use std::ops::Range;
@@ -656,6 +656,17 @@ impl GraphView {
     /// A click on a row: plain selects it, ctrl or cmd marks it beside the others, and shift
     /// marks everything from the selected row to it.
     fn click_row(&mut self, index: usize, modifiers: Modifiers, cx: &mut Context<Self>) {
+        // A commit outside the picked histories lets go of the picks, so the graph isn't
+        // left faded around the commit just chosen.
+        if self
+            .sidebar
+            .spotlight
+            .as_ref()
+            .is_some_and(|spot| !spot.commit_is_lit(index))
+        {
+            self.sidebar.picks.clear();
+            self.sidebar.spotlight = None;
+        }
         let (Some(entry), Some(main)) = (self.entries.get(index), self.selected) else {
             return self.select(index, cx);
         };

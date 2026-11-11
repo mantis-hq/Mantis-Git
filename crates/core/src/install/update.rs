@@ -77,7 +77,7 @@ pub struct Build {
 }
 
 impl Build {
-    /// This app, built from `commit` (the build's `GITCLIENT_COMMIT`, if it had one).
+    /// This app, built from `commit` (the build's `MANTISGIT_COMMIT`, if it had one).
     pub fn current(commit: Option<&str>) -> Self {
         Self {
             version: Version::current(),
@@ -127,9 +127,9 @@ impl Target {
     /// The build for the system named as `std::env::consts` names them.
     pub fn of(os: &str, arch: &str) -> Option<Self> {
         let (triple, zip, program) = match (os, arch) {
-            ("linux", "x86_64") => ("x86_64-unknown-linux-gnu", false, "gitclient"),
-            ("macos", "aarch64") => ("aarch64-apple-darwin", false, "gitclient"),
-            ("windows", "x86_64") => ("x86_64-pc-windows-msvc", true, "gitclient.exe"),
+            ("linux", "x86_64") => ("x86_64-unknown-linux-gnu", false, "mantisgit"),
+            ("macos", "aarch64") => ("aarch64-apple-darwin", false, "mantisgit"),
+            ("windows", "x86_64") => ("x86_64-pc-windows-msvc", true, "mantisgit.exe"),
             _ => return None,
         };
         Some(Self {
@@ -139,10 +139,10 @@ impl Target {
         })
     }
 
-    /// `gitclient-v0.2.0-x86_64-unknown-linux-gnu.tar.gz`
+    /// `mantisgit-v0.2.0-x86_64-unknown-linux-gnu.tar.gz`
     pub fn archive_name(&self, tag: &str) -> String {
         let extension = if self.zip { "zip" } else { "tar.gz" };
-        format!("gitclient-{tag}-{}.{extension}", self.triple)
+        format!("mantisgit-{tag}-{}.{extension}", self.triple)
     }
 }
 
@@ -176,10 +176,10 @@ pub enum Support {
 pub fn support(channel: Channel, target: Option<Target>) -> Support {
     match (channel, target) {
         (Channel::Packaged { by }, _) => Support::No(format!(
-            "gitclient was installed with {by}, which updates it."
+            "Mantis Git was installed with {by}, which updates it."
         )),
         (Channel::Portable, None) => {
-            Support::No("There is no build of gitclient for this system to update to.".to_owned())
+            Support::No("There is no build of Mantis Git for this system to update to.".to_owned())
         }
         (Channel::Portable, Some(target)) => Support::Yes(target),
     }
@@ -201,7 +201,7 @@ impl Http for Web {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(600)))
             .timeout_connect(Some(Duration::from_secs(15)))
-            .user_agent(format!("gitclient/{}", Version::current()))
+            .user_agent(format!("mantisgit/{}", Version::current()))
             .build()
             .into();
         let mut response = agent
@@ -266,7 +266,7 @@ pub fn check(
 }
 
 fn unexpected(host: &Host) -> String {
-    format!("{}'s answer wasn't what gitclient expected.", host.name())
+    format!("{}'s answer wasn't what Mantis Git expected.", host.name())
 }
 
 /// The newest full release in a list of releases. A release counts by its tag: `v1.2.3`,
@@ -367,7 +367,7 @@ fn release_assets(
             .ok_or_else(|| format!("Release {tag} has no {file}."))?;
         if !host.trusts(url) {
             return Err(format!(
-                "Release {tag} points {file} somewhere gitclient won't download from."
+                "Release {tag} points {file} somewhere Mantis Git won't download from."
             ));
         }
         Ok(Asset {
@@ -393,15 +393,15 @@ fn release_assets(
 pub fn install(http: &dyn Http, available: &Available, exe: &Path) -> Result<(), String> {
     let folder = exe
         .parent()
-        .ok_or("gitclient doesn't know which folder it is in.")?;
+        .ok_or("Mantis Git doesn't know which folder it is in.")?;
     // Staged beside the program, so the swap is a rename on one disk. If the folder can't be
     // written to, an update can't be installed there, which is better said before downloading.
     let staging = tempfile::Builder::new()
-        .prefix(".gitclient-update-")
+        .prefix(".mantisgit-update-")
         .tempdir_in(folder)
         .map_err(|error| {
             format!(
-                "gitclient's folder ({}) can't be written to, so it can't update itself: {error}. \
+                "Mantis Git's folder ({}) can't be written to, so it can't update itself: {error}. \
                  Download {} from {} instead.",
                 folder.display(),
                 available.name,
@@ -590,18 +590,18 @@ impl Status {
     pub fn band(&self) -> Option<Band> {
         let (message, action, warning) = match self {
             Self::Available(found) => (
-                format!("gitclient {} is available.", found.name),
+                format!("Mantis Git {} is available.", found.name),
                 Some(format!("Update to {}", found.name)),
                 false,
             ),
             Self::Installing(found) => (
-                format!("Downloading gitclient {}…", found.name),
+                format!("Downloading Mantis Git {}…", found.name),
                 None,
                 false,
             ),
             Self::Ready { name, back } => (
                 format!(
-                    "gitclient {name} is installed and starts the next time you open it. {back}"
+                    "Mantis Git {name} is installed and starts the next time you open it. {back}"
                 ),
                 Some("Restart now".to_owned()),
                 false,
@@ -620,19 +620,19 @@ impl Status {
     pub fn sentence(&self, current: &Build, track: Track) -> String {
         let current = current.label();
         match self {
-            Self::Idle => format!("This is gitclient {current}."),
+            Self::Idle => format!("This is Mantis Git {current}."),
             Self::Checking => "Looking for a newer version…".to_owned(),
             Self::UpToDate => match track {
-                Track::Stable => format!("gitclient {current} is the newest version."),
-                Track::Nightly => format!("gitclient {current} is the newest nightly build."),
+                Track::Stable => format!("Mantis Git {current} is the newest version."),
+                Track::Nightly => format!("Mantis Git {current} is the newest nightly build."),
             },
             Self::Available(found) => {
-                format!("gitclient {} is available. This is {current}.", found.name)
+                format!("Mantis Git {} is available. This is {current}.", found.name)
             }
-            Self::Installing(found) => format!("Downloading gitclient {}…", found.name),
+            Self::Installing(found) => format!("Downloading Mantis Git {}…", found.name),
             Self::Ready { name, back } => {
                 format!(
-                    "gitclient {name} is installed and starts the next time you open it. {back}"
+                    "Mantis Git {name} is installed and starts the next time you open it. {back}"
                 )
             }
             Self::CheckFailed(error) => format!("Couldn't look for a newer version. {error}"),
@@ -661,10 +661,10 @@ impl Status {
     }
 }
 
-/// The sentence under "Check for updates when gitclient starts".
+/// The sentence under "Check for updates when Mantis Git starts".
 pub fn check_sentence(on: bool) -> &'static str {
     if on {
-        "Checks when gitclient starts, and asks before installing."
+        "Checks when Mantis Git starts, and asks before installing."
     } else {
         "Only checks when you press Check now."
     }
@@ -673,9 +673,9 @@ pub fn check_sentence(on: bool) -> &'static str {
 /// What the header says after that switch is flipped.
 pub fn check_saved_message(on: bool) -> &'static str {
     if on {
-        "Saved. gitclient will look for a newer version when it starts."
+        "Saved. Mantis Git will look for a newer version when it starts."
     } else {
-        "Saved. gitclient won't look for newer versions by itself."
+        "Saved. Mantis Git won't look for newer versions by itself."
     }
 }
 

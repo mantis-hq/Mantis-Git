@@ -4,12 +4,12 @@ use super::dialog::Confirm;
 use super::parts::{TEXT_BODY, TEXT_STATUS};
 use super::parts::{header_bar, header_divider};
 use super::{GraphView, Status, repository_name};
-use gitclient_core::repo::status::{self, NextAction, Span};
 use gpui_kit::component::button::*;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::repo::status::{self, NextAction, Span};
 
 impl GraphView {
     pub(super) fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -86,7 +86,7 @@ impl GraphView {
         let theme = cx.theme();
         let current = theme.primary;
         let other = crate::theme::lane_color(
-            gitclient_core::history::lanes::LaneColor::Branch(0),
+            mantisgit_core::history::lanes::LaneColor::Branch(0),
             theme.is_dark(),
         );
         let spans = self.refs.status.sentence().into_iter().map(|span| {

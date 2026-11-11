@@ -1,4 +1,4 @@
-//! Everything gitclient knows about a repository, with no user interface. This crate must
+//! Everything Mantis Git knows about a repository, with no user interface. This crate must
 //! not depend on gpui-kit, so that all of it can be tested without a window.
 
 pub mod about;

@@ -93,7 +93,7 @@ impl Version {
     }
 }
 
-/// The oldest git gitclient is made for. Before it, git has no `ahead-behind` for
+/// The oldest git Mantis Git is made for. Before it, git has no `ahead-behind` for
 /// `for-each-ref`, the one call that counts every branch against the default branch, so the
 /// sidebar has no counts.
 pub const RECOMMENDED: Version = Version(2, 41);
@@ -108,7 +108,7 @@ impl std::fmt::Display for Version {
 /// which a window launched from a menu, with a short `PATH`, can easily meet.
 pub fn git_version() -> Result<Version, String> {
     let output = run_command(git_anywhere().arg("--version"), None).map_err(|_| {
-        "Git wasn't found. Install git, or start gitclient from a place where git is on the PATH."
+        "Git wasn't found. Install git, or start Mantis Git from a place where git is on the PATH."
             .to_owned()
     })?;
     Version::parse(&output).ok_or_else(|| format!("Couldn't tell which git this is: {output}"))

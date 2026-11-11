@@ -23,19 +23,19 @@ pub fn fetch(repo: &Path) -> Result<(), String> {
 /// The sentence under "Fetch in the background".
 pub fn sentence(on: bool) -> &'static str {
     if on {
-        "gitclient fetches every remote every 5 minutes, so what is ahead and behind stays true. \
+        "Mantis Git fetches every remote every 5 minutes, so what is ahead and behind stays true. \
          It never asks for a passphrase or a login by itself."
     } else {
-        "gitclient only fetches when you press Fetch."
+        "Mantis Git only fetches when you press Fetch."
     }
 }
 
 /// What the header says after that switch is flipped.
 pub fn saved_message(on: bool) -> &'static str {
     if on {
-        "Saved. gitclient will fetch every 5 minutes."
+        "Saved. Mantis Git will fetch every 5 minutes."
     } else {
-        "Saved. gitclient will only fetch when you press Fetch."
+        "Saved. Mantis Git will only fetch when you press Fetch."
     }
 }
 

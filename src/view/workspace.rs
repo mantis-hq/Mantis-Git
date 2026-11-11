@@ -8,13 +8,13 @@ use super::dock::{Dock, NewTerminal, ToggleDock};
 use super::parts::TEXT_BODY;
 use super::updates::{Updates, render_band, shared_updates};
 use super::{GraphView, OpenWorktreeInTab, SwitchWorktree, dialog, parts, repository_name};
-use gitclient_core::install::menu_entry::Launcher;
-use gitclient_core::settings::state::{AppState, DockLayout};
 use gpui_kit::component::button::*;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::install::menu_entry::Launcher;
+use mantisgit_core::settings::state::{AppState, DockLayout};
 use std::path::{Path, PathBuf};
 
 const WORKSPACE_CONTEXT: &str = "Workspace";
@@ -123,7 +123,7 @@ impl Workspace {
     /// tab, since it is waiting on whoever is looking at the window.
     pub fn answer_questions(
         &mut self,
-        questions: gitclient_core::askpass::Questions,
+        questions: mantisgit_core::askpass::Questions,
         cx: &mut Context<Self>,
     ) {
         cx.spawn(async move |this, cx| {
@@ -151,7 +151,7 @@ impl Workspace {
         dialog::offer_welcome(self.active_view(), launcher.as_ref(), &file, cx);
     }
 
-    /// At launch: tells the user if the installed git is older than gitclient is made for.
+    /// At launch: tells the user if the installed git is older than Mantis Git is made for.
     pub fn check_git(&mut self, cx: &mut Context<Self>) {
         self.active_view()
             .update(cx, |view, cx| view.warn_if_git_is_old(cx));
@@ -637,8 +637,8 @@ fn canonical(path: &Path) -> PathBuf {
 mod tests {
     use super::Workspace;
     use crate::view::bind_keys;
-    use gitclient_core::settings::state::{AppState, DockLayout};
     use gpui_kit::{AppContext as _, Entity, TestAppContext, VisualTestContext};
+    use mantisgit_core::settings::state::{AppState, DockLayout};
 
     fn open_workspace(cx: &mut TestAppContext) -> (Entity<Workspace>, VisualTestContext) {
         // The dock listens to the process-wide command log, which any test's git thread
@@ -1069,8 +1069,8 @@ mod tests {
             main.display(),
             linked.display()
         );
-        let mut refs = gitclient_core::history::refs::Refs::default();
-        refs.worktrees = gitclient_core::repo::worktree::parse(&listing);
+        let mut refs = mantisgit_core::history::refs::Refs::default();
+        refs.worktrees = mantisgit_core::repo::worktree::parse(&listing);
         refs.worktrees[0].is_current = true;
         let main = main.to_owned();
         tab.update(cx, |tab, _| {
@@ -1131,16 +1131,16 @@ mod tests {
         let (view, mut cx) = open_workspace(cx);
         let (main, inner) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let tab = view.read_with(&cx, |view, _| view.active_view().clone());
-        let module = gitclient_core::repo::submodule::Submodule {
+        let module = mantisgit_core::repo::submodule::Submodule {
             name: "lib".into(),
             path: "lib".into(),
             folder: inner.path().to_owned(),
             url: None,
             recorded: "a".repeat(40),
             head: Some("a".repeat(40)),
-            state: gitclient_core::repo::submodule::State::Current,
+            state: mantisgit_core::repo::submodule::State::Current,
         };
-        let mut refs = gitclient_core::history::refs::Refs::default();
+        let mut refs = mantisgit_core::history::refs::Refs::default();
         refs.submodules = vec![module];
         let main = main.path().to_owned();
         tab.update(&mut cx, |tab, _| {

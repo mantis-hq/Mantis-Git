@@ -1,20 +1,20 @@
-//! Updating a portable copy of gitclient from its releases. One model for the whole
+//! Updating a portable copy of Mantis Git from its releases. One model for the whole
 //! app: the band over the window offers the step, and Settings → App shows where it stands.
 //!
-//! Everything about releases, downloads and wording is in `gitclient_core::install::update`.
+//! Everything about releases, downloads and wording is in `mantisgit_core::install::update`.
 //! This only runs it off the UI thread and draws the result. Nothing is downloaded until
 //! the user asks, and a copy a package manager installed never looks.
 
 use super::parts::{card, card_actions, pill};
 use crate::theme::tokens;
-use gitclient_core::install::update::{
-    self, Build, HOST, Http, Status, Support, Target, Track, Web,
-};
-use gitclient_core::install::{Channel, exe_path};
 use gpui_kit::component::button::*;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::install::update::{
+    self, Build, HOST, Http, Status, Support, Target, Track, Web,
+};
+use mantisgit_core::install::{Channel, exe_path};
 use std::path::PathBuf;
 use std::sync::Arc;
 

@@ -12746,7 +12746,7 @@ insights.
 GNU General Public License v3.0 or later
 
 Used by:
-gitclient 0.1.0
+mantisgit 0.1.0
 
                     GNU GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
@@ -13428,7 +13428,7 @@ Public License instead of this License.  But first, please read
 GNU General Public License v3.0 or later
 
 Used by:
-gitclient-core 0.1.0
+mantisgit-core 0.1.0
 
 GNU GENERAL PUBLIC LICENSE
 Version 3, 29 June 2007

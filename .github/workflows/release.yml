@@ -102,8 +102,8 @@ jobs:
             *) tag=nightly ;;
           esac
           mkdir dist
-          tar -czf "dist/gitclient-$tag-x86_64-unknown-linux-gnu.tar.gz" \
-            -C target/release gitclient
+          tar -czf "dist/mantisgit-$tag-x86_64-unknown-linux-gnu.tar.gz" \
+            -C target/release mantisgit
       - uses: actions/upload-artifact@v7
         with:
           name: linux
@@ -129,7 +129,7 @@ jobs:
             *) tag=nightly ;;
           esac
           mkdir dist
-          powershell -NoProfile -Command "Compress-Archive -Path target/release/gitclient.exe -DestinationPath dist/gitclient-$tag-x86_64-pc-windows-msvc.zip"
+          powershell -NoProfile -Command "Compress-Archive -Path target/release/mantisgit.exe -DestinationPath dist/mantisgit-$tag-x86_64-pc-windows-msvc.zip"
       - uses: actions/upload-artifact@v7
         with:
           name: windows
@@ -158,7 +158,7 @@ jobs:
         with:
           name: windows
           path: dist
-      - run: cd dist && sha256sum gitclient-* > SHA256SUMS.txt
+      - run: cd dist && sha256sum mantisgit-* > SHA256SUMS.txt
       # The same licenses are inside the program (Settings, About), and are here too for
       # anyone who reads the release page first.
       - run: cp LICENSE THIRD-PARTY-LICENSES.txt dist/

@@ -1,10 +1,10 @@
 //! Remotes in the sidebar. The "+ Add" in their heading and "Edit" in a remote's menu open
 //! the form in `view::dialog`; what a remote is and how it is saved lives in
-//! `gitclient_core::repo::remote`.
+//! `mantisgit_core::repo::remote`.
 
 use crate::view::GraphView;
-use gitclient_core::menu;
 use gpui_kit::*;
+use mantisgit_core::menu;
 
 impl GraphView {
     pub(in crate::view) fn open_remote_menu(
