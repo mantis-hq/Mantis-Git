@@ -78,6 +78,19 @@ pub enum Command {
         name: String,
         tip: Option<String>,
     },
+    /// Sends a tag to a remote, which a plain push does for one that isn't there yet.
+    PushTag {
+        remote: String,
+        name: String,
+    },
+    /// Removes a tag from a remote with `git push --delete`, and from here too when
+    /// `also_local` is set.
+    DeleteRemoteTag {
+        remote: String,
+        name: String,
+        tip: Option<String>,
+        also_local: bool,
+    },
     /// Several branches and tags at once.
     DeleteMany {
         refs: Vec<Doomed>,
@@ -262,7 +275,7 @@ impl Command {
             Self::CheckOutRef { .. } | Self::CheckOutCommit { .. } => "Checking out",
             Self::MergeIntoCurrent { .. } => "Merging",
             Self::PullBranch { .. } => "Pulling",
-            Self::PushBranch { .. } | Self::PushTo { .. } => "Pushing",
+            Self::PushBranch { .. } | Self::PushTo { .. } | Self::PushTag { .. } => "Pushing",
             Self::ForcePushTo { .. } => "Force pushing",
             Self::Drop {
                 action: DropAction::FastForward,
@@ -274,7 +287,10 @@ impl Command {
             }
             | Self::Rebase { .. } => "Rebasing",
             Self::Drop { .. } => "Merging",
-            Self::Delete { .. } | Self::DeleteMany { .. } | Self::DeleteRemote { .. } => "Deleting",
+            Self::Delete { .. }
+            | Self::DeleteMany { .. }
+            | Self::DeleteRemote { .. }
+            | Self::DeleteRemoteTag { .. } => "Deleting",
             Self::CherryPick { .. } => "Cherry-picking",
             Self::Revert { .. } => "Reverting",
             Self::Reset { .. } => "Resetting",
@@ -333,6 +349,21 @@ impl Command {
             }),
             Self::DeleteRemote { remote, name, tip } => Some(Confirmation {
                 message: branch::delete_remote_warning(remote, name, tip.as_deref()),
+                action: "Delete",
+                weight: Weight::DoublePress,
+            }),
+            Self::DeleteRemoteTag {
+                remote,
+                name,
+                tip,
+                also_local,
+            } => Some(Confirmation {
+                message: branch::delete_remote_tag_warning(
+                    remote,
+                    name,
+                    tip.as_deref(),
+                    *also_local,
+                ),
                 action: "Delete",
                 weight: Weight::DoublePress,
             }),
@@ -491,6 +522,13 @@ impl Command {
             Self::DeleteRemote { remote, name, .. } => {
                 branch::delete_remote_branch(repo, remote, name)
             }
+            Self::PushTag { remote, name } => branch::push_tag(repo, remote, name),
+            Self::DeleteRemoteTag {
+                remote,
+                name,
+                also_local,
+                ..
+            } => branch::delete_remote_tag(repo, remote, name, *also_local),
             Self::DeleteMany { refs } => branch::delete_many(repo, refs),
             Self::CherryPick { oids } => match oids.as_slice() {
                 [oid] => actions::cherry_pick(repo, oid),

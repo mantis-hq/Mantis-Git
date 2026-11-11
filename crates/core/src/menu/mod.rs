@@ -217,10 +217,22 @@ fn integrate_lines(refs: &Refs, kind: RefKind, name: &str) -> Vec<Line> {
 
 /// Push and pull for a local branch, the push first.
 fn sync_ref_lines(refs: &Refs, kind: RefKind, name: &str) -> Vec<Line> {
-    if kind == RefKind::Branch {
-        sync_lines(refs, name)
-    } else {
-        Vec::new()
+    match kind {
+        RefKind::Branch => sync_lines(refs, name),
+        RefKind::Tag => refs
+            .remote_configs
+            .iter()
+            .map(|remote| {
+                Line::item(
+                    format!("Push tag {name} to {}", remote.name),
+                    Command::PushTag {
+                        remote: remote.name.clone(),
+                        name: name.to_owned(),
+                    },
+                )
+            })
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -273,6 +285,29 @@ fn delete_lines(refs: &Refs, kind: RefKind, name: &str) -> Vec<Line> {
             )
             .danger(),
         );
+    }
+    if kind == RefKind::Tag {
+        for remote in &refs.remote_configs {
+            for also_local in [false, true] {
+                let label = if also_local {
+                    format!("Delete tag {name} here and on {}", remote.name)
+                } else {
+                    format!("Delete tag {name} on {}", remote.name)
+                };
+                lines.push(
+                    Line::item(
+                        label,
+                        Command::DeleteRemoteTag {
+                            remote: remote.name.clone(),
+                            name: name.to_owned(),
+                            tip: tip.map(|tip| tip.to_string()),
+                            also_local,
+                        },
+                    )
+                    .danger(),
+                );
+            }
+        }
     }
     if kind == RefKind::Remote
         && let Some((remote, branch_name)) = remote::split_branch(&refs.remote_configs, name)
@@ -1583,6 +1618,29 @@ mod tests {
                 "Delete tag v1.0.0"
             ]
         );
+    }
+
+    #[test]
+    fn a_tag_can_be_pushed_and_deleted_on_each_remote_or_everywhere() {
+        let mut refs = refs();
+        refs.remote_configs = vec![crate::repo::remote::Remote {
+            name: "origin".into(),
+            url: "git@host:a.git".into(),
+            push_url: None,
+        }];
+        let lines = ref_menu(&refs, &target(RefKind::Tag, "v1.0.0"));
+        let shown = labels(&lines);
+        assert!(shown.contains(&"Push tag v1.0.0 to origin"));
+        assert!(shown.contains(&"Delete tag v1.0.0"));
+        assert!(shown.contains(&"Delete tag v1.0.0 on origin"));
+        assert!(shown.contains(&"Delete tag v1.0.0 here and on origin"));
+        for line in &lines {
+            if let Some(command @ Command::DeleteRemoteTag { .. }) = line.command() {
+                let confirmation = command.confirmation().unwrap();
+                assert_eq!(confirmation.weight, Weight::DoublePress);
+                assert!(confirmation.message.contains("git push origin v1.0.0"));
+            }
+        }
     }
 
     #[test]

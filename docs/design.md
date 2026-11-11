@@ -487,6 +487,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   menu in red "Delete origin/feat/x on origin". It asks first in a popup that takes Enter twice (see "Delete confirmation"), which says it
   removes the branch for everyone who uses the remote and gives the `git push origin
   <hash>:refs/heads/feat/x` that brings it back, and runs `git push origin --delete`.
+- Tags on remotes: a tag's menu works like a branch's across remotes. For each remote it has
+  "Push tag v1 to origin" (a plain push, which git refuses for a tag the remote has elsewhere),
+  and in red "Delete tag v1 on origin" (the local tag stays) and "Delete tag v1 here and on
+  origin" (both). "Delete tag v1" removes only the local one. Which remotes hold a tag isn't
+  known without asking over the network, so the lines are always offered, as Pull is. Deleting
+  on a remote changes it for everyone who uses it, so it takes Enter twice, and the popup gives
+  the `git push origin v1` (and `git tag v1 <hash>`) that brings it back.
 - Push by dropping: a local branch also drops on a remote branch, which tints like a
   local one. The menu holds one line, "Push feat/x to origin/main" when that
   fast-forwards the remote branch. When the remote branch has commits the branch lacks, the
