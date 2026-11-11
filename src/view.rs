@@ -656,6 +656,17 @@ impl GraphView {
     /// A click on a row: plain selects it, ctrl or cmd marks it beside the others, and shift
     /// marks everything from the selected row to it.
     fn click_row(&mut self, index: usize, modifiers: Modifiers, cx: &mut Context<Self>) {
+        // A commit outside the picked histories lets go of the picks, so the graph isn't
+        // left faded around the commit just chosen.
+        if self
+            .sidebar
+            .spotlight
+            .as_ref()
+            .is_some_and(|spot| !spot.commit_is_lit(index))
+        {
+            self.sidebar.picks.clear();
+            self.sidebar.spotlight = None;
+        }
         let (Some(entry), Some(main)) = (self.entries.get(index), self.selected) else {
             return self.select(index, cx);
         };
