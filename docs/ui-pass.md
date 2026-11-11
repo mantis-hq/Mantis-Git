@@ -25,7 +25,7 @@ To do:
 - Width from the widest first chip, 48 to 180 px; `+n` and the hover card stay.
 - The subject column takes the freed width. Chip nearer its dot follows from the narrower column.
 
-## 3. Inspector  `[ ]`
+## 3. Inspector  `[x]`
 
 Decided: do the suggestions, but write no reason text under a disabled Commit button.
 
@@ -35,7 +35,7 @@ To do:
 - Unstaged and Staged lists size to their content up to a cap, instead of reserving blank space.
 - Disabled "Commit n files" only dims. No sentence.
 
-## 4. Sidebar sections  `[ ]`
+## 4. Sidebar sections  `[~]`
 
 Decided: sections may be closed by default.
 

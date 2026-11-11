@@ -496,6 +496,9 @@ impl GraphView {
                                     .child(self.render_working_list(Side::Unstaged, &details, cx))
                                     .child(self.render_working_list(Side::Staged, &details, cx))
                             })
+                            // Lists take only the room their rows need; the form stays at
+                            // the foot.
+                            .child(div().flex_1().min_h_0())
                             .child(
                                 // Capped, so that a short window keeps some of its lists.
                                 div()

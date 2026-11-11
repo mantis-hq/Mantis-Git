@@ -1,7 +1,7 @@
 //! The form at the foot of the inspector that turns what is staged into a commit.
 
 use crate::theme::tokens;
-use crate::view::parts::{TEXT_CHIP, TEXT_SMALL, checkbox, section_label};
+use crate::view::parts::{TEXT_CHIP, TEXT_SMALL, checkbox, chip_padded, section_label};
 use crate::view::{GraphView, Notice};
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
@@ -194,8 +194,6 @@ impl GraphView {
     pub(in crate::view) fn render_commit_form(&self, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
-        let (background, primary, on_primary) =
-            (theme.background, theme.primary, theme.primary_foreground);
         let (quiet, danger) = (theme.secondary_foreground, theme.danger);
         let subtext = tokens(theme.is_dark()).subtext0;
 
@@ -213,22 +211,12 @@ impl GraphView {
             .iter()
             .enumerate()
             .map(|(index, name)| {
-                let on = self.commit.kind == index;
-                div()
-                    .id(("type", index))
-                    .h_flex()
-                    .h(px(24.))
-                    .px(px(6.))
-                    .rounded(px(6.))
-                    .cursor_pointer()
-                    .text_size(TEXT_SMALL)
-                    .bg(if on { primary } else { background })
-                    .text_color(if on { on_primary } else { quiet })
-                    .child(*name)
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                chip_padded(("type", index), name, self.commit.kind == index, 6., cx).on_click(
+                    cx.listener(move |this, _, _, cx| {
                         this.commit.kind = index;
                         cx.notify();
-                    }))
+                    }),
+                )
             })
             .collect();
 
