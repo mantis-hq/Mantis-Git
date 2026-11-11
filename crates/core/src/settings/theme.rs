@@ -286,9 +286,9 @@ impl Imported {
     /// What the header says once these colours are in.
     pub fn saved_message(&self) -> String {
         format!(
-            "Took {} from the {}, for the {} appearance. Reset brings Catppuccin back.",
+            "Took {} from the {}, for the {} appearance. Catppuccin is one click away.",
             crate::text::count(self.overrides.len(), "colour"),
-            self.source,
+            self.source.name(),
             appearance_name(self.dark)
         )
     }
@@ -319,19 +319,26 @@ pub fn changed_message(slot: Slot, color: Option<u32>, dark: bool) -> String {
 /// What the header says after the colours of one appearance were put back.
 pub fn reset_message(dark: bool) -> String {
     format!(
-        "The {} appearance is Catppuccin again.",
-        appearance_name(dark)
+        "The {} appearance is {} again.",
+        appearance_name(dark),
+        builtin_name(dark)
     )
+}
+
+/// The built-in theme of an appearance, which is always there to go back to.
+pub fn builtin_name(dark: bool) -> &'static str {
+    if dark {
+        "Catppuccin Mocha"
+    } else {
+        "Catppuccin Latte"
+    }
 }
 
 /// The sentence under the page's title.
 pub fn describe(overrides: &Overrides, dark: bool) -> String {
     let appearance = appearance_name(dark);
     match overrides.len() {
-        0 => format!(
-            "The {appearance} appearance is Catppuccin {}.",
-            if dark { "Mocha" } else { "Latte" }
-        ),
+        0 => format!("The {appearance} appearance is {}.", builtin_name(dark)),
         1 => format!("1 colour of the {appearance} appearance is changed from Catppuccin."),
         n => format!(
             "{} of the {appearance} appearance are changed from Catppuccin.",
@@ -382,7 +389,7 @@ fn saturation(color: u32) -> f32 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Imported {
     /// Where it came from, for the sentence that says what was imported.
-    pub source: String,
+    pub source: Source,
     /// Whether its background is dark, which says which appearance it is for.
     pub dark: bool,
     pub overrides: Overrides,
@@ -404,7 +411,7 @@ struct Scheme {
 impl Scheme {
     /// The design's colours the scheme has an opinion about. The greys between the
     /// background and the text are worked out from those two, so contrast is kept.
-    fn into_import(self, source: String) -> Imported {
+    fn into_import(self, source: Source) -> Imported {
         let dark = luminance(self.base) < 0.5;
         let far = if dark { 0x000000 } else { 0xffffff };
         let mantle = if self.window == self.base {
@@ -464,7 +471,7 @@ fn kde_color(value: &str) -> Option<u32> {
 
 /// Reads KDE's colour scheme format, as `kdeglobals` and `~/.local/share/color-schemes`
 /// files use it. `None` when it has no colours.
-pub fn from_kde(text: &str, source: &str) -> Option<Imported> {
+pub fn from_kde(text: &str) -> Option<Imported> {
     let mut sections: BTreeMap<&str, BTreeMap<&str, &str>> = BTreeMap::new();
     let mut current = "";
     for line in text.lines() {
@@ -499,13 +506,13 @@ pub fn from_kde(text: &str, source: &str) -> Option<Imported> {
             negative: get("Colors:View", "ForegroundNegative"),
             neutral: get("Colors:View", "ForegroundNeutral"),
         }
-        .into_import(source.to_owned()),
+        .into_import(Source::Kde),
     )
 }
 
 /// Reads a `qt5ct`/`qt6ct` colour scheme, which is a Qt palette: its `active_colors` run
 /// in Qt's own order. `None` when it has none.
-pub fn from_qt_palette(text: &str, source: &str) -> Option<Imported> {
+pub fn from_qt_palette(text: &str, source: Source) -> Option<Imported> {
     let line = text
         .lines()
         .find_map(|line| line.trim().strip_prefix("active_colors="))?;
@@ -532,42 +539,242 @@ pub fn from_qt_palette(text: &str, source: &str) -> Option<Imported> {
             negative: None,
             neutral: None,
         }
-        .into_import(source.to_owned()),
+        .into_import(source),
     )
 }
 
-/// Finds the Qt theme this desktop uses and reads it: KDE's colours first, then the
-/// palette `qt6ct` or `qt5ct` point at.
-pub fn import_from_desktop() -> Result<Imported, String> {
-    let Some(config) = super::state::config_dir() else {
-        return Err("gitclient can't find your config folder to look for a Qt theme.".into());
-    };
-    import_from(&config)
+/// Where a colour scheme can be read from. Only colours are ever read from them: no fonts,
+/// icons, sizes or other settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    Kde,
+    Qt6ct,
+    Qt5ct,
+    Gtk4,
+    Gtk3,
 }
 
-/// `import_from_desktop` for the config folder `config`.
-pub fn import_from(config: &Path) -> Result<Imported, String> {
-    let kde = config.join("kdeglobals");
-    if let Ok(text) = std::fs::read_to_string(&kde)
-        && let Some(found) = from_kde(&text, "KDE colours")
-    {
-        return Ok(found);
-    }
-    for tool in ["qt6ct", "qt5ct"] {
-        let conf = config.join(tool).join(format!("{tool}.conf"));
-        let Ok(text) = std::fs::read_to_string(&conf) else {
-            continue;
-        };
-        let Some(scheme) = qt_scheme_path(&text) else {
-            continue;
-        };
-        if let Ok(palette) = std::fs::read_to_string(&scheme)
-            && let Some(found) = from_qt_palette(&palette, &format!("the {tool} palette"))
-        {
-            return Ok(found);
+impl Source {
+    pub const ALL: [Source; 5] = [
+        Source::Kde,
+        Source::Qt6ct,
+        Source::Qt5ct,
+        Source::Gtk4,
+        Source::Gtk3,
+    ];
+
+    /// What it is called in a sentence ("from the KDE colours").
+    pub fn name(self) -> &'static str {
+        match self {
+            Source::Kde => "KDE colours",
+            Source::Qt6ct => "qt6ct palette",
+            Source::Qt5ct => "qt5ct palette",
+            Source::Gtk4 => "GTK 4 theme",
+            Source::Gtk3 => "GTK 3 theme",
         }
     }
-    Err("gitclient found no Qt theme. It reads KDE's colours (kdeglobals), or the palette qt6ct or qt5ct uses.".into())
+
+    /// The button that imports it.
+    pub fn button(self) -> String {
+        format!("Import {}", self.name())
+    }
+}
+
+/// The folders a desktop keeps its themes in.
+#[derive(Clone, Debug)]
+pub struct Locations {
+    /// The user's config folder (`~/.config`).
+    pub config: PathBuf,
+    /// Folders holding installed GTK themes, each with a folder per theme.
+    pub themes: Vec<PathBuf>,
+}
+
+impl Locations {
+    /// Where this system keeps them, or `None` where there is no desktop theme to read
+    /// (Windows) or no config folder.
+    pub fn this_system() -> Option<Self> {
+        if cfg!(windows) {
+            return None;
+        }
+        let config = super::state::config_dir()?;
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let data = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home.as_ref().map(|home| home.join(".local/share")));
+        let mut themes: Vec<PathBuf> = home.iter().map(|home| home.join(".themes")).collect();
+        themes.extend(data.map(|data| data.join("themes")));
+        themes.push("/usr/share/themes".into());
+        Some(Self { config, themes })
+    }
+
+    /// The colours `source` holds here, if it holds any.
+    pub fn read(&self, source: Source) -> Option<Imported> {
+        let file = |path: PathBuf| std::fs::read_to_string(path).ok();
+        match source {
+            Source::Kde => from_kde(&file(self.config.join("kdeglobals"))?),
+            Source::Qt6ct | Source::Qt5ct => {
+                let tool = if source == Source::Qt6ct {
+                    "qt6ct"
+                } else {
+                    "qt5ct"
+                };
+                let conf = file(self.config.join(tool).join(format!("{tool}.conf")))?;
+                from_qt_palette(&file(qt_scheme_path(&conf)?)?, source)
+            }
+            Source::Gtk4 => self.read_gtk(source, "gtk-4.0"),
+            Source::Gtk3 => self.read_gtk(source, "gtk-3.0"),
+        }
+    }
+
+    /// Which of the sources have colours here, in the order to offer them.
+    pub fn found(&self) -> Vec<Source> {
+        Source::ALL
+            .into_iter()
+            .filter(|source| self.read(*source).is_some())
+            .collect()
+    }
+
+    /// The user's `gtk.css`, else the CSS of the theme `settings.ini` names.
+    fn read_gtk(&self, source: Source, folder: &str) -> Option<Imported> {
+        let user = self.config.join(folder);
+        let mut defined = Defined::default();
+        defined.read(&user.join("gtk.css"), 0);
+        if let Some(found) = from_gtk(&defined, source) {
+            return Some(found);
+        }
+        let ini = std::fs::read_to_string(user.join("settings.ini")).ok()?;
+        let name = ini
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("gtk-theme-name="))?
+            .trim();
+        // A name that points out of the themes folder is not a theme.
+        if name.is_empty() || name.contains(['/', '\\']) || name.starts_with('.') {
+            return None;
+        }
+        for themes in &self.themes {
+            let mut defined = Defined::default();
+            defined.read(&themes.join(name).join(folder).join("gtk.css"), 0);
+            if let Some(found) = from_gtk(&defined, source) {
+                return Some(found);
+            }
+        }
+        None
+    }
+}
+
+/// The colours a GTK stylesheet names with `@define-color`.
+#[derive(Default)]
+struct Defined(BTreeMap<String, String>);
+
+impl Defined {
+    /// Reads `@define-color name value;` lines, and the stylesheets `@import`ed beside
+    /// them, a few levels deep. Nothing else in the CSS is looked at.
+    fn read(&mut self, file: &Path, depth: u32) {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            return;
+        };
+        let folder = file.parent().unwrap_or(Path::new("."));
+        for statement in text.split(';') {
+            let statement = statement.trim();
+            let statement = statement.rsplit("*/").next().unwrap_or(statement).trim();
+            if let Some(rest) = statement.strip_prefix("@define-color") {
+                let mut parts = rest.trim().splitn(2, char::is_whitespace);
+                if let (Some(name), Some(value)) = (parts.next(), parts.next()) {
+                    self.0
+                        .entry(name.trim().to_owned())
+                        .or_insert_with(|| value.trim().to_owned());
+                }
+            } else if let Some(rest) = statement.strip_prefix("@import")
+                && depth < 3
+            {
+                let target = rest
+                    .trim()
+                    .trim_start_matches("url(")
+                    .trim_end_matches(')')
+                    .trim_matches(['"', '\'']);
+                // Only a file next to the stylesheet or below it.
+                if !target.is_empty()
+                    && !target.contains("..")
+                    && !target.starts_with('/')
+                    && !target.contains("://")
+                {
+                    self.read(&folder.join(target), depth + 1);
+                }
+            }
+        }
+    }
+
+    /// The colour `name` stands for, following `@other` references.
+    fn color(&self, name: &str) -> Option<u32> {
+        let mut value = self.0.get(name)?.as_str();
+        for _ in 0..6 {
+            match value.strip_prefix('@') {
+                Some(other) => value = self.0.get(other.trim())?.as_str(),
+                None => return css_color(value),
+            }
+        }
+        None
+    }
+
+    fn first(&self, names: &[&str]) -> Option<u32> {
+        names.iter().find_map(|name| self.color(name))
+    }
+}
+
+/// `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb(r, g, b)` or `rgba(r, g, b, a)`. Anything that has
+/// to be worked out (`mix()`, `shade()`) is not understood.
+fn css_color(value: &str) -> Option<u32> {
+    let value = value.trim();
+    if let Some(digits) = value.strip_prefix('#') {
+        return match digits.len() {
+            3 => {
+                let wide: String = digits.chars().flat_map(|c| [c, c]).collect();
+                parse_hex(&wide)
+            }
+            6 | 8 => parse_hex(&digits[..6]),
+            _ => None,
+        };
+    }
+    let inner = value
+        .strip_prefix("rgba(")
+        .or_else(|| value.strip_prefix("rgb("))?
+        .strip_suffix(')')?;
+    let mut parts = inner
+        .split([',', '/', ' '])
+        .filter(|part| !part.is_empty())
+        .map(|part| part.trim().parse::<f32>().ok());
+    let mut channel = || Some(parts.next()??.clamp(0., 255.).round() as u32);
+    Some(channel()? << 16 | channel()? << 8 | channel()?)
+}
+
+/// Reads GTK's named colours. libadwaita (GTK 4) and the older GTK 3 themes name them
+/// differently, so each has its own list. `None` when the basics are missing.
+fn from_gtk(defined: &Defined, source: Source) -> Option<Imported> {
+    let scheme = match source {
+        Source::Gtk3 => Scheme {
+            base: defined.first(&["theme_base_color", "base_color"])?,
+            window: defined.first(&["theme_bg_color", "bg_color"])?,
+            alternate: None,
+            text: defined.first(&["theme_text_color", "theme_fg_color", "fg_color"])?,
+            accent: defined.first(&["theme_selected_bg_color", "selected_bg_color"])?,
+            on_accent: defined.first(&["theme_selected_fg_color", "selected_fg_color"]),
+            positive: defined.first(&["success_color"]),
+            negative: defined.first(&["error_color"]),
+            neutral: defined.first(&["warning_color"]),
+        },
+        _ => Scheme {
+            base: defined.first(&["view_bg_color"])?,
+            window: defined.first(&["window_bg_color"])?,
+            alternate: defined.first(&["card_bg_color", "headerbar_bg_color"]),
+            text: defined.first(&["view_fg_color", "window_fg_color"])?,
+            accent: defined.first(&["accent_bg_color", "accent_color"])?,
+            on_accent: defined.first(&["accent_fg_color"]),
+            positive: defined.first(&["success_color", "success_bg_color"]),
+            negative: defined.first(&["error_color", "destructive_color"]),
+            neutral: defined.first(&["warning_color", "warning_bg_color"]),
+        },
+    };
+    Some(scheme.into_import(source))
 }
 
 /// The palette file a `qt5ct`/`qt6ct` config uses, when it uses a custom one.
@@ -659,7 +866,7 @@ mod tests {
 
     #[test]
     fn a_kde_scheme_becomes_overrides_and_picks_its_appearance() {
-        let found = from_kde(KDE, "KDE colours").unwrap();
+        let found = from_kde(KDE).unwrap();
         assert!(found.dark);
         let theme = &found.overrides;
         assert_eq!(theme.color(Slot::Base, true), 0x1a1b26);
@@ -679,12 +886,12 @@ mod tests {
     #[test]
     fn a_light_scheme_is_for_the_light_appearance() {
         let text = "[Colors:View]\nBackgroundNormal=250,250,250\nForegroundNormal=30,30,30\nDecorationFocus=0,100,200\n";
-        let found = from_kde(text, "x").unwrap();
+        let found = from_kde(text).unwrap();
         assert!(!found.dark);
         // With no separate window colour, the side panels are a step off the background.
         assert!(found.overrides.color(Slot::Mantle, false) > 0xc8c8c8);
         assert!(found.overrides.color(Slot::Mantle, false) < 0xfafafa);
-        assert!(from_kde("[General]\nName=x\n", "x").is_none());
+        assert!(from_kde("[General]\nName=x\n").is_none());
     }
 
     #[test]
@@ -695,7 +902,7 @@ mod tests {
             "#24283b",
         ];
         let text = format!("[ColorScheme]\nactive_colors={}\n", colors.join(", "));
-        let found = from_qt_palette(&text, "x").unwrap();
+        let found = from_qt_palette(&text, Source::Qt6ct).unwrap();
         assert!(found.dark);
         assert_eq!(found.overrides.color(Slot::Base, true), 0x1a1b26);
         assert_eq!(found.overrides.color(Slot::Mantle, true), 0x16161e);
@@ -703,32 +910,119 @@ mod tests {
         assert_eq!(found.overrides.color(Slot::Surface0, true), 0x24283b);
         // Qt writes alpha first.
         let alpha = text.replace("#1a1b26", "#ff1a1b26");
-        assert_eq!(from_qt_palette(&alpha, "x").unwrap(), found);
+        assert_eq!(from_qt_palette(&alpha, Source::Qt6ct).unwrap(), found);
+    }
+
+    fn here(config: &Path, themes: &Path) -> Locations {
+        Locations {
+            config: config.to_owned(),
+            themes: vec![themes.to_owned()],
+        }
     }
 
     #[test]
-    fn the_desktops_theme_is_found_in_the_config_folder() {
-        let home = tempfile::tempdir().unwrap();
-        assert!(
-            import_from(home.path())
-                .unwrap_err()
-                .contains("no Qt theme")
-        );
-        std::fs::write(home.path().join("kdeglobals"), KDE).unwrap();
-        assert_eq!(import_from(home.path()).unwrap().source, "KDE colours");
+    fn nothing_is_found_where_no_desktop_has_a_theme() {
+        let (config, themes) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        assert!(here(config.path(), themes.path()).found().is_empty());
+    }
 
-        let qt = tempfile::tempdir().unwrap();
-        let palette = qt.path().join("p.conf");
+    #[test]
+    fn kde_and_qt_palettes_are_found_in_the_config_folder() {
+        let (home, themes) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let places = here(home.path(), themes.path());
+        std::fs::write(home.path().join("kdeglobals"), KDE).unwrap();
+        assert_eq!(places.found(), vec![Source::Kde]);
+        assert_eq!(places.read(Source::Kde).unwrap().source, Source::Kde);
+
+        let palette = home.path().join("p.conf");
         std::fs::write(&palette, "active_colors=#c0caf5, #16161e, #0, #0, #0, #0, #c0caf5, #0, #0, #1a1b26, #16161e, #0, #7aa2f7, #16161e, #0, #0, #24283b\n").unwrap();
-        std::fs::create_dir(qt.path().join("qt6ct")).unwrap();
+        std::fs::create_dir(home.path().join("qt6ct")).unwrap();
         std::fs::write(
-            qt.path().join("qt6ct/qt6ct.conf"),
+            home.path().join("qt6ct/qt6ct.conf"),
             format!(
                 "[Appearance]\ncolor_scheme_path={}\ncustom_palette=true\n",
                 palette.display()
             ),
         )
         .unwrap();
-        assert_eq!(import_from(qt.path()).unwrap().source, "the qt6ct palette");
+        assert_eq!(places.found(), vec![Source::Kde, Source::Qt6ct]);
+    }
+
+    const ADWAITA: &str = "@define-color window_bg_color #1e1e2e;\n@define-color view_bg_color #181825;\n@define-color view_fg_color #cdd6f4;\n@define-color accent_bg_color rgb(137, 180, 250);\n@define-color accent_fg_color @window_bg_color;\n@define-color success_color #a6e3a1;\n@define-color error_color #f38ba8;\n";
+
+    #[test]
+    fn a_gtk_4_stylesheet_gives_its_named_colours_and_follows_references() {
+        let (home, themes) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        std::fs::create_dir(home.path().join("gtk-4.0")).unwrap();
+        // The colours may sit in a file the stylesheet imports; other CSS is ignored.
+        std::fs::write(
+            home.path().join("gtk-4.0/gtk.css"),
+            "@import url(\"colors.css\");\nwindow { font-family: serif; background: red; }\n",
+        )
+        .unwrap();
+        std::fs::write(home.path().join("gtk-4.0/colors.css"), ADWAITA).unwrap();
+        let places = here(home.path(), themes.path());
+        assert_eq!(places.found(), vec![Source::Gtk4]);
+        let found = places.read(Source::Gtk4).unwrap();
+        assert!(found.dark);
+        let theme = &found.overrides;
+        assert_eq!(theme.color(Slot::Base, true), 0x181825);
+        assert_eq!(theme.color(Slot::Mantle, true), 0x1e1e2e);
+        assert_eq!(theme.color(Slot::Text, true), 0xcdd6f4);
+        assert_eq!(theme.color(Slot::Blue, true), 0x89b4fa);
+        assert_eq!(theme.color(Slot::Crust, true), 0x1e1e2e, "@window_bg_color");
+        assert_eq!(theme.color(Slot::Green, true), 0xa6e3a1);
+        assert_eq!(theme.color(Slot::Red, true), 0xf38ba8);
+    }
+
+    #[test]
+    fn the_theme_settings_ini_names_is_read_and_a_path_is_not_followed() {
+        let (home, themes) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        std::fs::create_dir_all(home.path().join("gtk-3.0")).unwrap();
+        std::fs::write(
+            home.path().join("gtk-3.0/settings.ini"),
+            "[Settings]\ngtk-theme-name=Night\ngtk-font-name=Serif 40\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(themes.path().join("Night/gtk-3.0")).unwrap();
+        std::fs::write(
+            themes.path().join("Night/gtk-3.0/gtk.css"),
+            "@define-color theme_base_color #101010;\n@define-color theme_bg_color #202020;\n@define-color theme_text_color #eeeeee;\n@define-color theme_selected_bg_color #3366ff;\n",
+        )
+        .unwrap();
+        let places = here(home.path(), themes.path());
+        let found = places.read(Source::Gtk3).unwrap();
+        assert_eq!(found.overrides.color(Slot::Base, true), 0x101010);
+        assert_eq!(found.overrides.color(Slot::Blue, true), 0x3366ff);
+
+        std::fs::write(
+            home.path().join("gtk-3.0/settings.ini"),
+            "gtk-theme-name=../Night\n",
+        )
+        .unwrap();
+        assert!(places.read(Source::Gtk3).is_none());
+    }
+
+    #[test]
+    fn css_colours_in_the_forms_themes_use() {
+        assert_eq!(css_color("#fff"), Some(0xffffff));
+        assert_eq!(css_color("#11223380"), Some(0x112233));
+        assert_eq!(css_color("rgba(1, 2, 3, 0.5)"), Some(0x010203));
+        assert_eq!(css_color("rgb(300 0 0)"), Some(0xff0000));
+        assert_eq!(css_color("mix(@a, @b, 0.5)"), None);
+        assert_eq!(css_color("shade(#fff, 0.8)"), None);
+    }
+
+    #[test]
+    fn only_colours_are_taken_from_a_scheme() {
+        // What an import can change is the theme: the overrides hold slots and colours.
+        let found = from_kde(KDE).unwrap();
+        let text = found.overrides.render();
+        assert!(
+            text.split(',')
+                .all(|entry| entry.split_once(':').is_some_and(|(key, hex)| {
+                    Slot::from_key(key).is_some() && parse_hex(hex).is_some()
+                }))
+        );
     }
 }

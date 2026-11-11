@@ -155,9 +155,16 @@ impl Settings {
         }
     }
 
-    /// Takes the colours of the Qt theme the desktop uses, for the appearance they suit.
-    pub(super) fn import_qt_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match palette::import_from_desktop() {
+    /// Takes the colours of a desktop theme, for the appearance they suit. Only colours are
+    /// read, and only the theme of that one appearance changes.
+    pub(super) fn import_theme(
+        &mut self,
+        source: palette::Source,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let found = palette::Locations::this_system().and_then(|places| places.read(source));
+        match found.ok_or_else(|| format!("gitclient found no {} to read.", source.name())) {
             Ok(found) => {
                 self.editing_dark = found.dark;
                 let said = found.saved_message();
@@ -223,25 +230,34 @@ impl Settings {
                 cx.listener(move |this, _, window, cx| this.pick_appearance(is_dark, window, cx)),
             )
         };
-        let importing = div()
-            .h_flex()
-            .px_4()
-            .py_3()
-            .gap_3()
-            .child(self.row_words(
-                "Qt theme",
-                "Takes the colours of the Qt theme this desktop uses, from KDE's colours or the \
-                 palette qt6ct or qt5ct uses, for the appearance they suit.",
-                cx,
-            ))
-            .child(
-                Button::new("import-qt-theme")
-                    .ghost()
-                    .label("Import from the Qt theme")
-                    .disabled(!can_save)
-                    .on_click(cx.listener(|this, _, window, cx| this.import_qt_theme(window, cx))),
-            )
-            .into_any_element();
+        // One row per desktop theme found on this system, so none is drawn where there is
+        // nothing to read, as on Windows.
+        let importing: Vec<AnyElement> = self
+            .theme_sources
+            .iter()
+            .map(|&source| {
+                div()
+                    .h_flex()
+                    .px_4()
+                    .py_3()
+                    .gap_3()
+                    .child(self.row_words(
+                        &source.button(),
+                        "Takes only its colours, for the appearance its background suits.",
+                        cx,
+                    ))
+                    .child(
+                        Button::new(("import-theme", source as usize))
+                            .ghost()
+                            .label("Import")
+                            .disabled(!can_save)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.import_theme(source, window, cx)
+                            })),
+                    )
+                    .into_any_element()
+            })
+            .collect();
         let choosing = div()
             .v_flex()
             .px_4()
@@ -277,17 +293,26 @@ impl Settings {
                         "gitclient can't find a folder to keep this in.".to_owned()
                     }),
             )
+            .into_any_element();
+        // The built-in theme is always a choice, ticked while nothing is changed. Once
+        // colours are changed a "Custom" chip says so.
+        let custom = !self.theme_edited().is_empty();
+        let builtin = div()
+            .v_flex()
+            .px_4()
+            .py_3()
+            .gap_2()
+            .child(self.row_words("Theme", "The built-in theme, or your own colours.", cx))
             .child(
-                Button::new("reset-theme")
-                    .ghost()
-                    .small()
-                    .label(if dark {
-                        "Back to Catppuccin Mocha"
-                    } else {
-                        "Back to Catppuccin Latte"
-                    })
-                    .disabled(self.theme_edited().is_empty())
-                    .on_click(cx.listener(|this, _, window, cx| this.reset_theme(window, cx))),
+                div()
+                    .h_flex()
+                    .gap_1()
+                    .child(
+                        chip("theme-builtin", palette::builtin_name(dark), !custom, cx).on_click(
+                            cx.listener(|this, _, window, cx| this.reset_theme(window, cx)),
+                        ),
+                    )
+                    .children(custom.then(|| chip("theme-custom", "Custom", true, cx))),
             )
             .into_any_element();
         let rows = |slots: &[Slot], cx: &mut Context<Self>| {
@@ -307,7 +332,14 @@ impl Settings {
                  one colour each wherever they are drawn.",
                 cx,
             ))
-            .child(self.render_group("Colours", vec![importing, choosing, resetting], cx))
+            .child(self.render_group(
+                "Colours",
+                [choosing, builtin, resetting]
+                    .into_iter()
+                    .chain(importing)
+                    .collect(),
+                cx,
+            ))
             .child(self.render_group("Surfaces and text", rows(&SURFACES, cx), cx))
             .child(self.render_group("Meaning", rows(&MEANINGS, cx), cx))
             .child(self.render_group("Branch lanes", rows(&LANES, cx), cx))

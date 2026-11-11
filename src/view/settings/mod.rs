@@ -312,6 +312,8 @@ pub struct Settings {
     /// Whether the Theme page edits the dark appearance or the light one.
     editing_dark: bool,
     color_fields: Vec<appearance::ColorField>,
+    /// The desktop themes this system has, which the Theme page offers to import.
+    theme_sources: Vec<gitclient_core::settings::theme::Source>,
     /// The app's own preferences, and the file that keeps them. There is no file when
     /// the window edits a test config, or when the system has no home folder.
     app: AppState,
@@ -463,6 +465,9 @@ impl Settings {
             new_identity_ssh,
             editing_dark: cx.theme().is_dark(),
             color_fields: appearance::color_fields(window, cx),
+            theme_sources: gitclient_core::settings::theme::Locations::this_system()
+                .map(|places| places.found())
+                .unwrap_or_default(),
             app: state_file
                 .as_deref()
                 .map(AppState::load)
