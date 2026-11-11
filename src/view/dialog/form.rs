@@ -1,20 +1,20 @@
 //! A popup that asks for a few words, such as a new branch's name or a remote's address.
-//! What each form asks and what it runs lives in `gitclient_core::menu::form`; this draws
+//! What each form asks and what it runs lives in `mantisgit_core::menu::form`; this draws
 //! any of them, one input per field, in the shared frame.
 
 use super::{Dialog, Frame};
 use crate::theme::tokens;
 use crate::view::parts::section_label;
 use crate::view::{GraphView, OpenWorktreeInTab};
-use gitclient_core::menu::form::Form;
-use gitclient_core::repo::clone;
-use gitclient_core::settings::state::AppState;
 use gpui_kit::component::IndexPath;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::menu::form::Form;
+use mantisgit_core::repo::clone;
+use mantisgit_core::settings::state::AppState;
 use std::path::PathBuf;
 
 type PickState = SelectState<SearchableVec<String>>;

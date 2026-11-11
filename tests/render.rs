@@ -12,15 +12,15 @@ fn main() {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod render {
-    use gitclient::icons::Icons;
-    use gitclient::theme;
-    use gitclient::view::{self, GraphView, Status};
-    use gitclient_core::testing::{Repo, git};
     use gpui_kit::component::{Theme, ThemeMode};
     use gpui_kit::{
         AnyWindowHandle, AppContext as _, Bounds, Entity, HeadlessAppContext, WindowBounds,
         WindowOptions, px, size,
     };
+    use mantisgit::icons::Icons;
+    use mantisgit::theme;
+    use mantisgit::view::{self, GraphView, Status};
+    use mantisgit_core::testing::{Repo, git};
     use std::path::Path;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -256,7 +256,7 @@ mod render {
         // The whole file, with the changes marked beside the scrollbar.
         cx.update_window(handle, |_, _, cx| {
             view.update(cx, |view, cx| {
-                let whole = gitclient_core::patch::DiffView {
+                let whole = mantisgit_core::patch::DiffView {
                     whole_file: true,
                     ..Default::default()
                 };
@@ -298,9 +298,9 @@ mod render {
         write("fn parse(input: &str) {\n    input.trim_end();\n}\n");
         commit(path, "Keep leading spaces");
         git(path, &["checkout", "-q", "feat/parser"]);
-        assert!(gitclient_core::repo::conflict::rebase_onto(path, "main").is_ok());
+        assert!(mantisgit_core::repo::conflict::rebase_onto(path, "main").is_ok());
         assert!(
-            gitclient_core::repo::conflict::detect(path).is_some(),
+            mantisgit_core::repo::conflict::detect(path).is_some(),
             "fixture must conflict"
         );
 
@@ -325,7 +325,7 @@ mod render {
         // The same setting as a diff's: the whole file instead of only the changes.
         cx.update_window(handle, |_, _, cx| {
             view.update(cx, |view, cx| {
-                let whole = gitclient_core::patch::DiffView {
+                let whole = mantisgit_core::patch::DiffView {
                     whole_file: true,
                     ..Default::default()
                 };
@@ -343,7 +343,7 @@ mod render {
     /// The popups that ask for a name: the new-branch form with a name that git turns down,
     /// and the remote form. Both are cards in the middle of the window, in Mantle.
     fn assert_forms_draw() {
-        use gitclient_core::menu::form::Form;
+        use mantisgit_core::menu::form::Form;
         let repo = fixture();
         let mut cx = app(ThemeMode::Dark);
         let (handle, view) = open(&mut cx, repo.path());
@@ -377,8 +377,8 @@ mod render {
     /// Dropping one remote branch on another opens a menu whose line starts with a picture
     /// of the forge, or with a question in Peach when the forge isn't known.
     fn assert_request_menus_draw() {
-        use gitclient_core::history::refs::RefKind;
-        use gitclient_core::repo::branch::Dragged;
+        use mantisgit_core::history::refs::RefKind;
+        use mantisgit_core::repo::branch::Dragged;
         let mantle = image::Rgba([0x18, 0x18, 0x25, 0xff]);
         let peach = image::Rgba([0xfa, 0xb3, 0x87, 0xff]);
         let remote_branch = |name: &str| Dragged {
@@ -453,7 +453,7 @@ mod render {
 
     /// The welcome panel, with the launcher on offer and without, in the given appearance.
     fn assert_welcome_draws(mode: ThemeMode, suffix: &str) {
-        use gitclient_core::install::menu_entry::Launcher;
+        use mantisgit_core::install::menu_entry::Launcher;
         let repo = fixture();
         let mut cx = app(mode);
         let (handle, view) = open(&mut cx, repo.path());
@@ -515,8 +515,8 @@ mod render {
     /// The dock over a loaded repository: the log with the commands that loaded it, then a
     /// terminal that has run something.
     fn assert_dock_shows_the_log_and_a_terminal() {
-        use gitclient::view::Workspace;
         use image::GenericImageView as _;
+        use mantisgit::view::Workspace;
         let repo = fixture();
         let mut cx = app(ThemeMode::Dark);
         let path = repo.path().to_owned();
@@ -550,11 +550,11 @@ mod render {
         });
 
         // Loading the repository logged pages of diff. A short log shows how it reads.
-        gitclient_core::log::clear();
-        gitclient_core::ops::run(repo.path(), &["status", "--short", "--branch"]).unwrap();
-        gitclient_core::ops::run(repo.path(), &["log", "--oneline", "-3"]).unwrap();
-        assert!(gitclient_core::ops::run(repo.path(), &["rev-parse", "no-such-ref"]).is_err());
-        gitclient_core::ops::run(repo.path(), &["branch", "--list"]).unwrap();
+        mantisgit_core::log::clear();
+        mantisgit_core::ops::run(repo.path(), &["status", "--short", "--branch"]).unwrap();
+        mantisgit_core::ops::run(repo.path(), &["log", "--oneline", "-3"]).unwrap();
+        assert!(mantisgit_core::ops::run(repo.path(), &["rev-parse", "no-such-ref"]).is_err());
+        mantisgit_core::ops::run(repo.path(), &["branch", "--list"]).unwrap();
         cx.update_window(handle, |_, window, cx| {
             workspace.update(cx, |workspace, cx| {
                 workspace
@@ -614,9 +614,9 @@ mod render {
 
     /// Every page of the settings window, against a config file with something in it.
     fn assert_settings_pages_draw(mode: ThemeMode, suffix: &str) {
-        use gitclient::view::Settings;
-        use gitclient_core::settings::config::{self, Scope};
-        use gitclient_core::settings::identity::{self, Identity, Match, Profile};
+        use mantisgit::view::Settings;
+        use mantisgit_core::settings::config::{self, Scope};
+        use mantisgit_core::settings::identity::{self, Identity, Match, Profile};
 
         let repo = fixture();
         let dir = tempfile::tempdir().unwrap();
@@ -719,7 +719,7 @@ mod render {
         repo.write("draft.txt", "a new file\n");
         // The window's title is its folder's name, which is a random one in a temp folder.
         let named = tempfile::tempdir().unwrap();
-        let link = named.path().join("gitclient");
+        let link = named.path().join("mantisgit");
         std::os::unix::fs::symlink(repo.path(), &link).unwrap();
 
         let mut cx = app(ThemeMode::Dark);

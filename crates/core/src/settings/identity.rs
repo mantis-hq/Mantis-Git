@@ -3,7 +3,7 @@
 //!
 //! Git has no identities, only config. Here an identity is a small file of its own,
 //! `identities/<id>.gitconfig` next to the global config, holding a `[user]` block and a
-//! `[gitclient] label`. Three things point at it, and all of them are references, so
+//! `[mantisgit] label`. Three things point at it, and all of them are references, so
 //! editing the identity changes everywhere it is used:
 //!
 //! - a **rule** in the global config, an `includeIf` for a host, a folder or a remote
@@ -390,7 +390,7 @@ pub fn book(scope: &Scope) -> Result<Book, String> {
             let own = config::read(&Scope::File(path))?;
             // A file from before identities had labels is named after what it matched.
             let label = own
-                .get("gitclient.label")
+                .get("mantisgit.label")
                 .map(str::trim)
                 .filter(|label| !label.is_empty())
                 .map(str::to_owned)
@@ -449,7 +449,7 @@ pub fn save_identity(scope: &Scope, identity: &Identity) -> Result<String, Strin
         .map_err(|error| format!("Couldn't make {}: {error}", folder.display()))?;
     let file = Scope::File(file);
     profile.write_to(&file)?;
-    config::set(&file, "gitclient.label", label)?;
+    config::set(&file, "mantisgit.label", label)?;
     Ok(id)
 }
 

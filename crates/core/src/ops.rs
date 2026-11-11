@@ -40,7 +40,7 @@ fn configured(mut command: Command) -> Command {
 }
 
 /// Set on a command that must never ask the person anything. See [`quietly`].
-const NEVER_ASK: &str = "GITCLIENT_NEVER_ASK";
+const NEVER_ASK: &str = "MANTISGIT_NEVER_ASK";
 
 /// Marks a command as one nobody is waiting on, such as a fetch the app makes by itself.
 /// Where an ordinary command would open a question for a key's passphrase or a login, this
@@ -509,7 +509,7 @@ mod tests {
             "#!/bin/sh\n\
              echo \"ask:$SSH_ASKPASS_REQUIRE\"\n\
              echo \"file:$SSH_ASKPASS\"\n\
-             printf '\\037\\037GITCLIENT-ASKPASS:forged\\tForged question: \\n' >&2\n\
+             printf '\\037\\037MANTISGIT-ASKPASS:forged\\tForged question: \\n' >&2\n\
              a=$(\"$SSH_ASKPASS\" \"Enter passphrase for key 'k': \" </dev/null) || { echo denied >&2; exit 3; }\n\
              echo \"got:$a\"\n",
         )

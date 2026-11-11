@@ -1,6 +1,6 @@
 use super::{AppUpdates, Arc, Channel, Http, Status, Target, Updates, update};
-use gitclient_core::install::update::{HOST, Track, Version};
 use gpui_kit::{AppContext as _, Entity, TestAppContext, VisualTestContext};
+use mantisgit_core::install::update::{HOST, Track, Version};
 use std::io::Write;
 use std::sync::Mutex;
 
@@ -83,7 +83,7 @@ fn updates(
     let model = cx.new(|_| {
         Updates::new(
             channel,
-            "/apps/gitclient/gitclient".into(),
+            "/apps/mantisgit/mantisgit".into(),
             Some(linux()),
             http,
         )
@@ -227,7 +227,7 @@ fn the_band_is_drawn_over_the_window_in_every_state_it_can_take(cx: &mut TestApp
     let model = cx.new(|_| {
         Updates::new(
             Channel::Portable,
-            "/apps/gitclient/gitclient".into(),
+            "/apps/mantisgit/mantisgit".into(),
             Some(linux()),
             Releases::at("v999.0.0"),
         )

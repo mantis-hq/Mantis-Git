@@ -11,19 +11,19 @@ use super::parts::{panel_row, section_label, status_icon};
 use super::{GraphView, OpenWorktreeInTab, SwitchWorktree};
 use crate::icons::Icon;
 use crate::theme::{lane_color, tokens};
-use gitclient_core::history::picks::{Click, Picks, tip_of};
-use gitclient_core::history::refs::RefKind;
-use gitclient_core::history::spotlight::Spotlight;
-use gitclient_core::menu::form::Form;
-use gitclient_core::repo::branch::Dragged;
-use gitclient_core::repo::stash::{self, Picks as StashPicks};
-use gitclient_core::repo::submodule::{self, State as SubmoduleState};
-use gitclient_core::tree::branches::{self, Folder};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::history::picks::{Click, Picks, tip_of};
+use mantisgit_core::history::refs::RefKind;
+use mantisgit_core::history::spotlight::Spotlight;
+use mantisgit_core::menu::form::Form;
+use mantisgit_core::repo::branch::Dragged;
+use mantisgit_core::repo::stash::{self, Picks as StashPicks};
+use mantisgit_core::repo::submodule::{self, State as SubmoduleState};
+use mantisgit_core::tree::branches::{self, Folder};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -402,7 +402,7 @@ impl GraphView {
         section: Section,
         title: &'static str,
         list: RefList,
-        refs: &[gitclient_core::history::refs::NamedRef],
+        refs: &[mantisgit_core::history::refs::NamedRef],
         items: &mut Vec<Item>,
     ) {
         items.push(Item::Header {
@@ -607,7 +607,7 @@ impl GraphView {
             self.sidebar.stash_picks.click(index, stash::Click::Plain);
         }
         let picked = self.sidebar.stash_picks.indexes();
-        let lines = gitclient_core::menu::stash_menu(&self.refs, &picked);
+        let lines = mantisgit_core::menu::stash_menu(&self.refs, &picked);
         self.show_menu(position, lines, cx);
     }
 

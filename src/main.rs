@@ -1,20 +1,20 @@
-use gitclient::theme;
-use gitclient::view::{self, Workspace};
-use gitclient_core::cache;
-use gitclient_core::cache::keys::Caches;
-use gitclient_core::install::menu_entry::Launcher;
-use gitclient_core::install::{Channel, exe_path, update};
-use gitclient_core::settings::state::{self, AppState};
 use gpui_kit::*;
+use mantisgit::theme;
+use mantisgit::view::{self, Workspace};
+use mantisgit_core::cache;
+use mantisgit_core::cache::keys::Caches;
+use mantisgit_core::install::menu_entry::Launcher;
+use mantisgit_core::install::{Channel, exe_path, update};
+use mantisgit_core::settings::state::{self, AppState};
 use std::path::PathBuf;
 
 fn main() {
     // git and ssh run this program to ask a question, with the question as its argument.
     // Pass it on to the window that is open, and quit with the answer.
-    if let Some(status) = gitclient_core::askpass::run_helper() {
+    if let Some(status) = mantisgit_core::askpass::run_helper() {
         std::process::exit(status);
     }
-    let questions = gitclient_core::askpass::serve();
+    let questions = mantisgit_core::askpass::serve();
     // Taken now, before an update can replace the program and change what it is called.
     let exe = exe_path();
     let channel = Channel::detect();
@@ -42,14 +42,14 @@ fn main() {
     };
 
     gpui_kit::application()
-        .with_assets(gitclient::icons::Icons)
+        .with_assets(mantisgit::icons::Icons)
         .run(move |cx| {
             gpui_kit::init(cx);
             theme::init(cx);
             view::show_tooltips_at_once(cx);
             view::bind_keys(cx);
             view::install_caches(caches, cx);
-            let build = update::Build::current(option_env!("GITCLIENT_COMMIT"));
+            let build = update::Build::current(option_env!("MANTISGIT_COMMIT"));
             let updates = view::install_updates(channel, update_track, build, cx);
             if check_updates {
                 updates.update(cx, |updates, cx| updates.check(cx));
@@ -71,8 +71,8 @@ fn main() {
                     ..Default::default()
                 }),
                 window_bounds: Some(WindowBounds::centered(size(px(1200.), px(800.)), cx)),
-                // Wayland matches the window to gitclient.desktop by this, for its icon.
-                app_id: Some("gitclient".into()),
+                // Wayland matches the window to mantisgit.desktop by this, for its icon.
+                app_id: Some("mantisgit".into()),
                 ..Default::default()
             };
             gpui_kit::open_window(options, cx, |window, cx| {

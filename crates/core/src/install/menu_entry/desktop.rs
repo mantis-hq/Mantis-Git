@@ -8,10 +8,10 @@ use super::Status;
 use std::path::{Path, PathBuf};
 
 /// A line in the file that says Mantis Git wrote it, and so may rewrite or remove it.
-pub const MARKER: &str = "X-Gitclient-Managed=true";
-const ENTRY_NAME: &str = "gitclient.desktop";
-const ICON_NAME: &str = "gitclient.svg";
-const ICON: &str = include_str!("gitclient.svg");
+pub const MARKER: &str = "X-Mantisgit-Managed=true";
+const ENTRY_NAME: &str = "mantisgit.desktop";
+const ICON_NAME: &str = "mantisgit.svg";
+const ICON: &str = include_str!("mantisgit.svg");
 
 /// Where the two files go.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -72,7 +72,7 @@ pub fn render(exe: &Path, icon: &Path) -> Result<String, String> {
          Terminal=false\n\
          Categories=Development;RevisionControl;\n\
          Keywords=git;version control;repository;\n\
-         StartupWMClass=gitclient\n\
+         StartupWMClass=mantisgit\n\
          {MARKER}\n",
         exec = exec_value(exe),
     ))
@@ -114,7 +114,7 @@ pub fn status(places: &Places, exe: &Path) -> Status {
 
 fn foreign(places: &Places) -> String {
     format!(
-        "There is already a gitclient.desktop in {} that Mantis Git didn't write, so it was \
+        "There is already a mantisgit.desktop in {} that Mantis Git didn't write, so it was \
          left alone.",
         places.folder().display()
     )
@@ -179,11 +179,11 @@ mod tests {
         };
         assert_eq!(
             at(Some("/home/me"), None).unwrap().entry,
-            Path::new("/home/me/.local/share/applications/gitclient.desktop")
+            Path::new("/home/me/.local/share/applications/mantisgit.desktop")
         );
         assert_eq!(
             at(Some("/home/me"), Some("/data")).unwrap().icon,
-            Path::new("/data/icons/hicolor/scalable/apps/gitclient.svg")
+            Path::new("/data/icons/hicolor/scalable/apps/mantisgit.svg")
         );
         // A relative XDG_DATA_HOME must be ignored, as the spec says.
         assert_eq!(
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn the_exec_line_survives_awkward_paths() {
-        assert_eq!(exec_value("/a/gitclient"), "\"/a/gitclient\"");
+        assert_eq!(exec_value("/a/mantisgit"), "\"/a/mantisgit\"");
         assert_eq!(exec_value("/my apps/git client"), "\"/my apps/git client\"");
         // `$` and `"` are escaped for the quoting, then every backslash again.
         assert_eq!(exec_value("/a$b"), "\"/a\\\\$b\"");
@@ -206,15 +206,15 @@ mod tests {
 
     #[test]
     fn the_launcher_names_the_program_the_icon_and_who_wrote_it() {
-        let text = render(Path::new("/h/gitclient"), Path::new("/i/gitclient.svg")).unwrap();
+        let text = render(Path::new("/h/mantisgit"), Path::new("/i/mantisgit.svg")).unwrap();
         for line in [
             "[Desktop Entry]",
             "Type=Application",
             "Name=Mantis Git",
-            "Exec=\"/h/gitclient\"",
-            "Icon=/i/gitclient.svg",
+            "Exec=\"/h/mantisgit\"",
+            "Icon=/i/mantisgit.svg",
             "Terminal=false",
-            "StartupWMClass=gitclient",
+            "StartupWMClass=mantisgit",
             MARKER,
         ] {
             assert!(text.lines().any(|l| l == line), "missing {line}\n{text}");
@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn adding_writes_both_files_and_removing_takes_both_away() {
         let (_dir, places) = places();
-        let exe = Path::new("/h/gitclient");
+        let exe = Path::new("/h/mantisgit");
         assert_eq!(status(&places, exe), Status::Absent);
 
         add(&places, exe).unwrap();
@@ -239,7 +239,7 @@ mod tests {
         assert!(
             std::fs::read_to_string(&places.entry)
                 .unwrap()
-                .contains("Exec=\"/h/gitclient\"")
+                .contains("Exec=\"/h/mantisgit\"")
         );
 
         remove(&places).unwrap();
@@ -252,8 +252,8 @@ mod tests {
     #[test]
     fn a_launcher_for_another_folder_is_stale_and_adding_again_mends_it() {
         let (_dir, places) = places();
-        add(&places, Path::new("/old/gitclient")).unwrap();
-        let now = Path::new("/new/gitclient");
+        add(&places, Path::new("/old/mantisgit")).unwrap();
+        let now = Path::new("/new/mantisgit");
         assert_eq!(status(&places, now), Status::Present { up_to_date: false });
         add(&places, now).unwrap();
         assert_eq!(status(&places, now), Status::Present { up_to_date: true });
@@ -264,7 +264,7 @@ mod tests {
         let (_dir, places) = places();
         std::fs::create_dir_all(places.folder()).unwrap();
         std::fs::write(&places.entry, "[Desktop Entry]\nName=Mine\n").unwrap();
-        let exe = Path::new("/h/gitclient");
+        let exe = Path::new("/h/mantisgit");
 
         assert_eq!(status(&places, exe), Status::Foreign);
         assert!(add(&places, exe).unwrap_err().contains("left alone"));

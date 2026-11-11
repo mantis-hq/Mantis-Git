@@ -1,6 +1,6 @@
 //! Which forge a repository is on when Mantis Git can't tell, and the choice that says. The
 //! Repository page shows and sets it; it lives in the repository's own git config as
-//! `gitclient.forge`, which is where a name and an email already live.
+//! `mantisgit.forge`, which is where a name and an email already live.
 
 use super::{Forge, Hosting, hosting, origin_first};
 use crate::ops;
@@ -9,7 +9,7 @@ use crate::settings::config::{self, Scope};
 use std::path::Path;
 
 /// The git config key the choice is kept under.
-pub const KEY: &str = "gitclient.forge";
+pub const KEY: &str = "mantisgit.forge";
 
 /// The forge chosen for the repository, if one was.
 pub fn chosen(repo: &Path) -> Option<Forge> {

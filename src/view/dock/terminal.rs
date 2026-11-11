@@ -3,10 +3,10 @@
 use super::selection::{self, Selection};
 use crate::theme::{ansi_color, rgb_color};
 use crate::view::parts::TEXT_BODY;
-use gitclient_core::terminal::{Color, Cursor, Key, Run, Size, Snapshot, Terminal};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::terminal::{Color, Cursor, Key, Run, Size, Snapshot, Terminal};
 use std::ops::Range;
 use std::path::Path;
 use std::time::Duration;

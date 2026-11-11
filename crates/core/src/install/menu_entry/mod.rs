@@ -122,7 +122,7 @@ impl Kind {
             ),
             Status::Foreign => match self {
                 Self::Desktop(places) => format!(
-                    "A gitclient.desktop that Mantis Git didn't write is in {}, so it stays as \
+                    "A mantisgit.desktop that Mantis Git didn't write is in {}, so it stays as \
                      it is.",
                     places.folder().display()
                 ),
@@ -216,26 +216,26 @@ mod tests {
 
     #[test]
     fn the_offer_says_what_will_be_written_and_how_to_undo_it() {
-        let exe = Path::new("/h/gitclient");
+        let exe = Path::new("/h/mantisgit");
         let offer = linux().offer(exe);
         assert_eq!(offer.title, "Add Mantis Git to the application menu");
         assert!(offer.detail.contains("/d/applications"));
         assert!(offer.detail.contains("Settings → App"));
         assert_eq!(offer.button, "Add to menu and start");
 
-        let offer = windows().offer(Path::new("C:/g/gitclient.exe"));
+        let offer = windows().offer(Path::new("C:/g/mantisgit.exe"));
         assert_eq!(offer.title, "Add Mantis Git to the Start menu");
-        assert!(offer.detail.contains("C:/g/gitclient.exe"));
+        assert!(offer.detail.contains("C:/g/mantisgit.exe"));
         assert!(offer.detail.contains("C:/Programs"));
     }
 
     #[test]
     fn the_settings_sentence_says_how_the_launcher_stands() {
-        let exe = Path::new("/h/gitclient");
+        let exe = Path::new("/h/mantisgit");
         let say = |status| linux().sentence(status, exe);
         assert_eq!(
             say(Status::Absent),
-            "Mantis Git isn't in your application menu. It starts from /h/gitclient."
+            "Mantis Git isn't in your application menu. It starts from /h/mantisgit."
         );
         assert!(say(Status::Present { up_to_date: true }).starts_with("Mantis Git is in your"));
         assert!(say(Status::Present { up_to_date: false }).contains("has moved"));
@@ -253,7 +253,7 @@ mod tests {
         let places = desktop::Places::in_data_home(dir.path());
         let kind = Kind::Desktop(places.clone());
         let launcher = Launcher(Kind::Desktop(places.clone()));
-        let (old, new): (PathBuf, PathBuf) = ("/old/gitclient".into(), "/new/gitclient".into());
+        let (old, new): (PathBuf, PathBuf) = ("/old/mantisgit".into(), "/new/mantisgit".into());
 
         // Never added: refreshing doesn't add it.
         assert!(!launcher.refresh(&new).unwrap());

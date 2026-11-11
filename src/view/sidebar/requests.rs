@@ -1,17 +1,17 @@
 //! Pull and merge requests in the sidebar, for a remote on GitHub, GitLab or Gitea. What
-//! they are and how git lists them lives in `gitclient_core::repo::forge`; this only asks
+//! they are and how git lists them lives in `mantisgit_core::repo::forge`; this only asks
 //! when the section is opened and draws the answer.
 
 use super::{ITEM_HEIGHT, Section, State, indent};
 use crate::theme::tokens;
 use crate::view::GraphView;
 use crate::view::parts::{TEXT_CHIP, TEXT_SMALL, panel_row};
-use gitclient_core::menu;
-use gitclient_core::repo::forge::{self, Requests, Site};
-use gitclient_core::repo::remote::Remote;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::menu;
+use mantisgit_core::repo::forge::{self, Requests, Site};
+use mantisgit_core::repo::remote::Remote;
 
 /// How the list of the repository's requests stands.
 pub(in crate::view) enum Load {

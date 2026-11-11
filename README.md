@@ -27,7 +27,7 @@ installed `git`.
 
 Download the archive for your system from the
 [releases](https://github.com/pretext8335/gitclient/releases) page, unpack it and run
-`gitclient`.
+`mantisgit`.
 
 It needs `git` on your `PATH`. Version 2.41 or newer is recommended, as the sidebar's
 branch counts need it.

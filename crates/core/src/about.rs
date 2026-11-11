@@ -72,7 +72,7 @@ impl License {
     pub fn is_own(&self) -> bool {
         self.used_by
             .iter()
-            .any(|name| name.split(' ').next() == Some("gitclient"))
+            .any(|name| name.split(' ').next() == Some("mantisgit"))
     }
 
     /// Whether passing the program on means passing this license's text on with it.
@@ -596,7 +596,7 @@ mod tests {
     }
 
     #[test]
-    fn gitclients_own_license_comes_first_then_the_font() {
+    fn mantisgits_own_license_comes_first_then_the_font() {
         let all = licenses();
         assert!(all[0].is_own());
         assert!(all[0].name.contains("General Public License"));

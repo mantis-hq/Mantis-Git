@@ -47,7 +47,7 @@ impl Ask for Web {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(PATIENCE))
             .http_status_as_error(false)
-            .user_agent("gitclient")
+            .user_agent("mantisgit")
             .build()
             .into();
         let mut response = agent.get(url).call().ok()?;

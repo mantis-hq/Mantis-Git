@@ -242,7 +242,7 @@ fn a_launcher_somebody_else_wrote_is_neither_offered_nor_touched(cx: &mut TestAp
     // A launcher without our marker where ours would go.
     let folder = app.dir.path().join("data").join("applications");
     std::fs::create_dir_all(&folder).unwrap();
-    let theirs = folder.join("gitclient.desktop");
+    let theirs = folder.join("mantisgit.desktop");
     std::fs::write(&theirs, "[Desktop Entry]\nName=Mine\n").unwrap();
 
     app.welcome();
@@ -259,7 +259,7 @@ fn a_launcher_for_a_copy_that_has_moved_is_mended_at_launch_without_the_welcome(
     let mut app = setup(cx);
     AppState::change(&app.state, |state| state.welcome_seen = true).unwrap();
     app.launcher
-        .add(std::path::Path::new("/old/place/gitclient"))
+        .add(std::path::Path::new("/old/place/mantisgit"))
         .unwrap();
     assert_eq!(app.status(), Status::Present { up_to_date: false });
 

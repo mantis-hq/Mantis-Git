@@ -18,21 +18,21 @@ use super::parts::{TEXT_BODY, TEXT_SMALL, TEXT_STATUS};
 use super::repository_name;
 use super::updates::{Updates, shared_updates};
 use crate::theme::{selected_row, tokens};
-use gitclient_core::cache::keys::{Caches, Usage};
-use gitclient_core::install::Channel;
-use gitclient_core::install::menu_entry::{Launcher, Status as LauncherStatus};
-use gitclient_core::settings::config::{self, Kind, Scope, Setting, Sources, Values, Version};
-use gitclient_core::settings::identity::{self, Book, Choice, Identity, Match, Profile, RepoState};
-use gitclient_core::settings::ssh;
-use gitclient_core::settings::state::{
-    self, AppState, CACHE_SIZES_MB, COMMIT_LIMITS, bytes_label, cache_size_label,
-};
-use gitclient_core::text::count;
 use gpui_kit::component::button::*;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::cache::keys::{Caches, Usage};
+use mantisgit_core::install::Channel;
+use mantisgit_core::install::menu_entry::{Launcher, Status as LauncherStatus};
+use mantisgit_core::settings::config::{self, Kind, Scope, Setting, Sources, Values, Version};
+use mantisgit_core::settings::identity::{self, Book, Choice, Identity, Match, Profile, RepoState};
+use mantisgit_core::settings::ssh;
+use mantisgit_core::settings::state::{
+    self, AppState, CACHE_SIZES_MB, COMMIT_LIMITS, bytes_label, cache_size_label,
+};
+use mantisgit_core::text::count;
 use std::path::PathBuf;
 
 const SIDEBAR_WIDTH: Pixels = px(220.);
@@ -94,7 +94,7 @@ fn open_on(repo: Option<PathBuf>, page: Option<Page>, cx: &mut App) {
         }),
         window_bounds: Some(WindowBounds::centered(size(px(1000.), px(720.)), cx)),
         window_min_size: Some(size(px(680.), px(420.))),
-        app_id: Some("gitclient".into()),
+        app_id: Some("mantisgit".into()),
         ..Default::default()
     };
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
@@ -326,7 +326,7 @@ pub struct Settings {
     commit_graph: repository::GraphState,
     writing_graph: bool,
     /// Which forge the open repository is on, once read.
-    forge_choice: Option<gitclient_core::repo::forge::choice::Choice>,
+    forge_choice: Option<mantisgit_core::repo::forge::choice::Choice>,
     /// Which license on the About page is picked, and how its list is scrolled.
     picked_license: Option<usize>,
     licenses_scroll: UniformListScrollHandle,

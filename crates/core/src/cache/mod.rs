@@ -277,9 +277,9 @@ impl<V: Cacheable> Cache<V> {
 }
 
 /// Where the app keeps caches on this system: `$XDG_CACHE_HOME` (or `~/.cache`) on Linux,
-/// `~/Library/Caches` on macOS and `%LOCALAPPDATA%` on Windows, then `gitclient`.
+/// `~/Library/Caches` on macOS and `%LOCALAPPDATA%` on Windows, then `mantisgit`.
 pub fn default_dir() -> Option<PathBuf> {
-    Some(cache_home(|name| std::env::var_os(name))?.join("gitclient"))
+    Some(cache_home(|name| std::env::var_os(name))?.join("mantisgit"))
 }
 
 fn cache_home(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {

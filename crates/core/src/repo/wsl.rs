@@ -47,7 +47,7 @@ fi
 cat > "$f" <<'ASKPASS'
 #!/bin/sh
 p=$(printf '%s' "$1" | tr '\n\t' '  ')
-printf '\037\037GITCLIENT-ASKPASS:%s\t%s\n' "$GITCLIENT_ASKPASS_TOKEN" "$p" >&2
+printf '\037\037MANTISGIT-ASKPASS:%s\t%s\n' "$MANTISGIT_ASKPASS_TOKEN" "$p" >&2
 IFS= read -r reply < "${0%/*}/reply" || exit 1
 case "$reply" in ok:*) printf '%s\n' "${reply#ok:}";; *) exit 1;; esac
 ASKPASS
@@ -62,9 +62,9 @@ exit $s
 "#;
 
 /// What carries the token to the askpass program.
-pub const TOKEN_VAR: &str = "GITCLIENT_ASKPASS_TOKEN";
+pub const TOKEN_VAR: &str = "MANTISGIT_ASKPASS_TOKEN";
 
-const MARKER: &str = "\x1f\x1fGITCLIENT-ASKPASS:";
+const MARKER: &str = "\x1f\x1fMANTISGIT-ASKPASS:";
 
 /// A hard-to-guess token for one command, from the operating system's randomness.
 pub fn new_token() -> String {
@@ -293,11 +293,11 @@ mod tests {
 
     #[test]
     fn the_users_own_wslenv_is_kept() {
-        let ours = "GIT_OPTIONAL_LOCKS:GIT_TERMINAL_PROMPT:GITCLIENT_ASKPASS_TOKEN";
+        let ours = "GIT_OPTIONAL_LOCKS:GIT_TERMINAL_PROMPT:MANTISGIT_ASKPASS_TOKEN";
         assert_eq!(wslenv(None), ours);
         assert_eq!(
             wslenv(Some("FOO/p:GIT_TERMINAL_PROMPT")),
-            "FOO/p:GIT_TERMINAL_PROMPT:GIT_OPTIONAL_LOCKS:GITCLIENT_ASKPASS_TOKEN"
+            "FOO/p:GIT_TERMINAL_PROMPT:GIT_OPTIONAL_LOCKS:MANTISGIT_ASKPASS_TOKEN"
         );
     }
 

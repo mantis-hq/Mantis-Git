@@ -5,7 +5,7 @@
 use super::Status;
 use std::path::{Path, PathBuf};
 
-const SHORTCUT_NAME: &str = "gitclient.lnk";
+const SHORTCUT_NAME: &str = "mantisgit.lnk";
 
 /// Where the shortcut goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,7 +112,7 @@ mod tests {
         let place = Place::from_env(|name| (name == "APPDATA").then(|| PathBuf::from("/a")));
         assert_eq!(
             place.unwrap().shortcut,
-            Path::new("/a/Microsoft/Windows/Start Menu/Programs/gitclient.lnk")
+            Path::new("/a/Microsoft/Windows/Start Menu/Programs/mantisgit.lnk")
         );
         assert!(Place::from_env(|_| None).is_none());
     }
@@ -123,7 +123,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let place = Place::in_programs(&dir.path().join("Programs"));
         // The target has to exist for a shortcut to point at it.
-        let exe = dir.path().join("gitclient.exe");
+        let exe = dir.path().join("mantisgit.exe");
         std::fs::write(&exe, "x").unwrap();
 
         assert_eq!(status(&place, &exe), Status::Absent);

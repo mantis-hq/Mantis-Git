@@ -8,16 +8,16 @@ use crate::view::parts::{
     checkbox, chip, file_path, panel_row, section_label, status_color, working_note,
 };
 use crate::view::{GraphView, Notice};
-use gitclient_core::commit::details::{CommitDetails, FileChange};
-use gitclient_core::menu;
-use gitclient_core::text::count;
-use gitclient_core::tree::{self, FileView, TreeRow};
-use gitclient_core::working::{self, Side};
 use gpui_kit::component::button::*;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::commit::details::{CommitDetails, FileChange};
+use mantisgit_core::menu;
+use mantisgit_core::text::count;
+use mantisgit_core::tree::{self, FileView, TreeRow};
+use mantisgit_core::working::{self, Side};
 use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;

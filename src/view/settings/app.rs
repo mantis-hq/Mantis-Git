@@ -4,11 +4,11 @@
 use super::super::avatars::{Face, disc};
 use super::*;
 use crate::theme::lane_color;
-use gitclient_core::history::avatar::{self, Style as AvatarStyle};
-use gitclient_core::history::lanes::LaneColor;
-use gitclient_core::install::exe_path;
-use gitclient_core::install::update::{self, Track};
-use gitclient_core::repo::auto_fetch;
+use mantisgit_core::history::avatar::{self, Style as AvatarStyle};
+use mantisgit_core::history::lanes::LaneColor;
+use mantisgit_core::install::exe_path;
+use mantisgit_core::install::update::{self, Track};
+use mantisgit_core::repo::auto_fetch;
 
 impl Settings {
     /// Reads how the launcher stands, which is what the page shows. Settings reads the disk

@@ -77,7 +77,7 @@ pub struct Build {
 }
 
 impl Build {
-    /// This app, built from `commit` (the build's `GITCLIENT_COMMIT`, if it had one).
+    /// This app, built from `commit` (the build's `MANTISGIT_COMMIT`, if it had one).
     pub fn current(commit: Option<&str>) -> Self {
         Self {
             version: Version::current(),
@@ -127,9 +127,9 @@ impl Target {
     /// The build for the system named as `std::env::consts` names them.
     pub fn of(os: &str, arch: &str) -> Option<Self> {
         let (triple, zip, program) = match (os, arch) {
-            ("linux", "x86_64") => ("x86_64-unknown-linux-gnu", false, "gitclient"),
-            ("macos", "aarch64") => ("aarch64-apple-darwin", false, "gitclient"),
-            ("windows", "x86_64") => ("x86_64-pc-windows-msvc", true, "gitclient.exe"),
+            ("linux", "x86_64") => ("x86_64-unknown-linux-gnu", false, "mantisgit"),
+            ("macos", "aarch64") => ("aarch64-apple-darwin", false, "mantisgit"),
+            ("windows", "x86_64") => ("x86_64-pc-windows-msvc", true, "mantisgit.exe"),
             _ => return None,
         };
         Some(Self {
@@ -139,10 +139,10 @@ impl Target {
         })
     }
 
-    /// `gitclient-v0.2.0-x86_64-unknown-linux-gnu.tar.gz`
+    /// `mantisgit-v0.2.0-x86_64-unknown-linux-gnu.tar.gz`
     pub fn archive_name(&self, tag: &str) -> String {
         let extension = if self.zip { "zip" } else { "tar.gz" };
-        format!("gitclient-{tag}-{}.{extension}", self.triple)
+        format!("mantisgit-{tag}-{}.{extension}", self.triple)
     }
 }
 
@@ -201,7 +201,7 @@ impl Http for Web {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(600)))
             .timeout_connect(Some(Duration::from_secs(15)))
-            .user_agent(format!("gitclient/{}", Version::current()))
+            .user_agent(format!("mantisgit/{}", Version::current()))
             .build()
             .into();
         let mut response = agent
@@ -397,7 +397,7 @@ pub fn install(http: &dyn Http, available: &Available, exe: &Path) -> Result<(),
     // Staged beside the program, so the swap is a rename on one disk. If the folder can't be
     // written to, an update can't be installed there, which is better said before downloading.
     let staging = tempfile::Builder::new()
-        .prefix(".gitclient-update-")
+        .prefix(".mantisgit-update-")
         .tempdir_in(folder)
         .map_err(|error| {
             format!(

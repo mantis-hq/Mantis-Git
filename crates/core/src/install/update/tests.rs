@@ -1,7 +1,7 @@
 use super::*;
 
 /// The tests run against a Gitea-shaped host, whose URLs are easy to tell apart.
-const HOST: Host = Host::gitea("https://git.example.com", "example/gitclient");
+const HOST: Host = Host::gitea("https://git.example.com", "example/mantisgit");
 use std::collections::HashMap;
 use std::io::Cursor;
 
@@ -85,7 +85,7 @@ const COMMIT_A: &str = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
 const COMMIT_B: &str = "ffffffffffffffffffffffffffffffffffffffff";
 
 fn download(name: &str) -> String {
-    format!("https://git.example.com/example/gitclient/releases/download/v0.2.0/{name}")
+    format!("https://git.example.com/example/mantisgit/releases/download/v0.2.0/{name}")
 }
 
 fn release_json(target: Target, tag: &str) -> String {
@@ -147,7 +147,7 @@ fn release(target: Target, archive: &[u8], sums: Option<String>) -> (Available, 
 /// A folder holding an old program, which an update replaces.
 fn old_program() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let exe = dir.path().join("gitclient");
+    let exe = dir.path().join("mantisgit");
     std::fs::write(&exe, "old").unwrap();
     (dir, exe)
 }
@@ -180,17 +180,17 @@ fn versions_read_with_or_without_a_v_and_compare_by_number() {
 fn each_system_has_the_archive_the_release_workflow_names() {
     assert_eq!(
         linux().archive_name("v0.2.0"),
-        "gitclient-v0.2.0-x86_64-unknown-linux-gnu.tar.gz"
+        "mantisgit-v0.2.0-x86_64-unknown-linux-gnu.tar.gz"
     );
     assert_eq!(
         windows().archive_name("v0.2.0"),
-        "gitclient-v0.2.0-x86_64-pc-windows-msvc.zip"
+        "mantisgit-v0.2.0-x86_64-pc-windows-msvc.zip"
     );
     assert_eq!(
         Target::of("macos", "aarch64")
             .unwrap()
             .archive_name("v1.0.0"),
-        "gitclient-v1.0.0-aarch64-apple-darwin.tar.gz"
+        "mantisgit-v1.0.0-aarch64-apple-darwin.tar.gz"
     );
     assert_eq!(Target::of("linux", "riscv64"), None);
 }
@@ -202,16 +202,16 @@ fn a_newer_release_is_found_with_its_archive_and_checksums() {
     assert_eq!(found.tag, "v0.2.0");
     assert_eq!(
         found.archive.name,
-        "gitclient-v0.2.0-x86_64-unknown-linux-gnu.tar.gz"
+        "mantisgit-v0.2.0-x86_64-unknown-linux-gnu.tar.gz"
     );
     assert_eq!(found.checksums.name, "SHA256SUMS.txt");
     assert_eq!(
         found.page,
-        "git.example.com/example/gitclient/releases/tag/v0.2.0"
+        "git.example.com/example/mantisgit/releases/tag/v0.2.0"
     );
     assert_eq!(
         found.back,
-        "To go back, download 0.1.0 from git.example.com/example/gitclient/releases/tag/v0.1.0."
+        "To go back, download 0.1.0 from git.example.com/example/mantisgit/releases/tag/v0.1.0."
     );
 }
 
@@ -269,7 +269,7 @@ fn a_nightly_built_from_another_commit_is_offered_and_the_same_one_is_not() {
     assert_eq!(found.tag, "nightly");
     assert_eq!(
         found.archive.name,
-        "gitclient-nightly-x86_64-unknown-linux-gnu.tar.gz"
+        "mantisgit-nightly-x86_64-unknown-linux-gnu.tar.gz"
     );
     assert_eq!(ask(Some(COMMIT_A)), Ok(None), "this is that build");
     let upper = COMMIT_A.to_uppercase();
@@ -280,7 +280,7 @@ fn a_nightly_built_from_another_commit_is_offered_and_the_same_one_is_not() {
 
 #[test]
 fn a_nightly_installs_like_any_release() {
-    let archive = tar_gz(&[("gitclient", b"nightly program")]);
+    let archive = tar_gz(&[("mantisgit", b"nightly program")]);
     let name = linux().archive_name("nightly");
     let http = Fake::default()
         .with(&HOST.tag_url("nightly"), nightly_json(COMMIT_A, linux()))
@@ -388,7 +388,7 @@ fn a_release_without_this_systems_build_says_so_and_offers_nothing() {
         {"name":"SHA256SUMS.txt","browser_download_url":"https://git.example.com/x/SHA256SUMS.txt"}]}"#;
     let error = read_release(json.as_bytes(), v("0.1.0"), linux()).unwrap_err();
     assert!(
-        error.contains("no gitclient-v0.2.0-x86_64-unknown-linux-gnu.tar.gz"),
+        error.contains("no mantisgit-v0.2.0-x86_64-unknown-linux-gnu.tar.gz"),
         "{error}"
     );
 
@@ -433,17 +433,17 @@ fn only_https_downloads_from_the_host_are_followed() {
 
 #[test]
 fn checksums_are_read_from_sha256sum_output() {
-    let sums = "AAA111  gitclient-a.tar.gz\nbbb222 *gitclient-b.zip\n\nnot a line\n";
-    assert_eq!(checksum_for(sums, "gitclient-a.tar.gz").unwrap(), "aaa111");
-    assert_eq!(checksum_for(sums, "gitclient-b.zip").unwrap(), "bbb222");
-    assert!(checksum_for(sums, "gitclient-c.zip").is_err());
+    let sums = "AAA111  mantisgit-a.tar.gz\nbbb222 *mantisgit-b.zip\n\nnot a line\n";
+    assert_eq!(checksum_for(sums, "mantisgit-a.tar.gz").unwrap(), "aaa111");
+    assert_eq!(checksum_for(sums, "mantisgit-b.zip").unwrap(), "bbb222");
+    assert!(checksum_for(sums, "mantisgit-c.zip").is_err());
     // A name that only ends the same way is not a match.
-    assert!(checksum_for("abc  xgitclient-a.tar.gz\n", "gitclient-a.tar.gz").is_err());
+    assert!(checksum_for("abc  xmantisgit-a.tar.gz\n", "mantisgit-a.tar.gz").is_err());
 }
 
 #[test]
 fn an_update_replaces_the_program_from_a_tar_gz_and_leaves_nothing_behind() {
-    let archive = tar_gz(&[("README", b"hi"), ("./gitclient", b"new program")]);
+    let archive = tar_gz(&[("README", b"hi"), ("./mantisgit", b"new program")]);
     let (found, http) = release(linux(), &archive, None);
     let (dir, exe) = old_program();
 
@@ -451,7 +451,7 @@ fn an_update_replaces_the_program_from_a_tar_gz_and_leaves_nothing_behind() {
 
     assert_eq!(std::fs::read(&exe).unwrap(), b"new program");
     // The staging folder and the download are gone.
-    assert_eq!(names_in(dir.path()), ["gitclient"]);
+    assert_eq!(names_in(dir.path()), ["mantisgit"]);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -462,21 +462,21 @@ fn an_update_replaces_the_program_from_a_tar_gz_and_leaves_nothing_behind() {
 
 #[test]
 fn an_update_replaces_the_program_from_a_zip() {
-    let archive = zipped(&[("LICENSE", b"mit"), ("gitclient.exe", b"new exe")]);
+    let archive = zipped(&[("LICENSE", b"mit"), ("mantisgit.exe", b"new exe")]);
     let (found, http) = release(windows(), &archive, None);
     let dir = tempfile::tempdir().unwrap();
-    let exe = dir.path().join("gitclient.exe");
+    let exe = dir.path().join("mantisgit.exe");
     std::fs::write(&exe, "old").unwrap();
 
     install(&http, &found, &exe).unwrap();
 
     assert_eq!(std::fs::read(&exe).unwrap(), b"new exe");
-    assert_eq!(names_in(dir.path()), ["gitclient.exe"]);
+    assert_eq!(names_in(dir.path()), ["mantisgit.exe"]);
 }
 
 #[test]
 fn a_download_that_does_not_match_its_checksum_is_never_installed() {
-    let archive = tar_gz(&[("gitclient", b"tampered")]);
+    let archive = tar_gz(&[("mantisgit", b"tampered")]);
     let name = linux().archive_name("v0.2.0");
     let wrong = format!("{}  {name}\n", sum_of(b"something else"));
     let (found, http) = release(linux(), &archive, Some(wrong));
@@ -486,12 +486,12 @@ fn a_download_that_does_not_match_its_checksum_is_never_installed() {
 
     assert!(error.contains("doesn't match its checksum"), "{error}");
     assert_eq!(std::fs::read(&exe).unwrap(), b"old");
-    assert_eq!(names_in(dir.path()), ["gitclient"]);
+    assert_eq!(names_in(dir.path()), ["mantisgit"]);
 }
 
 #[test]
 fn a_release_without_a_checksum_for_the_archive_is_never_installed() {
-    let archive = tar_gz(&[("gitclient", b"new")]);
+    let archive = tar_gz(&[("mantisgit", b"new")]);
     let (found, http) = release(linux(), &archive, Some("abc  other.tar.gz\n".to_owned()));
     let (_dir, exe) = old_program();
 
@@ -509,14 +509,14 @@ fn an_archive_without_the_program_leaves_the_old_one_in_place() {
 
     let error = install(&http, &found, &exe).unwrap_err();
 
-    assert!(error.contains("no gitclient inside"), "{error}");
+    assert!(error.contains("no mantisgit inside"), "{error}");
     assert_eq!(std::fs::read(&exe).unwrap(), b"old");
-    assert_eq!(names_in(dir.path()), ["gitclient"]);
+    assert_eq!(names_in(dir.path()), ["mantisgit"]);
 }
 
 #[test]
 fn a_failed_download_leaves_the_old_one_in_place() {
-    let archive = tar_gz(&[("gitclient", b"new")]);
+    let archive = tar_gz(&[("mantisgit", b"new")]);
     let (found, _) = release(linux(), &archive, None);
     let (dir, exe) = old_program();
 
@@ -524,20 +524,20 @@ fn a_failed_download_leaves_the_old_one_in_place() {
 
     assert!(error.contains("no answer"), "{error}");
     assert_eq!(std::fs::read(&exe).unwrap(), b"old");
-    assert_eq!(names_in(dir.path()), ["gitclient"]);
+    assert_eq!(names_in(dir.path()), ["mantisgit"]);
 }
 
 #[test]
 fn a_folder_that_cannot_be_written_to_says_where_to_download_instead() {
-    let archive = tar_gz(&[("gitclient", b"new")]);
+    let archive = tar_gz(&[("mantisgit", b"new")]);
     let (found, http) = release(linux(), &archive, None);
-    let missing = Path::new("/nonexistent-gitclient-folder/gitclient");
+    let missing = Path::new("/nonexistent-mantisgit-folder/mantisgit");
 
     let error = install(&http, &found, missing).unwrap_err();
 
     assert!(error.contains("can't update itself"), "{error}");
     assert!(
-        error.contains("git.example.com/example/gitclient/releases/tag/v0.2.0"),
+        error.contains("git.example.com/example/mantisgit/releases/tag/v0.2.0"),
         "{error}"
     );
 }
@@ -545,36 +545,36 @@ fn a_folder_that_cannot_be_written_to_says_where_to_download_instead() {
 #[test]
 fn swapping_on_unix_renames_over_the_program() {
     let dir = tempfile::tempdir().unwrap();
-    let (exe, new) = (dir.path().join("gitclient"), dir.path().join("next"));
+    let (exe, new) = (dir.path().join("mantisgit"), dir.path().join("next"));
     std::fs::write(&exe, "old").unwrap();
     std::fs::write(&new, "new").unwrap();
 
     swap(&new, &exe, false).unwrap();
 
     assert_eq!(std::fs::read(&exe).unwrap(), b"new");
-    assert_eq!(names_in(dir.path()), ["gitclient"]);
+    assert_eq!(names_in(dir.path()), ["mantisgit"]);
 }
 
 #[test]
 fn swapping_on_windows_steps_the_old_program_aside_and_the_next_start_removes_it() {
     let dir = tempfile::tempdir().unwrap();
-    let (exe, new) = (dir.path().join("gitclient.exe"), dir.path().join("next"));
+    let (exe, new) = (dir.path().join("mantisgit.exe"), dir.path().join("next"));
     std::fs::write(&exe, "old").unwrap();
     std::fs::write(&new, "new").unwrap();
     // A leftover from an earlier update must not stand in the way.
-    std::fs::write(dir.path().join("gitclient.old"), "older").unwrap();
+    std::fs::write(dir.path().join("mantisgit.old"), "older").unwrap();
 
     swap(&new, &exe, true).unwrap();
 
     assert_eq!(std::fs::read(&exe).unwrap(), b"new");
     assert_eq!(std::fs::read(old_copy(&exe)).unwrap(), b"old");
-    assert_eq!(old_copy(&exe), dir.path().join("gitclient.old"));
+    assert_eq!(old_copy(&exe), dir.path().join("mantisgit.old"));
 }
 
 #[test]
 fn a_swap_that_fails_halfway_puts_the_old_program_back() {
     let dir = tempfile::tempdir().unwrap();
-    let exe = dir.path().join("gitclient.exe");
+    let exe = dir.path().join("mantisgit.exe");
     std::fs::write(&exe, "old").unwrap();
 
     // The new file isn't there, so the second step fails.
@@ -616,7 +616,7 @@ fn the_band_offers_the_next_step_and_stays_quiet_otherwise() {
     assert!(band.message.starts_with("Mantis Git 0.2.0 is installed"));
     // It says how to undo the step.
     assert!(band.message.contains(
-        "To go back, download 0.1.0 from git.example.com/example/gitclient/releases/tag/v0.1.0."
+        "To go back, download 0.1.0 from git.example.com/example/mantisgit/releases/tag/v0.1.0."
     ));
     assert_eq!(band.action.as_deref(), Some("Restart now"));
 
@@ -681,7 +681,7 @@ fn the_settings_sentence_and_button_follow_the_status() {
 }
 
 /// The real network, which the tests above stand in for. Run with
-/// `cargo test -p gitclient-core -- --ignored web_`.
+/// `cargo test -p mantisgit-core -- --ignored web_`.
 #[test]
 #[ignore = "needs the network"]
 fn web_reads_a_real_release_and_stops_a_body_that_is_too_long() {

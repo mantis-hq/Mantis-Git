@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 /// The file's name inside the app's config folder.
 const FILE_NAME: &str = "state";
-const FOLDER_NAME: &str = "gitclient";
+const FOLDER_NAME: &str = "mantisgit";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppState {
@@ -728,7 +728,7 @@ mod tests {
         assert_eq!(config_home(env(&[])), None);
         assert_eq!(
             file_in("/h/.config".into()),
-            Some("/h/.config/gitclient/state".into())
+            Some("/h/.config/mantisgit/state".into())
         );
     }
 }

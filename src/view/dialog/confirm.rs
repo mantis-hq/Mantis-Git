@@ -3,10 +3,10 @@
 
 use super::{Dialog, Frame};
 use crate::view::GraphView;
-use gitclient_core::menu::command::Weight;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::menu::command::Weight;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 

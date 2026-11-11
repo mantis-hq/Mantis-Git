@@ -13,14 +13,14 @@ use super::{Dialog, backdrop};
 use crate::theme::{lane_color, selected_row};
 use crate::view::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL, TEXT_STATUS, TEXT_TITLE, checkbox};
 use crate::view::{GraphView, Notice};
-use gitclient_core::history::lanes::LaneColor;
-use gitclient_core::install::exe_path;
-use gitclient_core::install::menu_entry::{Launcher, Offer, Status};
-use gitclient_core::settings::state::AppState;
 use gpui_kit::component::button::*;
 use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use mantisgit_core::history::lanes::LaneColor;
+use mantisgit_core::install::exe_path;
+use mantisgit_core::install::menu_entry::{Launcher, Offer, Status};
+use mantisgit_core::settings::state::AppState;
 use std::path::Path;
 
 const WIDTH: Pixels = px(640.);
