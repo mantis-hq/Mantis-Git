@@ -173,14 +173,19 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     with a 20 px swatch, its name and what it is for, a hex input and a quiet "Reset" while
     it is changed. The "Theme" row always offers the built-in theme, "Catppuccin Mocha" for
     dark and "Catppuccin Latte" for light, as a chip ticked while nothing is changed; choosing
-    it puts every colour of that appearance back. Once a colour is changed a "Custom" chip is
-    ticked beside it. A typed colour applies in every window on Enter or when the input is left,
-    and one that isn't six hex digits is said in the header and put back. The import rows
+    it puts every colour of that appearance back. Then come the theme files of that appearance
+    (below), and once a colour is changed on the page a "Custom" chip is ticked. A typed
+    colour applies in every window on Enter or when the input is left, and one that isn't six
+    hex digits is said in the header and put back. Changing a colour while a theme file is
+    picked starts from the file's colours and leaves the file alone, so the theme becomes
+    "Custom" and nothing the user wrote is overwritten. The import rows
     are "Import KDE colours" (`kdeglobals`), "Import qt6ct palette" and "Import qt5ct palette"
     (the palette the tool points at), and "Import GTK 4 theme" and "Import GTK 3 theme" (the
     `@define-color` names in `gtk.css`, with the `@import`ed files beside it, else the theme
     `settings.ini` names). A row is drawn only for a theme that exists on this system, so
-    none is, and no import card, on Windows, which has none to read. Only colours are read:
+    none is, and no import card, on Windows, which has none to read. An import is written as
+    a theme file (`kde.theme`, `gtk-4.theme`, and so on, replacing the last import of the
+    same kind) and picked, so what it took can be seen and edited. Only colours are read:
     no fonts, sizes, icons or other CSS, and only the theme of the appearance the scheme's
     background suits is replaced. Base, Mantle, Text, the accent (Blue) and
     the text on it (Crust) come from the scheme and the greys between are mixed from Base
@@ -189,6 +194,30 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     swapping each Catppuccin value in the bundled theme file, alpha kept
     (`Overrides::recolor_themes`), so a colour the file uses that no token covers is a bug a
     test catches.
+
+    **Theme files** let a theme live in the user's own folder, for dotfiles and sharing. The
+    folder is `themes` beside the `state` file, and each `*.theme` file in it is a theme named
+    for the file (`mantisgit_core::settings::themes`). A file holds comments (`#`), an
+    `appearance = dark` or `light` line (taken from the Base colour when left out) and one
+    `Name = #rrggbb` line for each colour it sets, using the design's own names in any case
+    and spacing (`Surface 0`, `surface0`), with a note allowed after the value. A colour left
+    out stays Catppuccin's. Nothing else can be set from a file: no fonts, sizes or settings.
+    A file is read whole or not at all. A bad line (an unknown name, a value that isn't six
+    hex digits, an unknown appearance) leaves the theme that was showing, and the Theme row
+    says in Peach which file and which line ("night.theme, line 7: ..."); a file with no
+    colours, one named like a built-in theme, and one for the other appearance are said the
+    same way. The picked file of each appearance is kept by name as `theme_dark_file` and
+    `theme_light_file` in the `state` file and wins over the colours changed on the page. If
+    it is gone the built-in theme shows and the row says so. The folder is read again every
+    2 seconds by the app, and the Theme page does so too while it is showing and whenever its
+    window is used again, so saving a file in an editor shows in every window with no action.
+    The "Theme files" card has "Save these colours as a theme", a name input and "Save"
+    (Enter too), which writes every colour on show with a comment saying what each is for,
+    so the first file is also the example of the format, refuses a name that is taken or
+    can't be a file's name or is a built-in's, and picks the new file; and "Themes folder",
+    which says where it is and has "Open themes folder" (made first, shown in the system's
+    file manager). The card is not drawn where the app has no folder to keep settings in.
+
   - **Identities** are named profiles (a name, email, signing key and an optional SSH key)
     that are reused
     wherever they are picked. The first card says who the open repository commits as and

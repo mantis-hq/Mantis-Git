@@ -314,6 +314,18 @@ pub struct Settings {
     color_fields: Vec<appearance::ColorField>,
     /// The desktop themes this system has, which the Theme page offers to import.
     theme_sources: Vec<mantisgit_core::settings::theme::Source>,
+    /// Where theme files are kept, which is only the real folder in the real window.
+    themes_dir: Option<PathBuf>,
+    /// The theme in force for dark and for light, as the files and settings say.
+    shown: (
+        mantisgit_core::settings::theme::Overrides,
+        mantisgit_core::settings::theme::Overrides,
+    ),
+    theme_entries: Vec<mantisgit_core::settings::themes::Entry>,
+    /// What is wrong with a theme file, or with the one picked, said on the page.
+    theme_notes: Vec<String>,
+    new_theme_name: Entity<InputState>,
+    _theme_watch: (Subscription, Task<()>),
     /// The app's own preferences, and the file that keeps them. There is no file when
     /// the window edits a test config, or when the system has no home folder.
     app: AppState,
@@ -389,6 +401,7 @@ impl Settings {
             }
         }
 
+        let (new_theme_name, theme_name_events) = appearance::name_input(window, cx);
         let new_name = field("co", "", window, cx);
         let new_command = field("checkout", "", window, cx);
         let new_label = field("Work", "", window, cx);
@@ -396,7 +409,7 @@ impl Settings {
         let new_identity_email = field("Email", "", window, cx);
         let new_identity_key = field("Signing key (optional)", "", window, cx);
         let new_identity_ssh = field("~/.ssh/id_work", "", window, cx);
-        let mut new_inputs = Vec::new();
+        let mut new_inputs = vec![theme_name_events];
         for input in [&new_name, &new_command] {
             new_inputs.push(cx.subscribe_in(
                 input,
@@ -430,6 +443,10 @@ impl Settings {
 
         let state_file = matches!(base, Scope::Global)
             .then(state::default_file)
+            .flatten();
+        let themes_dir = state_file
+            .is_some()
+            .then(mantisgit_core::settings::themes::folder)
             .flatten();
         let channel = Channel::detect();
         // Like the state file, the launcher is the real one only in the real window.
@@ -465,6 +482,12 @@ impl Settings {
             new_identity_ssh,
             editing_dark: cx.theme().is_dark(),
             color_fields: appearance::color_fields(window, cx),
+            themes_dir,
+            shown: Default::default(),
+            theme_entries: Vec::new(),
+            theme_notes: Vec::new(),
+            new_theme_name,
+            _theme_watch: appearance::watch(window, cx),
             theme_sources: mantisgit_core::settings::theme::Locations::this_system()
                 .map(|places| places.found())
                 .unwrap_or_default(),
@@ -490,6 +513,7 @@ impl Settings {
             _updates: watch_updates,
         };
         this.load_launcher();
+        this.refresh_themes(window, cx);
         this.show_colors(window, cx);
         this.load(window, cx);
         this.load_suggestions(window, cx);

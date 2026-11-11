@@ -286,10 +286,12 @@ impl Imported {
     /// What the header says once these colours are in.
     pub fn saved_message(&self) -> String {
         format!(
-            "Took {} from the {}, for the {} appearance. Catppuccin is one click away.",
+            "Took {} from the {} into {}.theme, for the {} appearance. {} is one click away.",
             crate::text::count(self.overrides.len(), "colour"),
             self.source.name(),
-            appearance_name(self.dark)
+            self.source.file_stem(),
+            appearance_name(self.dark),
+            builtin_name(self.dark)
         )
     }
 }
@@ -374,7 +376,7 @@ fn mix(from: u32, to: u32, amount: f32) -> u32 {
     part(0) << 16 | part(1) << 8 | part(2)
 }
 
-fn luminance(color: u32) -> f32 {
+pub(super) fn luminance(color: u32) -> f32 {
     let [r, g, b] = channels(color);
     (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.
 }
@@ -571,6 +573,17 @@ impl Source {
             Source::Qt5ct => "qt5ct palette",
             Source::Gtk4 => "GTK 4 theme",
             Source::Gtk3 => "GTK 3 theme",
+        }
+    }
+
+    /// The name of the theme file an import of it is kept in.
+    pub fn file_stem(self) -> &'static str {
+        match self {
+            Source::Kde => "kde",
+            Source::Qt6ct => "qt6ct",
+            Source::Qt5ct => "qt5ct",
+            Source::Gtk4 => "gtk-4",
+            Source::Gtk3 => "gtk-3",
         }
     }
 

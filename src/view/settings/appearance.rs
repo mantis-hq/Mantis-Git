@@ -1,9 +1,12 @@
-//! The Theme page: change the colours of the design, or take them from the Qt theme the
-//! desktop uses. Dark and light are two themes, each a list of changes on top of
-//! Catppuccin, and each colour is a hex input.
+//! The Theme page: pick a theme, change the colours of the design, take them from the
+//! desktop, and keep themes as files in a folder. Dark and light are two themes, each
+//! either a file picked from the folder or a list of changes on top of Catppuccin, and each
+//! colour is a hex input.
 
 use super::*;
 use mantisgit_core::settings::theme::{self as palette, Overrides, Slot};
+use mantisgit_core::settings::themes;
+use std::time::Duration;
 
 /// One colour's input, which saves when Enter is pressed or the input is left.
 pub(super) struct ColorField {
@@ -11,6 +14,9 @@ pub(super) struct ColorField {
     pub(super) input: Entity<InputState>,
     _events: Subscription,
 }
+
+/// How often the page looks at the themes folder again while it is showing.
+const LOOK_EVERY: Duration = Duration::from_millis(1500);
 
 const SURFACES: [Slot; 10] = [
     Slot::Base,
@@ -63,13 +69,70 @@ pub(super) fn color_fields(window: &mut Window, cx: &mut Context<Settings>) -> V
         .collect()
 }
 
+/// The name input of "Save these colours as a theme", which saves on Enter.
+pub(super) fn name_input(
+    window: &mut Window,
+    cx: &mut Context<Settings>,
+) -> (Entity<InputState>, Subscription) {
+    let input = field("night", "", window, cx);
+    let events = cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
+        if matches!(event, InputEvent::PressEnter { .. }) {
+            this.save_theme_file(window, cx);
+        }
+        cx.notify();
+    });
+    (input, events)
+}
+
+/// Looks at the themes folder again whenever the window is used again, and every moment
+/// while the page shows, so a theme saved in an editor is seen without any action.
+pub(super) fn watch(window: &mut Window, cx: &mut Context<Settings>) -> (Subscription, Task<()>) {
+    let activation = cx.observe_window_activation(window, |this, window, cx| {
+        if window.is_window_active() {
+            this.refresh_themes(window, cx);
+        }
+    });
+    let looking = cx.spawn_in(window, async move |this, cx| {
+        loop {
+            cx.background_executor().timer(LOOK_EVERY).await;
+            let seen = this.update_in(cx, |this, window, cx| {
+                if this.page == Page::Theme {
+                    this.refresh_themes(window, cx);
+                }
+            });
+            if seen.is_err() {
+                break;
+            }
+        }
+    });
+    (activation, looking)
+}
+
+/// The theme file picked for one appearance, and the colours changed on the page.
+fn target(state: &mut AppState, dark: bool) -> (&mut Overrides, &mut Option<String>) {
+    if dark {
+        (&mut state.theme_dark, &mut state.theme_dark_file)
+    } else {
+        (&mut state.theme_light, &mut state.theme_light_file)
+    }
+}
+
 impl Settings {
-    /// The changes to the appearance being edited.
+    /// What is in force for the appearance being edited.
     fn theme_edited(&self) -> &Overrides {
         if self.editing_dark {
-            &self.app.theme_dark
+            &self.shown.0
         } else {
-            &self.app.theme_light
+            &self.shown.1
+        }
+    }
+
+    /// The theme file picked for the appearance being edited.
+    pub(super) fn picked_file(&self) -> Option<&str> {
+        if self.editing_dark {
+            self.app.theme_dark_file.as_deref()
+        } else {
+            self.app.theme_light_file.as_deref()
         }
     }
 
@@ -85,10 +148,52 @@ impl Settings {
         }
     }
 
-    /// Saves a change to the theme being edited and puts it on screen at once.
+    /// Reads the themes folder again and puts in force what the settings and the files say.
+    /// A file that can't be read leaves the theme that was showing and is said on the page.
+    pub(super) fn refresh_themes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let folder = self.themes_dir.as_deref();
+        self.theme_entries = folder.map(themes::list).unwrap_or_default();
+        let (dark, dark_note) = themes::in_force(
+            folder,
+            self.app.theme_dark_file.as_deref(),
+            &self.app.theme_dark,
+            true,
+            &self.shown.0,
+        );
+        let (light, light_note) = themes::in_force(
+            folder,
+            self.app.theme_light_file.as_deref(),
+            &self.app.theme_light,
+            false,
+            &self.shown.1,
+        );
+        let mut notes: Vec<String> = dark_note.into_iter().chain(light_note).collect();
+        for entry in &self.theme_entries {
+            if let Err(problem) = &entry.theme
+                && !notes.contains(problem)
+            {
+                notes.push(problem.clone());
+            }
+        }
+        self.theme_notes = notes;
+        // Only a window that keeps settings puts colours in force, as in `change_theme`.
+        if self.state_file.is_some() {
+            crate::theme::sync(&self.app, folder, cx);
+        }
+        let typing = self.dirty.iter().any(|id| id.starts_with("color:"));
+        if dark != self.shown.0 || light != self.shown.1 {
+            self.shown = (dark, light);
+            if !typing {
+                self.show_colors(window, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Saves a change to the settings and puts it on screen at once.
     fn change_theme(
         &mut self,
-        change: impl FnOnce(&mut Overrides),
+        change: impl FnOnce(&mut AppState),
         said: String,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -96,24 +201,39 @@ impl Settings {
         let Some(file) = &self.state_file else {
             return;
         };
-        let dark = self.editing_dark;
-        let result = AppState::change(file, |state| {
-            change(if dark {
-                &mut state.theme_dark
-            } else {
-                &mut state.theme_light
-            })
-        });
-        match result {
+        match AppState::change(file, change) {
             Ok(state) => {
-                crate::theme::apply(state.theme_dark.clone(), state.theme_light.clone(), cx);
                 self.app = state;
                 self.feedback = Feedback::Saved(said);
             }
             Err(error) => self.feedback = Feedback::Failed(error),
         }
+        self.refresh_themes(window, cx);
         self.show_colors(window, cx);
-        cx.notify();
+    }
+
+    /// Changes one colour. When a theme file is picked the change starts from its colours
+    /// and leaves the file alone, so the theme becomes "Custom" and nothing is overwritten.
+    fn change_colors(
+        &mut self,
+        change: impl FnOnce(&mut Overrides) + 'static,
+        said: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (dark, shown) = (self.editing_dark, self.theme_edited().clone());
+        self.change_theme(
+            move |state| {
+                let (custom, file) = target(state, dark);
+                if file.take().is_some() {
+                    *custom = shown;
+                }
+                change(custom);
+            },
+            said,
+            window,
+            cx,
+        );
     }
 
     fn commit_color(&mut self, slot: Slot, window: &mut Window, cx: &mut Context<Self>) {
@@ -126,7 +246,7 @@ impl Settings {
             Ok(color) if self.theme_edited().color(slot, dark) == color => {}
             Ok(color) => {
                 let said = palette::changed_message(slot, Some(color), dark);
-                self.change_theme(|theme| theme.set(slot, color, dark), said, window, cx);
+                self.change_colors(move |theme| theme.set(slot, color, dark), said, window, cx);
             }
             Err(error) => {
                 self.feedback = Feedback::Failed(error);
@@ -138,12 +258,78 @@ impl Settings {
 
     fn reset_color(&mut self, slot: Slot, window: &mut Window, cx: &mut Context<Self>) {
         let said = palette::changed_message(slot, None, self.editing_dark);
-        self.change_theme(|theme| theme.clear(slot), said, window, cx);
+        self.change_colors(move |theme| theme.clear(slot), said, window, cx);
     }
 
+    /// Puts the built-in theme of the appearance being edited in force.
     pub(super) fn reset_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let said = palette::reset_message(self.editing_dark);
-        self.change_theme(|theme| *theme = Overrides::default(), said, window, cx);
+        let (dark, said) = (self.editing_dark, palette::reset_message(self.editing_dark));
+        self.change_theme(
+            move |state| {
+                let (custom, file) = target(state, dark);
+                *custom = Overrides::default();
+                *file = None;
+            },
+            said,
+            window,
+            cx,
+        );
+    }
+
+    /// Picks a theme file for the appearance being edited.
+    pub(super) fn pick_theme_file(
+        &mut self,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dark = self.editing_dark;
+        let said = themes::picked_message(&name, dark);
+        self.change_theme(
+            move |state| {
+                let (custom, file) = target(state, dark);
+                *custom = Overrides::default();
+                *file = Some(name);
+            },
+            said,
+            window,
+            cx,
+        );
+    }
+
+    /// Writes the colours on show as a theme file, then picks it.
+    pub(super) fn save_theme_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(folder), Some(_)) = (self.themes_dir.clone(), &self.state_file) else {
+            return;
+        };
+        let name = self.new_theme_name.read(cx).value().trim().to_owned();
+        let (dark, shown) = (self.editing_dark, self.theme_edited().clone());
+        match themes::save(&folder, &name, dark, &shown, false) {
+            Ok(_) => {
+                self.new_theme_name
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                self.pick_theme_file(name, window, cx);
+            }
+            Err(error) => {
+                self.feedback = Feedback::Failed(error);
+                cx.notify();
+            }
+        }
+    }
+
+    /// Opens the themes folder in the system's file manager, making it first.
+    fn open_themes_folder(&mut self, cx: &mut Context<Self>) {
+        let Some(folder) = &self.themes_dir else {
+            return;
+        };
+        match std::fs::create_dir_all(folder) {
+            Ok(()) => cx.reveal_path(folder),
+            Err(error) => {
+                self.feedback =
+                    Feedback::Failed(format!("Couldn't make {}: {error}", folder.display()));
+                cx.notify();
+            }
+        }
     }
 
     fn pick_appearance(&mut self, dark: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -155,20 +341,40 @@ impl Settings {
         }
     }
 
-    /// Takes the colours of a desktop theme, for the appearance they suit. Only colours are
-    /// read, and only the theme of that one appearance changes.
+    /// Takes the colours of a desktop theme into a theme file and picks it, for the
+    /// appearance they suit. Only colours are read, and only that appearance changes.
     pub(super) fn import_theme(
         &mut self,
         source: palette::Source,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(folder) = self.themes_dir.clone() else {
+            return;
+        };
         let found = palette::Locations::this_system().and_then(|places| places.read(source));
-        match found.ok_or_else(|| format!("Mantis Git found no {} to read.", source.name())) {
-            Ok(found) => {
+        let Some(found) = found else {
+            self.feedback =
+                Feedback::Failed(format!("Mantis Git found no {} to read.", source.name()));
+            cx.notify();
+            return;
+        };
+        let stem = source.file_stem();
+        match themes::save(&folder, stem, found.dark, &found.overrides, true) {
+            Ok(_) => {
                 self.editing_dark = found.dark;
                 let said = found.saved_message();
-                self.change_theme(|theme| *theme = found.overrides, said, window, cx);
+                let dark = found.dark;
+                self.change_theme(
+                    move |state| {
+                        let (custom, file) = target(state, dark);
+                        *custom = Overrides::default();
+                        *file = Some(stem.to_owned());
+                    },
+                    said,
+                    window,
+                    cx,
+                );
             }
             Err(error) => {
                 self.feedback = Feedback::Failed(error);
@@ -221,6 +427,112 @@ impl Settings {
             .into_any_element()
     }
 
+    /// The "Theme" row: the built-in theme first and always, then each theme file for this
+    /// appearance, then "Custom" while colours were changed on the page. Anything wrong
+    /// with a file is said under it.
+    fn render_theme_choice(&self, cx: &mut Context<Self>) -> AnyElement {
+        let dark = self.editing_dark;
+        let peach = tokens(cx.theme().is_dark()).peach;
+        let picked = self.picked_file().map(str::to_owned);
+        let custom = picked.is_none() && !self.theme_edited().is_empty();
+        let files: Vec<String> = self
+            .theme_entries
+            .iter()
+            .filter(|entry| entry.theme.as_ref().is_ok_and(|theme| theme.dark == dark))
+            .map(|entry| entry.name.clone())
+            .collect();
+        let chips = div()
+            .h_flex()
+            .flex_wrap()
+            .gap_1()
+            .child(
+                chip(
+                    "theme-builtin",
+                    palette::builtin_name(dark),
+                    picked.is_none() && !custom,
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.reset_theme(window, cx))),
+            )
+            .children(files.into_iter().enumerate().map(|(index, name)| {
+                let on = picked.as_deref() == Some(name.as_str());
+                let chosen = name.clone();
+                chip(("theme-file", index), &name, on, cx).on_click(cx.listener(
+                    move |this, _, window, cx| this.pick_theme_file(chosen.clone(), window, cx),
+                ))
+            }))
+            .children(custom.then(|| chip("theme-custom", "Custom", true, cx)));
+        div()
+            .v_flex()
+            .px_4()
+            .py_3()
+            .gap_2()
+            .child(self.row_words(
+                "Theme",
+                "The built-in theme, a theme file from the themes folder, or your own colours.",
+                cx,
+            ))
+            .child(chips)
+            .children(self.theme_notes.iter().map(|note| {
+                div()
+                    .text_size(TEXT_SMALL)
+                    .line_height(px(17.))
+                    .text_color(peach)
+                    .child(note.clone())
+            }))
+            .into_any_element()
+    }
+
+    /// The "Theme files" card: saving the colours on show as a file, and the folder.
+    fn render_theme_files(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let folder = self.themes_dir.as_ref()?;
+        let saving = div()
+            .h_flex()
+            .px_4()
+            .py_3()
+            .gap_3()
+            .child(self.row_words(
+                "Save these colours as a theme",
+                "Writes the colours you see to a file named for this, and picks it.",
+                cx,
+            ))
+            .child(
+                div()
+                    .w(px(160.))
+                    .flex_none()
+                    .child(Input::new(&self.new_theme_name)),
+            )
+            .child(
+                Button::new("save-theme-file")
+                    .ghost()
+                    .label("Save")
+                    .on_click(cx.listener(|this, _, window, cx| this.save_theme_file(window, cx))),
+            )
+            .into_any_element();
+        let opening = div()
+            .h_flex()
+            .px_4()
+            .py_3()
+            .gap_3()
+            .child(self.row_words(
+                "Themes folder",
+                &format!(
+                    "{}. Each .theme file is a theme: one Name = #rrggbb line per colour. \
+                     Save one in any editor and the app follows.",
+                    folder.display()
+                ),
+                cx,
+            ))
+            .child(
+                Button::new("open-themes-folder")
+                    .ghost()
+                    .label("Open themes folder")
+                    .on_click(cx.listener(|this, _, _, cx| this.open_themes_folder(cx))),
+            )
+            .into_any_element();
+        Some(self.render_group("Theme files", vec![saving, opening], cx))
+    }
+
     pub(super) fn render_theme(&self, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let can_save = self.state_file.is_some();
@@ -243,7 +555,8 @@ impl Settings {
                     .gap_3()
                     .child(self.row_words(
                         &source.button(),
-                        "Takes only its colours, for the appearance its background suits.",
+                        "Takes only its colours, into a theme file, for the appearance its \
+                         background suits.",
                         cx,
                     ))
                     .child(
@@ -276,7 +589,7 @@ impl Settings {
                     .child(appearance("theme-light", "Light", false)),
             )
             .into_any_element();
-        let resetting = div()
+        let describing = div()
             .h_flex()
             .px_4()
             .py_3()
@@ -292,27 +605,6 @@ impl Settings {
                     } else {
                         "Mantis Git can't find a folder to keep this in.".to_owned()
                     }),
-            )
-            .into_any_element();
-        // The built-in theme is always a choice, ticked while nothing is changed. Once
-        // colours are changed a "Custom" chip says so.
-        let custom = !self.theme_edited().is_empty();
-        let builtin = div()
-            .v_flex()
-            .px_4()
-            .py_3()
-            .gap_2()
-            .child(self.row_words("Theme", "The built-in theme, or your own colours.", cx))
-            .child(
-                div()
-                    .h_flex()
-                    .gap_1()
-                    .child(
-                        chip("theme-builtin", palette::builtin_name(dark), !custom, cx).on_click(
-                            cx.listener(|this, _, window, cx| this.reset_theme(window, cx)),
-                        ),
-                    )
-                    .children(custom.then(|| chip("theme-custom", "Custom", true, cx))),
             )
             .into_any_element();
         let rows = |slots: &[Slot], cx: &mut Context<Self>| {
@@ -334,12 +626,13 @@ impl Settings {
             ))
             .child(self.render_group(
                 "Colours",
-                [choosing, builtin, resetting]
+                [choosing, self.render_theme_choice(cx), describing]
                     .into_iter()
                     .chain(importing)
                     .collect(),
                 cx,
             ))
+            .children(self.render_theme_files(cx))
             .child(self.render_group("Surfaces and text", rows(&SURFACES, cx), cx))
             .child(self.render_group("Meaning", rows(&MEANINGS, cx), cx))
             .child(self.render_group("Branch lanes", rows(&LANES, cx), cx))

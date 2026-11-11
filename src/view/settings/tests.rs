@@ -6,6 +6,9 @@ use mantisgit_core::settings::state::AppState;
 use mantisgit_core::testing::Repo;
 use std::path::PathBuf;
 
+/// Held by the tests that change the colours in force, which every test shares.
+static THEME_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn open(
     repo: Option<PathBuf>,
     scope: Scope,
@@ -952,6 +955,10 @@ fn the_about_page_opens_one_license_at_a_time(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn the_theme_page_saves_typed_colours_and_puts_them_on_screen(cx: &mut TestAppContext) {
+    // The colours in force are process-wide, so tests that change them take turns.
+    let _turn = THEME_TESTS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     use gpui_kit::component::ActiveTheme as _;
     use mantisgit_core::settings::theme::Slot;
 
@@ -1017,5 +1024,157 @@ fn the_theme_page_saves_typed_colours_and_puts_them_on_screen(cx: &mut TestAppCo
             cx.theme().dark_theme.colors.background.as_deref(),
             Some("#1e1e2e")
         );
+    });
+}
+
+#[gpui_kit::test]
+fn theme_files_are_saved_picked_followed_and_never_overwritten_by_edits(cx: &mut TestAppContext) {
+    // The colours in force are process-wide, so tests that change them take turns.
+    let _turn = THEME_TESTS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    use gpui_kit::component::ActiveTheme as _;
+    use mantisgit_core::settings::theme::Slot;
+    use mantisgit_core::settings::themes;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (state, folder) = (dir.path().join("state"), dir.path().join("themes"));
+    let scope = Scope::File(dir.path().join("gitconfig"));
+    let (view, mut cx) = open(None, scope, cx);
+    view.update_in(&mut cx, |settings, window, cx| {
+        settings.state_file = Some(state.clone());
+        settings.themes_dir = Some(folder.clone());
+        settings.editing_dark = true;
+        settings.refresh_themes(window, cx);
+    });
+    let background = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            cx.theme()
+                .dark_theme
+                .colors
+                .background
+                .clone()
+                .unwrap()
+                .to_string()
+        })
+    };
+
+    // Something is always there to go back to: the built-in theme, ticked at first.
+    view.read_with(&cx, |settings, _| assert!(settings.picked_file().is_none()));
+
+    // Saving the colours on show writes a file with every colour and picks it.
+    let name = view.read_with(&cx, |settings, _| settings.new_theme_name.clone());
+    name.update_in(&mut cx, |input, window, cx| {
+        input.set_value("night", window, cx)
+    });
+    view.update_in(&mut cx, |settings, window, cx| {
+        settings.save_theme_file(window, cx)
+    });
+    let text = std::fs::read_to_string(folder.join("night.theme")).unwrap();
+    assert!(text.contains("appearance = dark") && text.contains("Base      = #1e1e2e"));
+    assert_eq!(
+        AppState::load(&state).theme_dark_file.as_deref(),
+        Some("night")
+    );
+    view.read_with(&cx, |settings, _| {
+        assert!(matches!(&settings.feedback, Feedback::Saved(m) if m.contains("night.theme")));
+        assert_eq!(settings.theme_entries.len(), 1);
+    });
+
+    // A name that is taken is refused, and the file is left as it is.
+    name.update_in(&mut cx, |input, window, cx| {
+        input.set_value("night", window, cx)
+    });
+    view.update_in(&mut cx, |settings, window, cx| {
+        settings.save_theme_file(window, cx)
+    });
+    view.read_with(&cx, |settings, _| {
+        assert!(matches!(&settings.feedback, Feedback::Failed(m) if m.contains("already")));
+    });
+
+    // Saving the file in an editor shows in the window, with no action.
+    std::fs::write(
+        folder.join("night.theme"),
+        "appearance = dark\nBase = #1a1b26\nBlue = #7aa2f7\n",
+    )
+    .unwrap();
+    view.update_in(&mut cx, |settings, window, cx| {
+        settings.refresh_themes(window, cx)
+    });
+    assert_eq!(background(&mut cx), "#1a1b26");
+    view.read_with(&cx, |settings, cx| {
+        let base = settings.color_fields[2].input.read(cx).value().to_string();
+        assert_eq!(base, "#1a1b26", "the inputs follow the file");
+        assert!(settings.theme_notes.is_empty());
+    });
+
+    // A file with a bad line leaves the theme that was showing and names the line.
+    std::fs::write(
+        folder.join("night.theme"),
+        "Base = #1a1b26\nBlue = #7aa2f\n",
+    )
+    .unwrap();
+    view.update_in(&mut cx, |settings, window, cx| {
+        settings.refresh_themes(window, cx)
+    });
+    assert_eq!(background(&mut cx), "#1a1b26");
+    view.read_with(&cx, |settings, _| {
+        assert!(settings.theme_notes[0].starts_with("night.theme, line 2"));
+    });
+
+    // Editing a colour on the page leaves the file alone and becomes Custom.
+    std::fs::write(
+        folder.join("night.theme"),
+        "appearance = dark\nBase = #1a1b26\n",
+    )
+    .unwrap();
+    let before = std::fs::read_to_string(folder.join("night.theme")).unwrap();
+    view.update_in(&mut cx, |settings, window, cx| {
+        settings.refresh_themes(window, cx)
+    });
+    let blue = view.read_with(&cx, |settings, _| settings.color_fields[10].input.clone());
+    blue.update_in(&mut cx, |input, window, cx| {
+        input.set_value("#112233", window, cx);
+        cx.emit(InputEvent::Change);
+        cx.emit(InputEvent::Blur);
+    });
+    assert_eq!(
+        std::fs::read_to_string(folder.join("night.theme")).unwrap(),
+        before
+    );
+    let saved = AppState::load(&state);
+    assert_eq!(saved.theme_dark_file, None);
+    assert_eq!(
+        saved.theme_dark.color(Slot::Base, true),
+        0x1a1b26,
+        "kept from the file"
+    );
+    assert_eq!(saved.theme_dark.color(Slot::Blue, true), 0x112233);
+
+    // The built-in theme is one click away, and a deleted file gives it back too.
+    view.update_in(&mut cx, |settings, window, cx| {
+        settings.reset_theme(window, cx)
+    });
+    assert_eq!(background(&mut cx), "#1e1e2e");
+    view.update_in(&mut cx, |settings, window, cx| {
+        settings.pick_theme_file("night".into(), window, cx)
+    });
+    assert_eq!(background(&mut cx), "#1a1b26");
+    std::fs::remove_file(folder.join("night.theme")).unwrap();
+    view.update_in(&mut cx, |settings, window, cx| {
+        settings.refresh_themes(window, cx)
+    });
+    assert_eq!(background(&mut cx), "#1e1e2e");
+    view.read_with(&cx, |settings, _| {
+        assert_eq!(
+            settings.theme_notes,
+            ["night.theme is gone, so Catppuccin Mocha is showing."]
+        );
+    });
+    assert!(themes::list(&folder).is_empty());
+
+    // Leave the app's colours as they were for the tests that follow.
+    view.update_in(&mut cx, |settings, window, cx| {
+        settings.reset_theme(window, cx)
     });
 }

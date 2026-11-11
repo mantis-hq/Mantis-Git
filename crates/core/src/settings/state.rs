@@ -59,6 +59,10 @@ pub struct AppState {
     pub theme_dark: Overrides,
     /// The colours the user changed in the light appearance.
     pub theme_light: Overrides,
+    /// The theme file picked for the dark appearance, by name. It wins over the colours changed on the page.
+    pub theme_dark_file: Option<String>,
+    /// The theme file picked for the light appearance, by name.
+    pub theme_light_file: Option<String>,
 }
 
 /// Whether the dock was open, how many terminals it had and which of its tabs was in
@@ -107,6 +111,8 @@ impl Default for AppState {
             clone_dir: None,
             theme_dark: Overrides::default(),
             theme_light: Overrides::default(),
+            theme_dark_file: None,
+            theme_light_file: None,
         }
     }
 }
@@ -182,6 +188,12 @@ impl AppState {
                 }
                 "theme_dark" => state.theme_dark = Overrides::parse(value),
                 "theme_light" => state.theme_light = Overrides::parse(value),
+                "theme_dark_file" if !value.trim().is_empty() => {
+                    state.theme_dark_file = Some(value.trim().to_owned());
+                }
+                "theme_light_file" if !value.trim().is_empty() => {
+                    state.theme_light_file = Some(value.trim().to_owned());
+                }
                 "dock_open" => state.dock.open = value.trim() == "true",
                 "dock_terminals" => state.dock.terminals = value.trim().parse().unwrap_or(0),
                 "dock_tab" => state.dock.tab = value.trim().parse().unwrap_or(0),
@@ -224,6 +236,14 @@ impl AppState {
         ] {
             if !theme.is_empty() {
                 text.push_str(&format!("{key}={}\n", theme.render()));
+            }
+        }
+        for (key, file) in [
+            ("theme_dark_file", &self.theme_dark_file),
+            ("theme_light_file", &self.theme_light_file),
+        ] {
+            if let Some(name) = file.as_deref().filter(|name| !name.contains('\n')) {
+                text.push_str(&format!("{key}={name}\n"));
             }
         }
         text.push_str(&format!("dock_open={}\n", self.dock.open));
@@ -543,6 +563,8 @@ mod tests {
             clone_dir: Some("/work/clones".into()),
             theme_dark: Overrides::parse("base:1a1b26,blue:7aa2f7"),
             theme_light: Overrides::default(),
+            theme_dark_file: Some("night".into()),
+            theme_light_file: None,
         };
         state.save(&file).unwrap();
         assert_eq!(AppState::load(&file), state);
