@@ -2,9 +2,14 @@
 //! following the OS appearance.
 
 use gitclient_core::history::lanes::LaneColor;
+use gitclient_core::settings::theme::{Overrides, Slot};
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeRegistry};
 use gpui_kit::{App, Hsla, Window, rgb};
 use std::borrow::Cow;
+use std::sync::RwLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static GENERATION: AtomicUsize = AtomicUsize::new(0);
 
 const THEMES: &str = include_str!("catppuccin.json");
 const LIGHT_THEME: &str = "Catppuccin Latte Blue";
@@ -18,8 +23,32 @@ const FONT_FILES: [&[u8]; 3] = [
 ];
 
 /// Mauve, Teal, Pink, Sky, Rosewater, Flamingo. Never a semantic colour.
-const DARK_LANES: [u32; 6] = [0xcba6f7, 0x94e2d5, 0xf5c2e7, 0x89dceb, 0xf5e0dc, 0xf2cdcd];
-const LIGHT_LANES: [u32; 6] = [0x8839ef, 0x179299, 0xea76cb, 0x04a5e5, 0xdc8a78, 0xdd7878];
+const LANES: [Slot; 6] = [
+    Slot::Mauve,
+    Slot::Teal,
+    Slot::Pink,
+    Slot::Sky,
+    Slot::Rosewater,
+    Slot::Flamingo,
+];
+
+/// What the user changed, for dark and for light. The colours are read from here by
+/// everything that draws without going through the gpui-kit theme.
+static USER: RwLock<(Overrides, Overrides)> = RwLock::new((Overrides::new(), Overrides::new()));
+
+/// The user's colours for one appearance.
+fn user(is_dark: bool) -> Overrides {
+    let both = USER.read().unwrap_or_else(|e| e.into_inner());
+    if is_dark {
+        both.0.clone()
+    } else {
+        both.1.clone()
+    }
+}
+
+fn slot_color(slot: Slot, is_dark: bool) -> Hsla {
+    rgb(user(is_dark).color(slot, is_dark)).into()
+}
 
 /// Design tokens gpui-kit's theme has no field for. Everything else comes from `cx.theme()`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -33,15 +62,10 @@ pub struct Tokens {
 }
 
 pub fn tokens(is_dark: bool) -> Tokens {
-    let (peach, subtext0, overlay1) = if is_dark {
-        (0xfab387, 0xa6adc8, 0x7f849c)
-    } else {
-        (0xfe640b, 0x6c6f85, 0x8c8fa1)
-    };
     Tokens {
-        peach: rgb(peach).into(),
-        subtext0: rgb(subtext0).into(),
-        overlay1: rgb(overlay1).into(),
+        peach: slot_color(Slot::Peach, is_dark),
+        subtext0: slot_color(Slot::Subtext0, is_dark),
+        overlay1: slot_color(Slot::Overlay1, is_dark),
     }
 }
 
@@ -50,20 +74,43 @@ pub fn init(cx: &mut App) {
     cx.text_system()
         .add_fonts(FONT_FILES.map(Cow::Borrowed).to_vec())
         .expect("bundled fonts load");
-    ThemeRegistry::global_mut(cx)
-        .load_themes_from_str(THEMES)
-        .expect("bundled themes parse");
-    let themes = ThemeRegistry::global(cx).themes();
-    let light = themes[LIGHT_THEME].clone();
-    let dark = themes[DARK_THEME].clone();
-
+    install(cx);
     Theme::update(cx, |theme| {
-        theme.light_theme = light;
-        theme.dark_theme = dark;
         theme.font_family = FONT.into();
         theme.mono_font_family = FONT.into();
     });
+}
+
+/// Loads the bundled themes with the user's colours put in, and switches to them.
+fn install(cx: &mut App) {
+    let (dark, light) = (user(true), user(false));
+    // The registry keeps the first theme it was given under a name, so each time the
+    // colours change they go in under a new one.
+    let generation = GENERATION.fetch_add(1, Ordering::Relaxed);
+    let name = |base: &str| format!("{base} {generation}");
+    let themes = Overrides::recolor_themes(&dark, &light, THEMES)
+        .replace(LIGHT_THEME, &name(LIGHT_THEME))
+        .replace(DARK_THEME, &name(DARK_THEME));
+    ThemeRegistry::global_mut(cx)
+        .load_themes_from_str(&themes)
+        .expect("bundled themes parse");
+    let themes = ThemeRegistry::global(cx).themes();
+    let (light, dark) = (
+        themes[name(LIGHT_THEME).as_str()].clone(),
+        themes[name(DARK_THEME).as_str()].clone(),
+    );
+    Theme::update(cx, |theme| {
+        theme.light_theme = light;
+        theme.dark_theme = dark;
+    });
     Theme::change(cx.theme().mode, None, cx);
+}
+
+/// Puts the user's colours in everywhere, in every open window, at once.
+pub fn apply(dark: Overrides, light: Overrides, cx: &mut App) {
+    *USER.write().unwrap_or_else(|e| e.into_inner()) = (dark, light);
+    install(cx);
+    cx.refresh_windows();
 }
 
 /// Matches the theme to the OS appearance now and whenever it changes.
@@ -85,11 +132,9 @@ pub fn selected_row(theme: &Theme) -> Hsla {
 
 /// The colour of a lane: Blue for you, otherwise the palette, repeating as it runs out.
 pub fn lane_color(color: LaneColor, is_dark: bool) -> Hsla {
-    let lanes = if is_dark { DARK_LANES } else { LIGHT_LANES };
     match color {
-        LaneColor::Head if is_dark => rgb(0x89b4fa).into(),
-        LaneColor::Head => rgb(0x1e66f5).into(),
-        LaneColor::Branch(index) => rgb(lanes[index as usize % lanes.len()]).into(),
+        LaneColor::Head => slot_color(Slot::Blue, is_dark),
+        LaneColor::Branch(index) => slot_color(LANES[index as usize % LANES.len()], is_dark),
     }
 }
 
@@ -110,7 +155,8 @@ const LIGHT_ANSI: [u32; 16] = [
 pub fn ansi_color(index: u8, is_dark: bool) -> Hsla {
     let named = if is_dark { DARK_ANSI } else { LIGHT_ANSI };
     match index {
-        0..=15 => rgb(named[index as usize]).into(),
+        // Catppuccin's terminal colours, in the user's version of each.
+        0..=15 => rgb(user(is_dark).recolor(named[index as usize], is_dark)).into(),
         16..=231 => {
             let cube = index - 16;
             let level = |n: u8| if n == 0 { 0 } else { 55 + 40 * n as u32 };

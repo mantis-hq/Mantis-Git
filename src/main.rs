@@ -33,6 +33,7 @@ fn main() {
     let dock = saved.dock;
     let check_updates = saved.check_updates;
     let update_track = saved.update_track;
+    let (theme_dark, theme_light) = (saved.theme_dark.clone(), saved.theme_light.clone());
     // Only a portable copy manages its own launcher; a package puts one in place itself.
     let launcher = channel.is_portable().then(Launcher::this_system).flatten();
     // Without a cache folder the caches still work, from memory.
@@ -46,6 +47,9 @@ fn main() {
         .run(move |cx| {
             gpui_kit::init(cx);
             theme::init(cx);
+            if !theme_dark.is_empty() || !theme_light.is_empty() {
+                theme::apply(theme_dark, theme_light, cx);
+            }
             view::show_tooltips_at_once(cx);
             view::bind_keys(cx);
             view::install_caches(caches, cx);

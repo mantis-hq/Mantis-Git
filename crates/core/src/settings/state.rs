@@ -6,6 +6,7 @@
 //! lines are ignored and kept out of the way of newer versions. Reading never fails: a
 //! missing or broken file is the same as a fresh install.
 
+use super::theme::Overrides;
 use crate::cache::{DEFAULT_DISK_MB, DiskSettings};
 use crate::history::avatar::Style as AvatarStyle;
 use crate::history::columns::ColumnOrder;
@@ -54,6 +55,10 @@ pub struct AppState {
     pub update_track: Track,
     /// The folder the last repository was cloned into, which the clone form starts with.
     pub clone_dir: Option<PathBuf>,
+    /// The colours the user changed in the dark appearance.
+    pub theme_dark: Overrides,
+    /// The colours the user changed in the light appearance.
+    pub theme_light: Overrides,
 }
 
 /// Whether the dock was open, how many terminals it had and which of its tabs was in
@@ -100,6 +105,8 @@ impl Default for AppState {
             auto_fetch: true,
             update_track: Track::default(),
             clone_dir: None,
+            theme_dark: Overrides::default(),
+            theme_light: Overrides::default(),
         }
     }
 }
@@ -173,6 +180,8 @@ impl AppState {
                 "clone_dir" if !value.trim().is_empty() => {
                     state.clone_dir = Some(PathBuf::from(value.trim()));
                 }
+                "theme_dark" => state.theme_dark = Overrides::parse(value),
+                "theme_light" => state.theme_light = Overrides::parse(value),
                 "dock_open" => state.dock.open = value.trim() == "true",
                 "dock_terminals" => state.dock.terminals = value.trim().parse().unwrap_or(0),
                 "dock_tab" => state.dock.tab = value.trim().parse().unwrap_or(0),
@@ -208,6 +217,14 @@ impl AppState {
             && !dir.contains('\n')
         {
             text.push_str(&format!("clone_dir={dir}\n"));
+        }
+        for (key, theme) in [
+            ("theme_dark", &self.theme_dark),
+            ("theme_light", &self.theme_light),
+        ] {
+            if !theme.is_empty() {
+                text.push_str(&format!("{key}={}\n", theme.render()));
+            }
         }
         text.push_str(&format!("dock_open={}\n", self.dock.open));
         text.push_str(&format!("dock_terminals={}\n", self.dock.terminals));
@@ -524,6 +541,8 @@ mod tests {
             auto_fetch: false,
             update_track: Track::Nightly,
             clone_dir: Some("/work/clones".into()),
+            theme_dark: Overrides::parse("base:1a1b26,blue:7aa2f7"),
+            theme_light: Overrides::default(),
         };
         state.save(&file).unwrap();
         assert_eq!(AppState::load(&file), state);
