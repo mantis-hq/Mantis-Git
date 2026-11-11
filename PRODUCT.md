@@ -24,6 +24,8 @@ Performance and plain language together. Your branch is the straight line down t
 
 Daily, repeated use alongside a terminal (the app has its own dock with terminals and a command log). Repositories include very large ones and repositories inside WSL2. Installed either as a portable release archive or through a package manager.
 
+Visual verification: the app renders headlessly to PNG through the real GPU pipeline on Linux and macOS (not Windows). Run `RENDER_OUTPUT=<dir> cargo test --test render`, then read the PNGs in `<dir>`. Frames cover the graph, inspector, diffs, conflicts and resolver, sidebar, dock log and terminal, and the settings pages, in Mocha and Latte (`tests/render.rs`, built on `HeadlessAppContext`). Use this instead of a browser to check UI work against `docs/design.md`, at the 1200×800 default window. It needs a working GPU or Vulkan stack and is opt-in, so it is not part of plain `cargo test`.
+
 ## Capabilities and Constraints
 
 - Everything about a repository lives in `crates/core`, which never depends on gpui-kit. Views draw what core says.
