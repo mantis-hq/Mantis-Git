@@ -10,6 +10,7 @@
 //! launcher later.
 
 use super::{Dialog, backdrop};
+use crate::icons::Icon;
 use crate::theme::{lane_color, selected_row};
 use crate::view::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL, TEXT_STATUS, TEXT_TITLE, checkbox};
 use crate::view::{GraphView, Notice};
@@ -438,29 +439,22 @@ fn elbow(from: (f32, f32), to: (f32, f32), thickness: f32, radius: f32, color: H
     elbow
 }
 
-/// The app's mark: a blue lane with HEAD on it, and a branch bending away. It is the icon
-/// the launcher installs, drawn at 56 px.
+/// The app's mark: a disc in the accent colour with the mantis on it, its antennae ending in
+/// commit nodes and a lane running down to HEAD. It is the icon the launcher installs, drawn at 56 px. The
+/// disc is the accent and the mantis is the text on it, so a theme recolours it.
 fn mark(cx: &App) -> Div {
     let theme = cx.theme();
-    let dark = theme.is_dark();
-    let (head, mauve) = (
-        lane_color(LaneColor::Head, dark),
-        lane_color(LaneColor::Branch(0), dark),
-    );
-    let ring = dot(21., 14., 17.5, theme.background).border(px(1.5));
     div()
-        .relative()
         .flex_none()
         .size(px(56.))
-        .rounded(px(14.))
-        .bg(theme.background)
-        .border_1()
-        .border_color(theme.border)
-        .child(line(21., 16., 45., 3., head))
-        .child(elbow((21., 37.), (36., 17.), 3., 8., mauve))
-        .child(ring.border_color(head))
-        .child(dot(21., 14., 11.4, head))
-        .child(dot(36., 16.6, 8., mauve))
+        .rounded_full()
+        .bg(theme.primary)
+        .child(
+            svg()
+                .path(Icon::Mantis.path())
+                .size(px(56.))
+                .text_color(theme.primary_foreground),
+        )
 }
 
 /// A ref chip: tinted with 14% of its colour, or solid for the current branch.

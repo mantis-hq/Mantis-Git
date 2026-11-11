@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="6 6 500 500">
+  <mask id="eyes" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+    <rect width="512" height="512" fill="#fff"/>
+    <path d="M189.4 240.8L229.0 285.8M322.6 240.8L283.0 285.8" fill="none" stroke="#000" stroke-width="32.4" stroke-linecap="round"/>
+  </mask>
+  <circle cx="256" cy="256" r="226" fill="none" stroke="#000" stroke-width="7" opacity=".35"/>
+  <path d="M256 380V428" fill="none" stroke="#000" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="256" cy="436" r="16" fill="none" stroke="#000" stroke-width="12"/>
+  <path d="M225.4 203.0L180.8 138.5M286.6 203.0L331.2 138.5" fill="none" stroke="#000" stroke-width="11.7"/>
+  <circle cx="173.2" cy="127.4" r="13.5" fill="none" stroke="#000" stroke-width="9"/>
+  <circle cx="338.8" cy="127.4" r="13.5" fill="none" stroke="#000" stroke-width="9"/>
+  <path d="M151.6 210.2L360.4 210.2L256.0 368.6Z" fill="#000" stroke="#000" stroke-width="27" stroke-linejoin="round" mask="url(#eyes)"/>
+</svg>

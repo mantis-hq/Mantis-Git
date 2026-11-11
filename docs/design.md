@@ -638,8 +638,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   a 640 px panel opens over the front tab, on Mantle with a 1 px Blue outline and 8 px
   radius, drawn by the popup module so it shares the backdrop and keys. Its parts, top to
   bottom, each under a Surface 0 rule:
-  - The app's mark (the icon, drawn at 56 px: a blue lane with HEAD on it and a branch
-    bending away), "Welcome to Mantis Git" as a commit title, and one status sentence.
+  - The app's mark (the icon, drawn at 56 px: a Blue disc (the accent) with the mantis on it in Crust,
+    its antennae ending in commit nodes and a lane running from its chin to a HEAD node;
+    `src/icons/mantis-git.svg`, the launcher's `mantisgit.svg` and `assets/mantisgit.ico`
+    are the same drawing), "Welcome to Mantis Git" as a commit title, and one status sentence.
   - Three ideas side by side, each a picture on Base over a one-line heading and a few words:
     "Your branch is straight" (a small graph: HEAD's blue lane, `main` below the fork in
     its own colour, another branch bending away), "Say what will happen" (a primary button

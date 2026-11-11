@@ -22,6 +22,8 @@ pub enum Icon {
     WindowMinimize,
     WindowMaximize,
     WindowClose,
+    /// The app's mark: the mantis on its lane, in one colour, for the welcome panel.
+    Mantis,
 }
 
 impl Icon {
@@ -41,6 +43,7 @@ impl Icon {
             Self::WindowMinimize => "icons/window-minimize.svg",
             Self::WindowMaximize => "icons/window-maximize.svg",
             Self::WindowClose => "icons/window-close.svg",
+            Self::Mantis => "icons/mantis-git.svg",
         }
     }
 
@@ -59,6 +62,7 @@ impl Icon {
             "icons/window-minimize.svg" => include_bytes!("icons/window-minimize.svg"),
             "icons/window-maximize.svg" => include_bytes!("icons/window-maximize.svg"),
             "icons/window-close.svg" => include_bytes!("icons/window-close.svg"),
+            "icons/mantis-git.svg" => include_bytes!("icons/mantis-git.svg"),
             _ => return None,
         })
     }
@@ -87,6 +91,7 @@ impl AssetSource for Icons {
             Icon::WindowMinimize,
             Icon::WindowMaximize,
             Icon::WindowClose,
+            Icon::Mantis,
         ];
         Ok(all
             .into_iter()
@@ -119,11 +124,12 @@ mod tests {
             Icon::WindowMinimize,
             Icon::WindowMaximize,
             Icon::WindowClose,
+            Icon::Mantis,
         ] {
             let bytes = Icons.load(icon.path()).unwrap().expect("served");
             assert!(bytes.starts_with(b"<svg"), "{}", icon.path());
         }
         assert!(Icons.load("icons/none.svg").unwrap().is_none());
-        assert_eq!(Icons.list("icons/").unwrap().len(), 13);
+        assert_eq!(Icons.list("icons/").unwrap().len(), 14);
     }
 }
