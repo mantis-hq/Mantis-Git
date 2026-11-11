@@ -18,6 +18,7 @@ use mantisgit_core::repo::branch::{self, Dragged, Relation};
 use mantisgit_core::repo::forge;
 use mantisgit_core::working::Side;
 use std::path::Path;
+use std::sync::Arc;
 
 const MENU_WIDTH: Pixels = px(300.);
 const MENU_MAX_WIDTH: Pixels = px(460.);
@@ -421,6 +422,12 @@ impl GraphView {
 
     pub(super) fn run_command(&mut self, command: Command, cx: &mut Context<Self>) {
         let label = command.progress();
+        if matches!(
+            command,
+            Command::PushTag { .. } | Command::DeleteRemoteTag { .. }
+        ) {
+            self.remote_tags.clear();
+        }
         if !matches!(command, Command::PushBranch { .. } | Command::PushTo { .. }) {
             self.run_operation(label, move |repo| command.run(repo), cx);
             return;
@@ -477,12 +484,80 @@ impl GraphView {
     ) {
         // A right-click on one of several picked refs acts on all of them.
         let picks = self.sidebar.picks.items();
-        let lines = if picks.len() > 1 && picks.contains(&target) {
-            menu::refs_menu(&self.refs, picks)
-        } else {
-            menu::ref_menu(&self.refs, &target)
+        if picks.len() > 1 && picks.contains(&target) {
+            let lines = menu::refs_menu(&self.refs, picks);
+            return self.show_menu(position, lines, cx);
+        }
+        let has_tag = target.kind == RefKind::Tag;
+        self.with_remote_tags(has_tag, cx, move |this, cx| {
+            let lines = menu::ref_menu(&this.refs, &target);
+            this.show_menu(position, lines, cx);
+        });
+    }
+
+    /// Runs `then` once the remotes have said which tags they hold, when `wanted`: a tag's
+    /// menu offers to delete it only where it is. Answers are kept for 30 seconds, and a
+    /// remote that can't be reached leaves the menu offering every remote.
+    fn with_remote_tags(
+        &mut self,
+        wanted: bool,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
+    ) {
+        const FRESH: std::time::Duration = std::time::Duration::from_secs(30);
+        let now = std::time::Instant::now();
+        let stale: Vec<String> = self
+            .refs
+            .remote_configs
+            .iter()
+            .filter(|remote| {
+                self.remote_tags
+                    .get(&remote.name)
+                    .is_none_or(|(asked, _)| now.duration_since(*asked) > FRESH)
+            })
+            .map(|remote| remote.name.clone())
+            .collect();
+        let workdir = self.workdir();
+        let (Some(workdir), true) = (workdir, wanted && !stale.is_empty()) else {
+            self.share_remote_tags();
+            return then(self, cx);
         };
-        self.show_menu(position, lines, cx);
+        Self::spawn_blocking(
+            move || {
+                stale
+                    .into_iter()
+                    .map(|remote| {
+                        let tags = mantisgit_core::repo::remote::tags_on(&workdir, &remote);
+                        (remote, tags)
+                    })
+                    .collect::<Vec<_>>()
+            },
+            move |this, answers, cx| {
+                for (remote, tags) in answers {
+                    match tags {
+                        Ok(tags) => {
+                            this.remote_tags
+                                .insert(remote, (std::time::Instant::now(), tags));
+                        }
+                        Err(_) => {
+                            this.remote_tags.remove(&remote);
+                        }
+                    }
+                }
+                this.share_remote_tags();
+                then(this, cx);
+            },
+            cx,
+        );
+    }
+
+    /// Hands what the remotes said to core, which builds the menus.
+    fn share_remote_tags(&mut self) {
+        Arc::make_mut(&mut self.refs).remote_tags = self
+            .remote_tags
+            .iter()
+            .map(|(remote, (_, tags))| (remote.clone(), tags.clone()))
+            .collect();
     }
 
     /// The menu for a file in the inspector. `index` is its place in the details shown.
@@ -616,8 +691,16 @@ impl GraphView {
             self.select(index, cx);
         }
         let commits = self.selection.commits(&self.entries, self.selected);
-        let lines = menu::commit_menu(&self.refs, &commits);
-        self.show_menu(position, lines, cx);
+        let has_tag = commits.iter().any(|commit| {
+            self.refs
+                .by_commit
+                .get(&commit.oid)
+                .is_some_and(|refs| refs.iter().any(|r| r.kind == RefKind::Tag))
+        });
+        self.with_remote_tags(has_tag, cx, move |this, cx| {
+            let lines = menu::commit_menu(&this.refs, &commits);
+            this.show_menu(position, lines, cx);
+        });
     }
 
     /// The card of one menu: its lines, and for the main menu the submenu beside its line.

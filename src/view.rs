@@ -170,6 +170,8 @@ pub struct GraphView {
     menu: Option<menu::Menu>,
     /// The row whose refs card is open, and whether the pointer is on the card.
     hovered_refs: Option<usize>,
+    /// Which tags each remote held when last asked, and when. Asked again after 30 seconds.
+    remote_tags: std::collections::HashMap<String, (Instant, HashSet<String>)>,
     popover_hovered: bool,
     /// The graph's columns, left to right, as the user arranged them.
     columns: ColumnOrder,
@@ -260,6 +262,7 @@ impl GraphView {
             selection: Selection::default(),
             menu: None,
             hovered_refs: None,
+            remote_tags: std::collections::HashMap::new(),
             popover_hovered: false,
             columns: ColumnOrder::default(),
             scroll: UniformListScrollHandle::new(),

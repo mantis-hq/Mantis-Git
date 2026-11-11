@@ -13,6 +13,16 @@ pub struct Remote {
 }
 
 /// Reads `git remote -v`, which lists each remote once for fetching and once for pushing.
+/// The names of the tags `remote` holds, asked over the network with `git ls-remote`.
+pub fn tags_on(repo: &Path, remote: &str) -> Result<std::collections::HashSet<String>, String> {
+    let listing = ops::run(repo, &["ls-remote", "--tags", "--refs", remote])?;
+    Ok(listing
+        .lines()
+        .filter_map(|line| line.split_once('\t')?.1.strip_prefix("refs/tags/"))
+        .map(str::to_owned)
+        .collect())
+}
+
 pub fn parse(listing: &str) -> Vec<Remote> {
     let mut found: Vec<Remote> = Vec::new();
     for line in listing.lines() {

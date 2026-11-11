@@ -222,6 +222,7 @@ fn sync_ref_lines(refs: &Refs, kind: RefKind, name: &str) -> Vec<Line> {
         RefKind::Tag => refs
             .remote_configs
             .iter()
+            .filter(|remote| !refs.remote_has_tag(&remote.name, name))
             .map(|remote| {
                 Line::item(
                     format!("Push tag {name} to {}", remote.name),
@@ -234,6 +235,11 @@ fn sync_ref_lines(refs: &Refs, kind: RefKind, name: &str) -> Vec<Line> {
             .collect(),
         _ => Vec::new(),
     }
+}
+
+/// Whether a tag might be on a remote: it is, or nobody has asked that remote.
+fn may_hold_tag(refs: &Refs, remote: &str, tag: &str) -> bool {
+    !refs.remote_tags.contains_key(remote) || refs.remote_has_tag(remote, tag)
 }
 
 /// The line that says which remote branch a local branch follows.
@@ -288,6 +294,9 @@ fn delete_lines(refs: &Refs, kind: RefKind, name: &str) -> Vec<Line> {
     }
     if kind == RefKind::Tag {
         for remote in &refs.remote_configs {
+            if !may_hold_tag(refs, &remote.name, name) {
+                continue;
+            }
             for also_local in [false, true] {
                 let label = if also_local {
                     format!("Delete tag {name} here and on {}", remote.name)
@@ -307,6 +316,10 @@ fn delete_lines(refs: &Refs, kind: RefKind, name: &str) -> Vec<Line> {
                     .danger(),
                 );
             }
+        }
+        // Every way to delete a tag sits behind one line, unless there is only one.
+        if lines.len() > 1 {
+            lines = vec![Line::submenu(format!("Delete tag {name}"), lines).danger()];
         }
     }
     if kind == RefKind::Remote
@@ -1620,27 +1633,79 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_tag_can_be_pushed_and_deleted_on_each_remote_or_everywhere() {
+    fn tag_refs(remotes: &[&str]) -> Refs {
         let mut refs = refs();
-        refs.remote_configs = vec![crate::repo::remote::Remote {
-            name: "origin".into(),
-            url: "git@host:a.git".into(),
-            push_url: None,
-        }];
+        refs.remote_configs = remotes
+            .iter()
+            .map(|name| crate::repo::remote::Remote {
+                name: (*name).into(),
+                url: format!("git@host:{name}.git"),
+                push_url: None,
+            })
+            .collect();
+        refs
+    }
+
+    fn delete_submenu(lines: &[Line]) -> Vec<&str> {
+        let line = lines
+            .iter()
+            .find(|line| line.opens_submenu())
+            .expect("the deletes are behind a submenu");
+        labels(line.submenu_lines().unwrap())
+    }
+
+    #[test]
+    fn every_way_to_delete_a_tag_is_behind_one_submenu() {
+        let refs = tag_refs(&["origin"]);
         let lines = ref_menu(&refs, &target(RefKind::Tag, "v1.0.0"));
         let shown = labels(&lines);
         assert!(shown.contains(&"Push tag v1.0.0 to origin"));
-        assert!(shown.contains(&"Delete tag v1.0.0"));
-        assert!(shown.contains(&"Delete tag v1.0.0 on origin"));
-        assert!(shown.contains(&"Delete tag v1.0.0 here and on origin"));
-        for line in &lines {
+        assert!(!shown.contains(&"Delete tag v1.0.0 on origin"));
+        assert_eq!(
+            delete_submenu(&lines),
+            [
+                "Delete tag v1.0.0",
+                "Delete tag v1.0.0 on origin",
+                "Delete tag v1.0.0 here and on origin"
+            ]
+        );
+        let sub = lines.iter().find(|l| l.opens_submenu()).unwrap();
+        for line in sub.submenu_lines().unwrap() {
             if let Some(command @ Command::DeleteRemoteTag { .. }) = line.command() {
                 let confirmation = command.confirmation().unwrap();
                 assert_eq!(confirmation.weight, Weight::DoublePress);
                 assert!(confirmation.message.contains("git push origin v1.0.0"));
             }
         }
+    }
+
+    #[test]
+    fn a_tag_is_only_deleted_on_remotes_known_to_hold_it() {
+        let mut refs = tag_refs(&["origin", "backup"]);
+        refs.remote_tags
+            .insert("origin".into(), ["v1.0.0".to_owned()].into());
+        refs.remote_tags.insert("backup".into(), Default::default());
+        let lines = ref_menu(&refs, &target(RefKind::Tag, "v1.0.0"));
+        let shown = labels(&lines);
+        assert!(!shown.contains(&"Push tag v1.0.0 to origin"));
+        assert!(shown.contains(&"Push tag v1.0.0 to backup"));
+        assert_eq!(
+            delete_submenu(&lines),
+            [
+                "Delete tag v1.0.0",
+                "Delete tag v1.0.0 on origin",
+                "Delete tag v1.0.0 here and on origin"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tag_on_no_remote_has_a_plain_delete_line() {
+        let mut refs = tag_refs(&["origin"]);
+        refs.remote_tags.insert("origin".into(), Default::default());
+        let lines = ref_menu(&refs, &target(RefKind::Tag, "v1.0.0"));
+        assert!(labels(&lines).contains(&"Delete tag v1.0.0"));
+        assert!(!lines.iter().any(Line::opens_submenu));
     }
 
     #[test]
