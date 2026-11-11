@@ -49,6 +49,12 @@ impl Commit {
     pub fn is_merge(&self) -> bool {
         self.parents.len() > 1
     }
+
+    /// Whether the graph draws the author's avatar on this commit. A merge is a hollow
+    /// dot instead: it joins lines and has no author's work of its own to show.
+    pub fn wears_avatar(&self) -> bool {
+        !self.is_merge()
+    }
 }
 
 /// Splits off a Conventional Commit prefix, which is drawn quieter than the description.
@@ -378,6 +384,23 @@ mod tests {
     use std::collections::HashMap;
     use std::process::{Command, Stdio};
     use tempfile::TempDir;
+
+    #[test]
+    fn a_merge_is_a_hollow_dot_and_every_other_commit_wears_an_avatar() {
+        let commit = |parents: &[&str]| Commit {
+            oid: "c".into(),
+            parents: parents.iter().map(|p| Arc::from(*p)).collect(),
+            author: "Ada".into(),
+            email: "ada@example.com".into(),
+            time: 0,
+            subject: "x".into(),
+            signature: Signature::None,
+        };
+        assert!(commit(&[]).wears_avatar());
+        assert!(commit(&["a"]).wears_avatar());
+        assert!(!commit(&["a", "b"]).wears_avatar());
+        assert!(!commit(&["a", "b", "c"]).wears_avatar());
+    }
 
     #[test]
     fn an_unsigned_commit_has_no_signature() {

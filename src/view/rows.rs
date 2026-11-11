@@ -687,6 +687,9 @@ fn paint_row(
         paint_circle(node_x, middle, NODE_RADIUS + 3., node.head, window);
         paint_circle(node_x, middle, NODE_RADIUS + 1.5, node.hollow, window);
         paint_circle(node_x, middle, NODE_RADIUS, node.head, window);
+        if node.is_merge {
+            paint_circle(node_x, middle, NODE_RADIUS - 1.75, node.hollow, window);
+        }
         return;
     }
     paint_circle(

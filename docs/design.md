@@ -390,8 +390,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   avatar has to be) on one of the branch palette's colours, picked by a hash of the author's
   address so a person has the same colour in every repository and session (`avatar::tint`).
   With Gravatar, an author who has none keeps their initials. Working changes, stashes and
-  commits past the last lane keep their own marks. Merges lose their hollow dot to the
-  avatar; the inspector still says a commit is a merge.
+  commits past the last lane keep their own marks. A merge never wears an avatar: it stays a
+  hollow dot in its lane's colour (a blue ring when it is HEAD), so the lines it joins read
+  at a glance (`Commit::wears_avatar`).
 - Signed commits: a signed commit ends its subject in a 14 px shield with a check, in
   Green at 70% opacity (finished, but quieter than the subject), with the tooltip "Signed" (or "Signed, but git can't check the signature" when
   the key is missing, expired or there is nothing to check an SSH signature against). A
@@ -433,7 +434,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 | HEAD            | Filled blue dot with a blue ring, first lane |
 | Working changes | Hollow dashed blue dot and a dashed line     |
 | Commit          | Filled dot in its branch colour              |
-| Merge           | Hollow dot in its branch colour              |
+| Merge           | Hollow dot in its branch colour, never an avatar |
 
 - Lines are 1.75 px with curved bends, and show no avatars.
 - At most 8 lanes are visible. A commit past the edge gets a small dot in its branch
