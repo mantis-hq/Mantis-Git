@@ -17,7 +17,7 @@ use crate::text::count;
 use std::sync::OnceLock;
 
 /// Where the source of this program is published.
-pub const SOURCE_URL: &str = "https://github.com/pretext8335/gitclient";
+pub const SOURCE_URL: &str = "https://github.com/mantis-hq/Mantis-Git";
 
 /// What `cargo about` wrote, one entry per distinct license text.
 const CRATES: &str = include_str!("../../../THIRD-PARTY-LICENSES.txt");
