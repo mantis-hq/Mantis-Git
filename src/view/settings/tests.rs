@@ -607,7 +607,7 @@ fn the_repository_page_writes_a_missing_commit_graph(cx: &mut TestAppContext) {
     let (_dir, scope) = file_scope();
     let (view, mut cx) = open(Some(repo.path().to_owned()), scope, cx);
 
-    view.update(&mut cx, |settings, cx| settings.show_page(3, cx));
+    view.update(&mut cx, |settings, cx| settings.show_page(4, cx));
     settle(&mut cx);
     view.read_with(&cx, |settings, _| {
         assert_eq!(settings.page, Page::Repository);
@@ -639,7 +639,7 @@ fn the_repository_page_writes_a_missing_commit_graph(cx: &mut TestAppContext) {
     view.read_with(&cx, |settings, _| {
         assert_eq!(settings.page, Page::GitConfig)
     });
-    view.update(&mut cx, |settings, cx| settings.show_page(3, cx));
+    view.update(&mut cx, |settings, cx| settings.show_page(4, cx));
     view.read_with(&cx, |settings, _| {
         assert_eq!(settings.page, Page::GitConfig)
     });
@@ -656,7 +656,7 @@ fn the_repository_page_sets_and_clears_the_forge_the_repository_is_on(cx: &mut T
     let (_dir, scope) = file_scope();
     let (view, mut cx) = open(Some(repo.path().to_owned()), scope, cx);
 
-    view.update(&mut cx, |settings, cx| settings.show_page(3, cx));
+    view.update(&mut cx, |settings, cx| settings.show_page(4, cx));
     settle(&mut cx);
     view.read_with(&cx, |settings, _| {
         let choice = settings.forge_choice.as_ref().expect("the choice was read");
@@ -948,4 +948,74 @@ fn the_about_page_opens_one_license_at_a_time(cx: &mut TestAppContext) {
     });
     view.update(&mut cx, |settings, cx| settings.pick_license(5, cx));
     view.read_with(&cx, |settings, _| assert_eq!(settings.picked_license, None));
+}
+
+#[gpui_kit::test]
+fn the_theme_page_saves_typed_colours_and_puts_them_on_screen(cx: &mut TestAppContext) {
+    use gpui_kit::component::ActiveTheme as _;
+    use mantisgit_core::settings::theme::Slot;
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("state");
+    let scope = Scope::File(dir.path().join("gitconfig"));
+    let (view, mut cx) = open(None, scope, cx);
+    view.update_in(&mut cx, |settings, window, cx| {
+        settings.state_file = Some(file.clone());
+        settings.editing_dark = true;
+        settings.show_colors(window, cx);
+    });
+
+    let (slot, input) = view.read_with(&cx, |settings, _| {
+        let field = &settings.color_fields[2];
+        (field.slot, field.input.clone())
+    });
+    assert_eq!(slot, Slot::Base);
+    assert_eq!(
+        input.read_with(&cx, |input, _| input.value().to_string()),
+        "#1e1e2e",
+        "the input starts with the design's colour"
+    );
+
+    // Typing a colour and leaving the input saves it and recolours the app.
+    input.update_in(&mut cx, |input, window, cx| {
+        input.set_value("#1A1B26", window, cx);
+        cx.emit(InputEvent::Change);
+        cx.emit(InputEvent::Blur);
+    });
+    let saved = AppState::load(&file);
+    assert_eq!(saved.theme_dark.color(Slot::Base, true), 0x1a1b26);
+    assert!(saved.theme_light.is_empty());
+    cx.update(|_, cx| {
+        assert_eq!(
+            cx.theme().dark_theme.colors.background.as_deref(),
+            Some("#1a1b26")
+        );
+    });
+
+    // Something that isn't a colour is said, and the input goes back.
+    input.update_in(&mut cx, |input, window, cx| {
+        input.set_value("blue", window, cx);
+        cx.emit(InputEvent::Change);
+        cx.emit(InputEvent::Blur);
+    });
+    view.read_with(&cx, |settings, _| {
+        assert!(matches!(&settings.feedback, Feedback::Failed(m) if m.contains("“blue”")));
+    });
+    assert_eq!(
+        input.read_with(&cx, |input, _| input.value().to_string()),
+        "#1a1b26"
+    );
+    assert_eq!(AppState::load(&file).theme_dark.len(), 1);
+
+    // Resetting puts the design's colour back and leaves nothing in the file.
+    view.update_in(&mut cx, |settings, window, cx| {
+        settings.reset_theme(window, cx)
+    });
+    assert!(AppState::load(&file).theme_dark.is_empty());
+    cx.update(|_, cx| {
+        assert_eq!(
+            cx.theme().dark_theme.colors.background.as_deref(),
+            Some("#1e1e2e")
+        );
+    });
 }

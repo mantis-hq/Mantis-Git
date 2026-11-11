@@ -7,6 +7,7 @@
 
 mod about;
 mod app;
+mod appearance;
 mod git_config;
 mod identities;
 mod repository;
@@ -128,15 +129,17 @@ enum Page {
     GitConfig,
     Identities,
     App,
+    Theme,
     Repository,
     About,
 }
 
 impl Page {
-    const ALL: [Page; 5] = [
+    const ALL: [Page; 6] = [
         Page::GitConfig,
         Page::Identities,
         Page::App,
+        Page::Theme,
         Page::Repository,
         Page::About,
     ];
@@ -146,6 +149,7 @@ impl Page {
             Page::GitConfig => "Git config",
             Page::Identities => "Identities",
             Page::App => "App",
+            Page::Theme => "Theme",
             Page::Repository => "Repository",
             Page::About => "About",
         }
@@ -305,6 +309,11 @@ pub struct Settings {
     new_identity_email: Entity<InputState>,
     new_identity_key: Entity<InputState>,
     new_identity_ssh: Entity<InputState>,
+    /// Whether the Theme page edits the dark appearance or the light one.
+    editing_dark: bool,
+    color_fields: Vec<appearance::ColorField>,
+    /// The desktop themes this system has, which the Theme page offers to import.
+    theme_sources: Vec<mantisgit_core::settings::theme::Source>,
     /// The app's own preferences, and the file that keeps them. There is no file when
     /// the window edits a test config, or when the system has no home folder.
     app: AppState,
@@ -454,6 +463,11 @@ impl Settings {
             new_identity_email,
             new_identity_key,
             new_identity_ssh,
+            editing_dark: cx.theme().is_dark(),
+            color_fields: appearance::color_fields(window, cx),
+            theme_sources: mantisgit_core::settings::theme::Locations::this_system()
+                .map(|places| places.found())
+                .unwrap_or_default(),
             app: state_file
                 .as_deref()
                 .map(AppState::load)
@@ -476,6 +490,7 @@ impl Settings {
             _updates: watch_updates,
         };
         this.load_launcher();
+        this.show_colors(window, cx);
         this.load(window, cx);
         this.load_suggestions(window, cx);
         this.load_cache_size(cx);
@@ -503,7 +518,7 @@ impl Settings {
                 self.load_commit_graph(cx);
                 self.load_forge_choice(cx);
             }
-            Page::GitConfig | Page::Identities | Page::About => {}
+            Page::GitConfig | Page::Identities | Page::Theme | Page::About => {}
         }
         cx.notify();
     }
@@ -812,6 +827,7 @@ impl Settings {
                             .to_owned()
                     }
                     Page::App => "App preferences save as you make them.".to_owned(),
+                    Page::Theme => "Colours apply as you change them.".to_owned(),
                     Page::About => "Mantis Git, and what is in it.".to_owned(),
                     Page::Repository => format!(
                         "Showing {}, the repository in the front tab.",
@@ -945,6 +961,7 @@ impl Render for Settings {
             Page::GitConfig => self.render_git_config(cx),
             Page::Identities => self.render_identities(cx),
             Page::App => self.render_app(cx),
+            Page::Theme => self.render_theme(cx),
             Page::Repository => self.render_repository(cx),
             Page::About => self.render_about(cx),
         };

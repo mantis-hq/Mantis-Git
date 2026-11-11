@@ -28,7 +28,10 @@ their repository in a few seconds.
 ## Colour
 
 Use the Catppuccin values listed here only. Do not invent colours, gradients, or new
-greys. The tables give Mocha; see "Light mode" for Latte.
+greys. The tables give Mocha; see "Light mode" for Latte. Catppuccin is the default and
+the design: a user can change these tokens on the Theme settings page, but the app itself
+never adds a colour that is not one of them, and every rule here holds whatever values they
+take.
 
 | Token      | Hex       | Use                                      |
 | ---------- | --------- | ---------------------------------------- |
@@ -160,6 +163,32 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     inherits its value from, and its reset button says "Inherit". A setting the installed
     git is too old for is dimmed and says which version it needs. If git can't be run, the
     page says so and offers "Try again".
+  - **Theme** lets someone who likes to rice change the colours. Dark and light are two
+    themes (chips "Dark" and "Light", starting on the one in use), each a list of changes on
+    top of Catppuccin kept as `theme_dark` and `theme_light` in the `state` file
+    (`base:1a1b26,blue:7aa2f7`), so a colour left alone stays as designed. The page has a
+    "Colours" card with the appearance chips, a "Theme" row, then one import row for each
+    desktop theme found, then cards for "Surfaces and text", "Meaning" and "Branch
+    lanes": a row for each token of this document (`Slot` in `mantisgit_core::settings::theme`)
+    with a 20 px swatch, its name and what it is for, a hex input and a quiet "Reset" while
+    it is changed. The "Theme" row always offers the built-in theme, "Catppuccin Mocha" for
+    dark and "Catppuccin Latte" for light, as a chip ticked while nothing is changed; choosing
+    it puts every colour of that appearance back. Once a colour is changed a "Custom" chip is
+    ticked beside it. A typed colour applies in every window on Enter or when the input is left,
+    and one that isn't six hex digits is said in the header and put back. The import rows
+    are "Import KDE colours" (`kdeglobals`), "Import qt6ct palette" and "Import qt5ct palette"
+    (the palette the tool points at), and "Import GTK 4 theme" and "Import GTK 3 theme" (the
+    `@define-color` names in `gtk.css`, with the `@import`ed files beside it, else the theme
+    `settings.ini` names). A row is drawn only for a theme that exists on this system, so
+    none is, and no import card, on Windows, which has none to read. Only colours are read:
+    no fonts, sizes, icons or other CSS, and only the theme of the appearance the scheme's
+    background suits is replaced. Base, Mantle, Text, the accent (Blue) and
+    the text on it (Crust) come from the scheme and the greys between are mixed from Base
+    towards Text, so contrast holds; Green, Red and Peach are taken only when the scheme gives
+    a real colour and not a grey; Yellow and the lanes stay as designed. Colours are changed by
+    swapping each Catppuccin value in the bundled theme file, alpha kept
+    (`Overrides::recolor_themes`), so a colour the file uses that no token covers is a bug a
+    test catches.
   - **Identities** are named profiles (a name, email, signing key and an optional SSH key)
     that are reused
     wherever they are picked. The first card says who the open repository commits as and
