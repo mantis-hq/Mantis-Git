@@ -610,6 +610,58 @@ pub fn delete_remote_branch(
         .map(|_| Some(format!("Deleted {name} on {remote}.")))
 }
 
+/// Says what deleting a tag on its remote does and how to bring it back.
+pub fn delete_remote_tag_warning(
+    remote: &str,
+    name: &str,
+    tip: Option<&str>,
+    also_local: bool,
+) -> String {
+    let undo = tip.map_or(String::new(), |tip| {
+        let tip = short_oid(tip);
+        if also_local {
+            format!(" To undo it, run `git tag {name} {tip}` and `git push {remote} {name}`.")
+        } else {
+            format!(" To undo it, run `git push {remote} {name}`.")
+        }
+    });
+    let here = if also_local {
+        " The local tag goes too."
+    } else {
+        " The local tag stays."
+    };
+    format!("This deletes the tag {name} on {remote}, for everyone who uses it.{here}{undo}")
+}
+
+/// Sends a tag to a remote. Git refuses to move a tag the remote already has elsewhere.
+pub fn push_tag(repo: &Path, remote: &str, name: &str) -> Result<Option<String>, String> {
+    let refspec = format!("refs/tags/{name}:refs/tags/{name}");
+    ops::run(repo, &["push", remote, &refspec]).map(|_| {
+        Some(format!(
+            "Pushed the tag {name} to {remote}. To undo it, run \
+             `git push {remote} --delete {name}`."
+        ))
+    })
+}
+
+/// Deletes a tag on a remote, and the local one too when `also_local`.
+pub fn delete_remote_tag(
+    repo: &Path,
+    remote: &str,
+    name: &str,
+    also_local: bool,
+) -> Result<Option<String>, String> {
+    let refname = format!("refs/tags/{name}");
+    ops::run(repo, &["push", remote, "--delete", &refname])?;
+    if also_local {
+        ops::run(repo, &["tag", "-d", name])?;
+        return Ok(Some(format!(
+            "Deleted the tag {name} here and on {remote}."
+        )));
+    }
+    Ok(Some(format!("Deleted the tag {name} on {remote}.")))
+}
+
 pub fn delete_tag(repo: &Path, name: &str) -> Result<Option<String>, String> {
     ops::run(repo, &["tag", "-d", name]).map(|_| Some(format!("Deleted the tag {name}.")))
 }
@@ -978,6 +1030,29 @@ mod tests {
         assert!(delete_warning(RefKind::Tag, "v1", None).starts_with("This deletes the tag v1."));
         delete_tag(repo.path(), "v1").unwrap();
         assert!(!ops::resolves(repo.path(), "refs/tags/v1"));
+    }
+
+    #[test]
+    fn a_tag_is_pushed_then_deleted_on_the_remote_and_optionally_here() {
+        let repo = ahead();
+        let remote = Repo::new();
+        remote.git(&["init", "-q", "--bare", "-b", "main"]);
+        let url = remote.path().to_str().unwrap();
+        repo.git(&["remote", "add", "origin", url]);
+        repo.git(&["tag", "v1"]);
+        repo.git(&["tag", "v2"]);
+
+        push_tag(repo.path(), "origin", "v1").unwrap();
+        push_tag(repo.path(), "origin", "v2").unwrap();
+        assert!(remote.git(&["tag"]).contains("v1"));
+
+        delete_remote_tag(repo.path(), "origin", "v1", false).unwrap();
+        assert!(!remote.git(&["tag"]).contains("v1"));
+        assert!(ops::resolves(repo.path(), "refs/tags/v1"));
+
+        delete_remote_tag(repo.path(), "origin", "v2", true).unwrap();
+        assert!(!remote.git(&["tag"]).contains("v2"));
+        assert!(!ops::resolves(repo.path(), "refs/tags/v2"));
     }
 
     #[test]
