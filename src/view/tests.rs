@@ -445,6 +445,23 @@ fn picking_twice_turns_it_off_and_a_reload_keeps_it(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn clicking_a_commit_outside_the_picked_branch_lets_go_of_it(cx: &mut TestAppContext) {
+    let (view, mut cx) = open_view(cx);
+    load_with(&view, &["b", "a"], branches(&["a", "b"]), &mut cx);
+    let rows = [branch("a"), branch("b")];
+    view.update(&mut cx, |view, cx| {
+        view.pick(&rows[0], Modifiers::none(), &rows, cx);
+        // Row 1 is in the history of `a`, so the pick stays.
+        view.click_row(1, Modifiers::none(), cx);
+        assert!(view.sidebar.spotlight.is_some());
+        // Row 0 is not.
+        view.click_row(0, Modifiers::none(), cx);
+        assert!(view.sidebar.spotlight.is_none());
+        assert!(view.sidebar.picks.is_empty());
+    });
+}
+
+#[gpui_kit::test]
 fn shift_and_ctrl_pick_several_branches(cx: &mut TestAppContext) {
     let (view, mut cx) = open_view(cx);
     load_with(&view, &["c", "b", "a"], branches(&["a", "b", "c"]), &mut cx);
