@@ -228,7 +228,7 @@ impl GraphView {
     /// is seen, and shows initials until it arrives or if there is none.
     pub(super) fn avatar_face(&mut self, commit: &Commit, cx: &mut Context<Self>) -> Face {
         let style = self.avatars.style;
-        if style == Style::Off || commit.oid.is_empty() {
+        if style == Style::Off || commit.oid.is_empty() || !commit.wears_avatar() {
             return Face::None;
         }
         let mine = self

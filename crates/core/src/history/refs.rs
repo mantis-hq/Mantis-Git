@@ -249,6 +249,31 @@ impl Refs {
         chips(self.by_commit.get(oid).map_or(&[], Vec::as_slice))
     }
 
+    /// How wide the refs column has to be for no chip to be cut short, in character cells:
+    /// the widest of the first `visible` chips at any commit, with room for the cloud of a
+    /// chip that is in sync and for the `+n` that stands for the rest.
+    pub fn widest_chips(&self, visible: usize) -> usize {
+        /// The cloud and the gap before it.
+        const CLOUD: usize = 3;
+        /// `+n`, and the gap before it.
+        const MORE: usize = 4;
+        self.by_commit
+            .values()
+            .map(|refs| {
+                let chips = chips(refs);
+                let shown: usize = chips
+                    .iter()
+                    .take(visible)
+                    .map(|chip| {
+                        chip.label.name.chars().count() + if chip.synced { CLOUD } else { 0 }
+                    })
+                    .sum();
+                shown + if chips.len() > visible { MORE } else { 0 }
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
     /// The first branch at a commit.
     fn branch_at(&self, oid: &str) -> Option<String> {
         let refs = self.by_commit.get(oid)?;
@@ -751,6 +776,36 @@ mod tests {
         assert_eq!(names, ["main", "origin/other", "v1"]);
         assert!(found[0].synced);
         assert!(!found[1].synced && !found[2].synced);
+    }
+
+    #[test]
+    fn the_refs_column_is_as_wide_as_the_widest_first_chip() {
+        let mut refs = Refs::default();
+        assert_eq!(refs.widest_chips(1), 0);
+        refs.by_commit
+            .insert("a".into(), vec![named(RefKind::Branch, "main")]);
+        refs.by_commit.insert(
+            "b".into(),
+            vec![
+                named(RefKind::Branch, "feat/long-name"),
+                named(RefKind::Remote, "origin/feat/long-name"),
+            ],
+        );
+        // "feat/long-name" is 14 cells, plus the cloud, since its remote is level with it.
+        assert_eq!(refs.widest_chips(1), 14 + 3);
+        refs.by_commit.insert(
+            "c".into(),
+            vec![named(RefKind::Tag, "v1"), named(RefKind::Tag, "v2")],
+        );
+        refs.by_commit.insert(
+            "d".into(),
+            vec![
+                named(RefKind::Branch, "a-much-longer-branch-name"),
+                named(RefKind::Tag, "v3"),
+            ],
+        );
+        // The first chip, and room for `+1` after it.
+        assert_eq!(refs.widest_chips(1), 25 + 4);
     }
 
     fn commit_with(oid: &str, parents: &[&str]) -> Commit {

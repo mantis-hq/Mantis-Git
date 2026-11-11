@@ -31,8 +31,13 @@ const NODE_RADIUS: f32 = 4.;
 const MAX_VISIBLE_LANES: u32 = 8;
 const CLIPPED_MARKER_RADIUS: f32 = 3.;
 const MAX_VISIBLE_REFS: usize = 1;
-/// Refs get their own column left of the graph, so subjects stay aligned.
-const REFS_WIDTH: f32 = 180.;
+/// Refs get their own column left of the graph, so subjects stay aligned. It is as wide as
+/// the widest chip needs (`Refs::widest_chips`), between these two.
+const REFS_MIN_WIDTH: f32 = 48.;
+const REFS_MAX_WIDTH: f32 = 180.;
+/// One character of Maple Mono at the chip size, and a chip's padding around its text.
+const CHIP_CELL: f32 = 6.6;
+const CHIP_PADDING: f32 = 12.;
 /// Long enough to cross from a chip onto the card that lists its siblings.
 const REFS_CLOSE_DELAY: Duration = Duration::from_millis(150);
 /// How much of Green a signed commit's shield keeps.
@@ -53,6 +58,14 @@ impl GraphView {
         lanes as f32 * LANE_WIDTH + GRAPH_PADDING * 2.
     }
 
+    /// The refs column's width, from the longest chip the repository has, so a repository
+    /// of short branch names doesn't leave a wide empty strip beside the graph.
+    pub(super) fn refs_width(&self) -> f32 {
+        let cells = self.refs.widest_chips(MAX_VISIBLE_REFS);
+        let width = cells as f32 * CHIP_CELL + CHIP_PADDING + 8.;
+        width.clamp(REFS_MIN_WIDTH, REFS_MAX_WIDTH)
+    }
+
     /// The refs at a commit. A commit with more than one shows the first, and hovering opens
     /// a card listing all of them, each of which can be dragged and right-clicked like the
     /// chip itself.
@@ -60,6 +73,7 @@ impl GraphView {
         &self,
         index: usize,
         chips: &[Chip<'_>],
+        width: f32,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = cx.theme();
@@ -105,7 +119,7 @@ impl GraphView {
                     .items_start()
                     .gap_1()
                     .p_1()
-                    .min_w(px(REFS_WIDTH))
+                    .min_w(px(width))
                     .rounded(px(8.))
                     .bg(panel)
                     .border_1()
@@ -141,7 +155,7 @@ impl GraphView {
         div()
             .id(("refs", index))
             .relative()
-            .w(px(REFS_WIDTH))
+            .w(px(width))
             .h_full()
             .flex_none()
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
@@ -223,6 +237,7 @@ impl GraphView {
         let (background, hover, active) = (theme.background, theme.list_hover, selected_row(theme));
         let subtext0 = tokens(is_dark).subtext0;
         let graph_width = self.graph_width();
+        let refs_width = self.refs_width();
 
         let mut rows = Vec::with_capacity(range.len());
         for index in range {
@@ -280,7 +295,7 @@ impl GraphView {
                     .children(cells(
                         self.columns,
                         [
-                            self.render_refs_column(index, &chips, cx)
+                            self.render_refs_column(index, &chips, refs_width, cx)
                                 .into_any_element(),
                             div()
                                 .w(px(graph_width))
@@ -400,6 +415,7 @@ impl GraphView {
         let theme = cx.theme();
         let (panel, border, muted) = (theme.title_bar, theme.border, theme.muted_foreground);
         let graph_width = self.graph_width();
+        let refs_width = self.refs_width();
         let headers = self.columns.columns().map(|column| {
             let heading = div()
                 .id(("column", column as usize))
@@ -409,7 +425,7 @@ impl GraphView {
                 .rounded(px(4.))
                 .child(column.label());
             let heading = match column {
-                Column::Refs => heading.w(px(REFS_WIDTH)).flex_none(),
+                Column::Refs => heading.w(px(refs_width)).flex_none(),
                 Column::Graph => heading.w(px(graph_width)).flex_none(),
                 Column::Subject => heading.flex_1().min_w_0(),
                 Column::Hash => heading.w(HASH_WIDTH).flex_none(),
@@ -568,7 +584,7 @@ fn ref_label(
         .flex_none()
         .gap_1()
         .h(px(20.))
-        .max_w(px(REFS_WIDTH - 36.))
+        .max_w(px(REFS_MAX_WIDTH - 36.))
         .px_1p5()
         .rounded(px(4.))
         .text_size(TEXT_CHIP)
@@ -687,6 +703,9 @@ fn paint_row(
         paint_circle(node_x, middle, NODE_RADIUS + 3., node.head, window);
         paint_circle(node_x, middle, NODE_RADIUS + 1.5, node.hollow, window);
         paint_circle(node_x, middle, NODE_RADIUS, node.head, window);
+        if node.is_merge {
+            paint_circle(node_x, middle, NODE_RADIUS - 1.75, node.hollow, window);
+        }
         return;
     }
     paint_circle(
