@@ -147,7 +147,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   space says so. For working changes the header starts with a tick box for the whole file,
   and each hunk's header starts with one too (see "Staging").
 - The sidebar starts closed below 1500 px, because the two side panels would leave 520 px
-  for the graph at the default window. A quiet button and `Ctrl B` open it at any width.
+  for the graph at the default window. `Ctrl B` opens and closes it at any width; there is
+  no button for it in the header.
 - There are no task screens. Committing is the foot of the inspector, and so are conflicts
   (see "Conflicts"): the graph window is the one window for everything about a repository.
 - Settings: a quiet "Settings" button at the end of the header, or `Ctrl ,`, opens a
@@ -815,11 +816,13 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   `src/view/parts.rs`) for every list that loads. Picking another commit stops that read.
 - **Commit form:** the foot of the inspector for working changes, under the two lists and
   a Surface 0 border. Its heading is a quiet "Commit" with an arrow, which folds the form away
-  to give the lists the room (folded, it says how many files are staged), and the one blue
-  button, named for its result ("Commit 2 files", or "Stage a file to commit" while nothing
-  is staged and nothing can happen), so it is never out of sight. Under it: the kinds of
-  change as chips in one line, the commit line as it will be written with its length against
-  72, the summary, a details box and "Breaking change" for `feat`. Nothing predicts a version
+  to give the lists the room (folded, it says how many files are staged). Under it: the kinds
+  of change as chips in one line, the commit line as it will be written with its length against
+  72, the summary, a details box and "Breaking change" for `feat`, and last the buttons, at
+  the right, under what they act on: a quiet "Stash 2 files" and the one blue button, named
+  for its result ("Commit 2 files", or "Stage a file to commit" while nothing is staged and
+  nothing can happen). The buttons sit outside the part that scrolls, so a short window never
+  hides them. Nothing predicts a version
   or a release: the form says what the commit is, not what a release process might do with it.
   It commits exactly what is staged. After a commit the form empties, and the band under the
   header says how to undo it. If a hook refuses, the message stays. The form takes at most
@@ -830,7 +833,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   commit. The picked kind of change is ticked with the Surface 0 fill like every choice,
   never solid blue, since the one blue fill is the commit button. A commit button that
   can't be used only dims; it doesn't explain itself.
-  A quiet "Stash 2 files" button sits beside the blue one and runs `git stash push --staged`,
+  "Stash 2 files" runs `git stash push --staged`,
   so only what is staged is set aside and unstaged changes stay. A typed summary names the
   stash. The band says how to bring it back. The inspector doesn't list stashes; the sidebar does.
 - **Stashes:** the graph draws each as a commit on the one it was made on, joined to it by a

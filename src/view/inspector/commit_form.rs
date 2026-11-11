@@ -227,56 +227,36 @@ impl GraphView {
 
         // The heading holds the button, so that committing never needs a scroll. While the
         // form is folded away there is no message to commit, so the button goes too.
-        let heading = div()
-            .h_flex()
-            .h(px(32.))
-            .gap_2()
-            .child(
-                div()
-                    .id("commit-form-toggle")
-                    .h_flex()
-                    .flex_1()
-                    .h_full()
-                    .gap_2()
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.commit.collapsed = !this.commit.collapsed;
-                        cx.notify();
-                    }))
-                    .child(
+        let heading = div().h_flex().h(px(32.)).gap_2().child(
+            div()
+                .id("commit-form-toggle")
+                .h_flex()
+                .flex_1()
+                .h_full()
+                .gap_2()
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.commit.collapsed = !this.commit.collapsed;
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .w(px(12.))
+                        .flex_none()
+                        .text_size(TEXT_CHIP)
+                        .text_color(muted)
+                        .child(if collapsed { "▸" } else { "▾" }),
+                )
+                .child(section_label(muted).child("Commit"))
+                .when(collapsed, |row| {
+                    row.child(
                         div()
-                            .w(px(12.))
-                            .flex_none()
                             .text_size(TEXT_CHIP)
                             .text_color(muted)
-                            .child(if collapsed { "▸" } else { "▾" }),
+                            .child(format!("{staged} staged")),
                     )
-                    .child(section_label(muted).child("Commit"))
-                    .when(collapsed, |row| {
-                        row.child(
-                            div()
-                                .text_size(TEXT_CHIP)
-                                .text_color(muted)
-                                .child(format!("{staged} staged")),
-                        )
-                    }),
-            )
-            .when(!collapsed, |row| {
-                row.child(
-                    Button::new("stash-staged")
-                        .ghost()
-                        .label(stash::push_label(staged))
-                        .disabled(staged == 0 || self.busy.is_some())
-                        .on_click(cx.listener(|this, _, _, cx| this.stash_staged(cx))),
-                )
-                .child(
-                    Button::new("commit")
-                        .primary()
-                        .label(message::commit_label(staged))
-                        .disabled(cannot)
-                        .on_click(cx.listener(|this, _, _, cx| this.write_commit(cx))),
-                )
-            });
+                }),
+        );
 
         let mut body = div()
             .v_flex()
@@ -331,10 +311,41 @@ impl GraphView {
             )
         });
 
+        // Under the inputs, where the message is written, and outside what scrolls, so a
+        // short window never hides the way to commit.
+        let actions = div()
+            .h_flex()
+            .justify_end()
+            .gap_2()
+            .child(
+                Button::new("stash-staged")
+                    .ghost()
+                    .label(stash::push_label(staged))
+                    .disabled(staged == 0 || self.busy.is_some())
+                    .on_click(cx.listener(|this, _, _, cx| this.stash_staged(cx))),
+            )
+            .child(
+                Button::new("commit")
+                    .primary()
+                    .label(message::commit_label(staged))
+                    .disabled(cannot)
+                    .on_click(cx.listener(|this, _, _, cx| this.write_commit(cx))),
+            );
+
         div()
             .v_flex()
             .gap_2()
+            .min_h_0()
             .child(heading)
-            .when(!collapsed, |root| root.child(body))
+            .when(!collapsed, |root| {
+                root.child(
+                    div()
+                        .id("commit-body")
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .child(body),
+                )
+                .child(actions)
+            })
     }
 }
