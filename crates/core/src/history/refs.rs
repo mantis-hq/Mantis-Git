@@ -10,7 +10,6 @@ use crate::repo::status::{self, RepoStatus};
 use crate::repo::submodule::{self, Submodule};
 use crate::repo::worktree::{self, Worktree};
 use crate::text::count;
-use crate::working::version::{self, Version};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -298,11 +297,6 @@ impl Refs {
             .iter()
             .find(|branch| branch.name == name)
             .map_or(LaneColor::default(), |branch| branch.color)
-    }
-
-    /// The highest `v1.2.3` style tag.
-    pub fn latest_version(&self) -> Option<Version> {
-        version::latest_version(self.tags.iter().map(|tag| tag.name.as_str()))
     }
 
     /// Says what the working changes are, in plain words.

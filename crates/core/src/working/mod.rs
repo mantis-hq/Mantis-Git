@@ -2,7 +2,6 @@
 //! commit.
 
 pub mod message;
-pub mod version;
 
 use crate::commit::details::{self, FileChange};
 use crate::ops::{self, Cancel};

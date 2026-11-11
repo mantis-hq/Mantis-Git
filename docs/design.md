@@ -817,8 +817,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   button, named for its result ("Commit 2 files", or "Stage a file to commit" while nothing
   is staged and nothing can happen), so it is never out of sight. Under it: the kinds of
   change as chips in one line, the commit line as it will be written with its length against
-  72, the summary, a details box, "Breaking change" for `feat`, and a one-line card for what
-  landing it would do to the version, shown only when the repository has `v1.2.3` style tags.
+  72, the summary, a details box and "Breaking change" for `feat`. Nothing predicts a version
+  or a release: the form says what the commit is, not what a release process might do with it.
   It commits exactly what is staged. After a commit the form empties, and the band under the
   header says how to undo it. If a hook refuses, the message stays. The form takes at most
   42% of the inspector and scrolls past that. Each list is as tall as its rows, so one file
