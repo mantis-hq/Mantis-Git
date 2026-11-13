@@ -555,7 +555,9 @@ impl GraphView {
     ) -> AnyElement {
         let cell = div()
             .id(("checks-cell", index))
-            .w(px(WIDTH))
+            .w(px(self.column_width(
+                mantisgit_core::history::columns::Column::Checks,
+            )))
             .h_full()
             .flex_none()
             .h_flex();

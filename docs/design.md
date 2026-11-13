@@ -448,8 +448,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   `hash`, `author` and `date`. A list that is damaged, repeats a column or leaves one out is mended
   when read, so every column always shows once (`ColumnOrder` in
   `mantisgit_core::history::columns`). Every column but the subject, which takes what is left, also drags wider or narrower by an 8 px
-  strip on the right edge of its heading (the left edge for a column after the subject, which grows leftwards since the subject takes what is left), which tints 50% Blue and shows a resize cursor, between
-  40 and 600 px; a double-click puts it back to the width the app picks. The widths are kept for
+  strip on the right edge of its heading (the left edge for a column after the subject), which tints 50% Blue and shows a resize cursor, between
+  40 and 600 px, with a 1 px Surface 0 line, 14 px tall, in the gap to mark where to grab. Only the edge held moves: a column before the subject grows rightwards and one after it leftwards, and the subject alone takes up the change, so no other column moves. The width follows the pointer from where it was grabbed. A double-click puts it back to the width the app picks. The widths are kept for
   every repository as `graph_column_widths` (`refs:120,author:150`), and one that is damaged or
   unknown is skipped (`ColumnWidths`). The headings stay over the graph, not over search
   results, which are a list of their own.

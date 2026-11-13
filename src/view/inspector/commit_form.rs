@@ -73,6 +73,7 @@ impl GraphView {
 
     /// Saves the widths if a drag changed them.
     pub(in crate::view) fn finish_column_resize(&mut self, cx: &mut Context<Self>) {
+        self.column_grab = None;
         if std::mem::take(&mut self.column_widths_dirty) {
             self.save_column_widths(cx);
         }
