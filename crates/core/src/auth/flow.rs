@@ -194,6 +194,7 @@ fn token_from(host: &Host, http: &dyn Transport, form: &[(&str, &str)]) -> Resul
         bearer: None,
         form: Some(form),
         json: None,
+        if_none_match: None,
     })?;
     let value: Value = serde_json::from_str(&reply.body).unwrap_or(Value::Null);
     let text_of = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);

@@ -25,10 +25,14 @@ use std::time::{Duration, Instant};
 
 /// How wide the column is, which is a mark and a little room.
 pub(super) const WIDTH: f32 = 56.;
-/// While anything is still running, the forge is asked again this often.
+/// While anything is still running, the forge is asked again after this, then after twice
+/// as long each time nothing changed, up to `POLL_MOST`, so a build that runs for an hour
+/// isn't asked about 180 times. Anything that changes starts it over.
 const POLL: Duration = Duration::from_secs(20);
-/// Coming back to the window asks again, unless it was asked this recently.
-const STALE: Duration = Duration::from_secs(15);
+const POLL_MOST: Duration = Duration::from_secs(300);
+/// Coming back to the window asks again, unless it was asked this recently. A fetch that
+/// finds nothing new is a 304, but it is still a round trip.
+const STALE: Duration = Duration::from_secs(60);
 const LOG_ROW: Pixels = px(20.);
 const LOG_NUMBER: Pixels = px(56.);
 /// A line longer than this is cut, since one of megabytes would take the window a second
@@ -84,6 +88,10 @@ pub(super) struct State {
     log_scroll: UniformListScrollHandle,
     /// Asks again later while something runs. Dropping it cancels the wait.
     poll: Option<Task<()>>,
+    /// How many times in a row that wait ended with nothing new, which lengthens it.
+    quiet_polls: u32,
+    /// A read of the newest pipelines is on its way, so another isn't started beside it.
+    reading: bool,
 }
 
 impl GraphView {
@@ -98,6 +106,11 @@ impl GraphView {
     pub(super) fn refresh_checks(&mut self, cx: &mut Context<Self>) {
         let site = forge::pick(&self.refs.remote_configs, self.refs.forge).map(|(_, site)| site);
         let repo = self.repo.clone();
+        // One read at a time: a load, a focus and a poll landing together are one question.
+        if self.checks.reading {
+            return;
+        }
+        self.checks.reading = true;
         self.checks.refreshed = Some(Instant::now());
         Self::spawn_blocking(
             move || {
@@ -106,6 +119,7 @@ impl GraphView {
                 Some((target, found))
             },
             move |this, result, cx| {
+                this.checks.reading = false;
                 // The tab may have moved to another repository meanwhile.
                 if this.repo != repo {
                     return;
@@ -156,9 +170,27 @@ impl GraphView {
                         )),
                         _ => None,
                     });
+                if found != self.checks.statuses {
+                    self.checks.quiet_polls = 0;
+                }
+                // The list is the newer word. When it disagrees with what the commit's own
+                // read said (a re-run, say), that read is out of date and is asked again.
+                let stale = kept
+                    .as_ref()
+                    .is_some_and(|(oid, status)| found.get(oid).is_some_and(|s| s != status));
                 self.checks.statuses = found;
-                if let Some((oid, status)) = kept {
-                    self.checks.statuses.insert(oid, status);
+                match kept {
+                    Some((oid, status)) if !stale => {
+                        self.checks.statuses.insert(oid, status);
+                    }
+                    _ if stale => {
+                        if self.checks.tab == Tab::Checks {
+                            self.load_checks_detail(true, cx);
+                        } else {
+                            self.checks.detail = None;
+                        }
+                    }
+                    _ => {}
                 }
             }
             Err(message) => self.checks.error = Some(message),
@@ -177,13 +209,18 @@ impl GraphView {
             matches!(&detail.load, Load::Done(p) if p.iter().any(|p| p.status.is_active()))
         });
         let active = detail_active || self.checks.statuses.values().any(|s| s.is_active());
+        let wait = (POLL * 2u32.saturating_pow(self.checks.quiet_polls.min(4))).min(POLL_MOST);
         self.checks.poll = active.then(|| {
             cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(POLL).await;
+                cx.background_executor().timer(wait).await;
                 this.update(cx, |this, cx| {
                     this.checks.poll = None;
+                    this.checks.quiet_polls += 1;
                     this.refresh_checks(cx);
-                    this.load_checks_detail(true, cx);
+                    // The jobs of one commit are only worth asking about while they show.
+                    if this.checks.tab == Tab::Checks {
+                        this.load_checks_detail(true, cx);
+                    }
                 })
                 .ok();
             })
@@ -217,6 +254,7 @@ impl GraphView {
     /// Reads the selected commit's pipelines and their jobs. `again` reads them even when
     /// they are already here, which is how a refresh sees a job finish.
     fn load_checks_detail(&mut self, again: bool, cx: &mut Context<Self>) {
+        let caches = self.caches.clone();
         let (Some(target), Some(commit)) = (self.checks.target.clone(), self.selected_commit())
         else {
             return;
@@ -240,7 +278,7 @@ impl GraphView {
         }
         let sha = oid.to_string();
         Self::spawn_blocking(
-            move || ci::for_commit_live(&target, &sha),
+            move || ci::for_commit_cached(&target, &caches, &sha, again),
             move |this, result, cx| {
                 // Another commit may have been picked while this was read.
                 let current = this.checks.detail.as_ref().is_some_and(|d| d.oid == oid);
@@ -249,6 +287,13 @@ impl GraphView {
                 }
                 let load = match result {
                     Ok(pipelines) => {
+                        let changed = !matches!(
+                            this.checks.detail.as_ref().map(|d| &d.load),
+                            Some(Load::Done(before)) if *before == pipelines
+                        );
+                        if changed {
+                            this.checks.quiet_polls = 0;
+                        }
                         match Status::worst(pipelines.iter().map(|p| p.status)) {
                             Some(status) => this.checks.statuses.insert(oid.to_string(), status),
                             None => this.checks.statuses.remove(&*oid),
@@ -274,6 +319,7 @@ impl GraphView {
             return;
         };
         let id = job.id.clone();
+        let caches = self.caches.clone();
         self.checks.log = Some(LogView {
             pipeline,
             job: job.clone(),
@@ -282,7 +328,7 @@ impl GraphView {
         self.checks.log_scroll = UniformListScrollHandle::new();
         cx.notify();
         Self::spawn_blocking(
-            move || ci::log_live(&target, &job),
+            move || ci::log_cached(&target, &caches, &job),
             move |this, result, cx| {
                 let Some(view) = this.checks.log.as_mut().filter(|view| view.job.id == id) else {
                     return;
@@ -411,6 +457,7 @@ impl GraphView {
             .xsmall()
             .label("Refresh")
             .on_click(cx.listener(|this, _, _, cx| {
+                this.checks.quiet_polls = 0;
                 this.refresh_checks(cx);
                 this.load_checks_detail(true, cx);
             }));
