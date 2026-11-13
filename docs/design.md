@@ -278,7 +278,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     room the others leave (`Budget` in `mantisgit_core::cache`). A storage row says how much
     is in use ("Using 98 MB of 256 MB.") beside a quiet "Clear cache" button that empties
     every cache, and under it one 8 px bar, as long as the limit while the cache is on, cut
-    into what each cache holds (commits, file diffs, avatars; a commit's files, its signature check and its finished CI are one part), largest first. The cuts
+    into what each cache holds (commits, file diffs, avatars; a commit's files, its signature check and its CI are one part), largest first. The cuts
     take three of the branch palette's colours (Teal, Pink, Sky) with a gap of Mantle
     between them on a Surface 0 track, and a legend names each, its name in Text and its
     size ("< 1 MB" when under a megabyte) in Overlay 2, so no meaning rests on colour alone. Changes apply at once to the running app. The cache lives in the
@@ -998,17 +998,26 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     only asked about while the tab shows. A refusal is said in Peach
     in words a person can act on (sign in again, or the server has no CI for this
     repository).
-  - **Asking as little as possible:** CI is the one thing here that reaches over the network
-    on its own, so it is kept to what can't be known otherwise. Every read sends the `ETag`
-    the forge gave last time as `If-None-Match`, so a poll that finds nothing new is a 304
-    with no body that costs no rate limit (`Revalidating` in `mantisgit_core::auth::transport`;
-    a forge that gives no `ETag` is asked in full). Only one read of the newest pipelines is
-    in flight at a time, so a load, a return to the window (not within 60 seconds of the
-    last) and a poll that land together are one question. A commit's pipelines with their
-    jobs, and a job's log, are kept in the disk cache (under "Commits" in Settings) once
-    they are over, since nothing running can be settled yet, and opening them again asks
-    nothing. "Refresh" and the polls skip that copy, and when the column's newer answer
-    disagrees with a commit's kept one (a re-run) the commit is read again.
+  - **Instant, and asking as little as possible:** CI is the one thing here that reaches
+    over the network on its own, so nothing is asked that is already known, and nothing
+    known waits for the network. Every answer to a GET, running or finished, is kept with
+    its `ETag` in the disk cache (under "Commits" in Settings; `Revalidating` in
+    `mantisgit_core::auth::transport`). The next ask sends the `ETag` as `If-None-Match`, so
+    a poll that finds nothing new is a 304 with no body that costs no rate limit, and so is
+    the first ask after a restart. A forge that gives no `ETag` is asked in full.
+    The interface draws from what is kept before it asks: the column's marks when a
+    repository opens, a commit's pipelines when its Checks tab opens, so a repository seen
+    before shows its CI as soon as its history does and the forge's answer then only
+    corrects it (`Stored`, which never touches the network; a page it has never had is a
+    miss and the interface waits for the forge as before). The kept marks fill an empty
+    column only, and a forge that can't be reached leaves them standing. A job that is
+    over has a log that never changes, so its kept copy is the answer and nobody is asked;
+    a running one is asked each time. A page is kept by its address, not by who asked,
+    since one account is signed in to a server; "Clear cache" forgets them all.
+    Only one read of the newest pipelines is in flight at a time, so a load, a return to
+    the window (not within 60 seconds of the last) and a poll that land together are one
+    question. When the column's newer answer disagrees with a commit's pipelines already on
+    show (a re-run), the commit is read again.
   - A **log** opens when a job is clicked, over the whole graph as a diff does, with a 40 px
     header (mark, job, "pipeline · status", a quiet "Open on GitHub" and "Close"). Its lines
     are 20 px rows with line numbers in Overlay 1, in Subtext 0, and Red for a line that

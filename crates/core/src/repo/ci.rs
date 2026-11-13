@@ -12,14 +12,11 @@
 
 use super::forge::{Forge, Site};
 use crate::auth::token::Keychain;
-use crate::auth::transport::Revalidating;
 use crate::auth::transport::{Request, Transport, Web};
 use crate::auth::{self, Account, Host};
 use crate::cache::keys::Caches;
-use crate::cache::{Cacheable, Reader, Writer};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::LazyLock;
 
 /// How many of the newest pipelines the column reads, one call each page.
 const RECENT: usize = 100;
@@ -73,23 +70,6 @@ impl Status {
         matches!(self, Self::Running | Self::Queued)
     }
 
-    fn code(self) -> u8 {
-        self as u8
-    }
-
-    fn from_code(code: u8) -> Option<Self> {
-        [
-            Self::Failed,
-            Self::Running,
-            Self::Queued,
-            Self::Cancelled,
-            Self::Passed,
-            Self::Skipped,
-        ]
-        .into_iter()
-        .find(|status| status.code() == code)
-    }
-
     /// The one status that stands for several: a failure beats everything, then what is
     /// still going, and a pass beats what was skipped.
     pub fn worst(statuses: impl IntoIterator<Item = Status>) -> Option<Status> {
@@ -138,118 +118,6 @@ impl Pipeline {
             other => other.label().to_owned(),
         }
     }
-}
-
-impl Pipeline {
-    /// Whether nothing in it is still going, so what the forge says can't change on its own
-    /// and is worth keeping.
-    fn is_settled(&self) -> bool {
-        !self.status.is_active() && self.jobs.iter().all(|job| !job.status.is_active())
-    }
-}
-
-/// A commit's pipelines once all are over, as the disk cache keeps them. A re-run is the
-/// one way they change, which "Refresh" asks about and the graph's column notices.
-pub struct Settled(Vec<Pipeline>);
-
-impl Cacheable for Settled {
-    const FORMAT: u32 = 1;
-
-    fn weight(&self) -> usize {
-        self.0
-            .iter()
-            .map(|p| 256 + p.jobs.len() * 256 + p.name.len() + p.url.len())
-            .sum()
-    }
-
-    fn encode(&self, out: &mut Writer) {
-        out.len(self.0.len());
-        for pipeline in &self.0 {
-            out.str(&pipeline.id);
-            out.str(&pipeline.name);
-            out.u8(pipeline.status.code());
-            out.str(&pipeline.url);
-            out.len(pipeline.jobs.len());
-            for job in &pipeline.jobs {
-                out.str(&job.id);
-                out.str(&job.name);
-                out.str(&job.group);
-                out.u8(job.status.code());
-                out.bool(job.seconds.is_some());
-                out.u64(job.seconds.unwrap_or_default());
-                out.str(&job.url);
-            }
-        }
-    }
-
-    fn decode(input: &mut Reader) -> Option<Self> {
-        let mut pipelines = Vec::new();
-        for _ in 0..input.len()? {
-            let (id, name) = (input.str()?.to_owned(), input.str()?.to_owned());
-            let status = Status::from_code(input.u8()?)?;
-            let url = input.str()?.to_owned();
-            let mut jobs = Vec::new();
-            for _ in 0..input.len()? {
-                let (id, name) = (input.str()?.to_owned(), input.str()?.to_owned());
-                let group = input.str()?.to_owned();
-                let status = Status::from_code(input.u8()?)?;
-                let has_seconds = input.bool()?;
-                let seconds = input.u64()?;
-                jobs.push(Job {
-                    id,
-                    name,
-                    group,
-                    status,
-                    seconds: has_seconds.then_some(seconds),
-                    url: input.str()?.to_owned(),
-                });
-            }
-            pipelines.push(Pipeline {
-                id,
-                name,
-                status,
-                url,
-                jobs,
-            });
-        }
-        Some(Self(pipelines))
-    }
-}
-
-/// A finished job's log, cleaned, as the disk cache keeps it. A log never changes once the
-/// job is over.
-pub struct Finished(Vec<String>);
-
-impl Cacheable for Finished {
-    const FORMAT: u32 = 1;
-
-    fn weight(&self) -> usize {
-        self.0.iter().map(|line| line.len() + 24).sum()
-    }
-
-    fn encode(&self, out: &mut Writer) {
-        out.len(self.0.len());
-        for line in &self.0 {
-            out.str(line);
-        }
-    }
-
-    fn decode(input: &mut Reader) -> Option<Self> {
-        let count = input.len()?;
-        let mut lines = Vec::with_capacity(count.min(input.remaining()));
-        for _ in 0..count {
-            lines.push(input.str()?.to_owned());
-        }
-        Some(Self(lines))
-    }
-}
-
-pub(crate) fn pipelines_key(target: &Target, sha: &str) -> String {
-    format!("ci/{}/{}/{sha}", target.host.origin, target.path)
-}
-
-pub(crate) fn log_key(target: &Target, job: &Job) -> String {
-    format!("ci-log/{}/{}/{}", target.host.origin, target.path, job.id)
 }
 
 /// The server and repository CI is read from.
@@ -620,51 +488,55 @@ pub fn none_sentence(forge: Forge) -> String {
 }
 
 // Ways in with the real server and the system keychain, for the interface.
+//
+// Every read goes through the page store (`Revalidating`), which keeps each answer with its
+// `ETag`, running or finished, in memory and on disk. So the interface can draw from the
+// store the moment it opens (`*_stored`, which never touches the network) and then ask the
+// server (`*_live`), which is a 304 when nothing moved.
 
-/// Every read of the real server goes through one of these, so a poll that finds nothing
-/// new is a 304 and not a download.
-static WEB: LazyLock<Revalidating<Web>> = LazyLock::new(|| Revalidating::new(Web));
+use crate::auth::transport::{Revalidating, Stored};
+use std::sync::OnceLock;
+
+fn web(caches: &Caches) -> &'static Revalidating<Web> {
+    static WEB: OnceLock<Revalidating<Web>> = OnceLock::new();
+    WEB.get_or_init(|| Revalidating::new(Web, caches.pages()))
+}
 
 fn session(target: &Target) -> Reply<String> {
     Ok(auth::fresh_token(&target.host, &Keychain, &Web)?.access)
 }
 
 /// `recent` against the real server, as whoever is signed in.
-pub fn recent_live(target: &Target) -> Reply<HashMap<String, Status>> {
-    recent(target, &*WEB, &session(target)?)
+pub fn recent_live(target: &Target, caches: &Caches) -> Reply<HashMap<String, Status>> {
+    recent(target, web(caches), &session(target)?)
 }
 
-/// A commit's pipelines from the cache when they were over the last time they were read,
-/// else from the server, which are then kept if they are over now. `fresh` skips the cache,
-/// which is what a refresh and a poll want.
-pub fn for_commit_cached(
-    target: &Target,
-    caches: &Caches,
-    sha: &str,
-    fresh: bool,
-) -> Reply<Vec<Pipeline>> {
-    let key = pipelines_key(target, sha);
-    if !fresh && let Some(settled) = caches.cached_pipelines(&key) {
-        return Ok(settled.0.clone());
-    }
-    let found = for_commit(target, &*WEB, &session(target)?, sha)?;
-    if !found.is_empty() && found.iter().all(Pipeline::is_settled) {
-        caches.store_pipelines(&key, Settled(found.clone()));
-    }
-    Ok(found)
+/// `recent` as the store last had it. Asks nobody, so it is quick; `Err` when it has never
+/// been read.
+pub fn recent_stored(target: &Target, caches: &Caches) -> Reply<HashMap<String, Status>> {
+    recent(target, &Stored::new(caches.pages()), "")
 }
 
-/// A job's log from the cache when its job was over, else from the server.
-pub fn log_cached(target: &Target, caches: &Caches, job: &Job) -> Reply<Vec<String>> {
-    let key = log_key(target, job);
-    if let Some(done) = caches.cached_log(&key) {
-        return Ok(done.0.clone());
+/// `for_commit` against the real server.
+pub fn for_commit_live(target: &Target, caches: &Caches, sha: &str) -> Reply<Vec<Pipeline>> {
+    for_commit(target, web(caches), &session(target)?, sha)
+}
+
+/// `for_commit` as the store last had it, which is only whole when every page it needs is
+/// there. Asks nobody.
+pub fn for_commit_stored(target: &Target, caches: &Caches, sha: &str) -> Reply<Vec<Pipeline>> {
+    for_commit(target, &Stored::new(caches.pages()), "", sha)
+}
+
+/// A job's log. One that is over never changes, so a kept copy is the answer and nobody is
+/// asked; a running one is asked each time.
+pub fn log_live(target: &Target, caches: &Caches, job: &Job) -> Reply<Vec<String>> {
+    if !job.status.is_active()
+        && let Ok(kept) = log(target, &Stored::new(caches.pages()), "", job)
+    {
+        return Ok(kept);
     }
-    let lines = log(target, &*WEB, &session(target)?, job)?;
-    if !job.status.is_active() {
-        caches.store_log(&key, Finished(lines.clone()));
-    }
-    Ok(lines)
+    log(target, web(caches), &session(target)?, job)
 }
 
 #[cfg(test)]
@@ -858,48 +730,29 @@ mod tests {
         );
     }
 
-    fn job(status: Status) -> Job {
-        Job {
-            id: "9".into(),
-            name: "unit".into(),
-            group: "test".into(),
-            status,
-            seconds: Some(12),
-            url: "https://x/j".into(),
-        }
-    }
-
     #[test]
-    fn finished_pipelines_survive_a_restart_and_running_ones_are_not_settled() {
+    fn what_was_read_once_is_there_at_the_next_start_with_nobody_asked() {
+        use crate::auth::transport::{Revalidating, Stored};
         use crate::cache::DiskSettings;
         let root = tempfile::tempdir().unwrap();
         let t = target(Forge::GitHub, "https://github.com");
-        let done = Pipeline {
-            id: "1".into(),
-            name: "ci".into(),
-            status: Status::Failed,
-            url: "https://x/1".into(),
-            jobs: vec![job(Status::Failed)],
-        };
-        let running = Pipeline {
-            jobs: vec![job(Status::Running)],
-            ..done.clone()
-        };
-        assert!(done.is_settled());
-        assert!(!running.is_settled());
+        let runs = r#"{"workflow_runs":[
+            {"id":1,"name":"ci","head_sha":"aaa","status":"in_progress","conclusion":null}]}"#;
+        let jobs = r#"{"jobs":[{"id":10,"name":"unit","status":"in_progress"}]}"#;
 
+        // A first run reads the server. The answers are about something still running, and
+        // are kept all the same.
         let caches = Caches::on_disk(root.path().to_owned(), DiskSettings::default());
-        caches.store_pipelines(&pipelines_key(&t, "aaa"), Settled(vec![done.clone()]));
-        let finished = job(Status::Passed);
-        caches.store_log(&log_key(&t, &finished), Finished(vec!["a".into()]));
-        caches.disk_size();
+        let http = Revalidating::new(Fake::answering(&[(200, runs), (200, jobs)]), caches.pages());
+        let live = for_commit(&t, &http, "t", "aaa").unwrap();
+        assert_eq!(live[0].status, Status::Running);
+        caches.pages().flush();
 
+        // The next run draws it before asking anyone, in a store that was never told of it.
         let again = Caches::on_disk(root.path().to_owned(), DiskSettings::default());
-        let got = again.cached_pipelines(&pipelines_key(&t, "aaa")).unwrap();
-        assert_eq!(got.0, vec![done]);
-        let log = again.cached_log(&log_key(&t, &finished)).unwrap();
-        assert_eq!(log.0, ["a"]);
-        assert!(again.cached_pipelines(&pipelines_key(&t, "bbb")).is_none());
+        let stored = Stored::new(again.pages());
+        assert_eq!(for_commit(&t, &stored, "", "aaa").unwrap(), live);
+        assert!(for_commit(&t, &stored, "", "bbb").is_err(), "never read");
     }
 
     #[test]

@@ -9,12 +9,12 @@
 //! The caches themselves are in [`crate::cache`]; this file only says what goes in them.
 
 use super::{Budget, Cache, Config, DiskSettings, hash64};
+use crate::auth::transport::Page;
 use crate::commit::details::{self, CommitDetails, FileChange};
 use crate::history::Signature;
 use crate::history::avatar::Gravatar;
 use crate::ops::{self, Cancel};
 use crate::patch::{DiffView, FilePatch};
-use crate::repo::ci::{Finished, Settled};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -34,8 +34,7 @@ pub struct Caches {
     diffs: Cache<FilePatch>,
     signatures: Cache<Signature>,
     avatars: Cache<Gravatar>,
-    pipelines: Cache<Settled>,
-    logs: Cache<Finished>,
+    pages: Cache<Page>,
 }
 
 impl Caches {
@@ -59,15 +58,10 @@ impl Caches {
         memory_bytes: MEMORY,
     };
 
-    /// What the forge said about a commit's CI once it was over, and a finished job's log.
-    /// Both are about a commit, so the settings count them with its files.
-    const PIPELINES: Config = Config {
-        name: "ci-pipelines",
-        label: Self::COMMITS,
-        memory_bytes: 2 * 1024 * 1024,
-    };
-    const LOGS: Config = Config {
-        name: "ci-logs",
+    /// What a forge said about CI, pipelines, jobs and logs, running or finished. It is about
+    /// commits, so the settings count it with their files.
+    const PAGES: Config = Config {
+        name: "ci-pages",
         label: Self::COMMITS,
         memory_bytes: 16 * 1024 * 1024,
     };
@@ -85,8 +79,7 @@ impl Caches {
             diffs: Cache::memory_only(Self::DIFFS),
             signatures: Cache::memory_only(Self::SIGNATURES),
             avatars: Cache::memory_only(Self::AVATARS),
-            pipelines: Cache::memory_only(Self::PIPELINES),
-            logs: Cache::memory_only(Self::LOGS),
+            pages: Cache::memory_only(Self::PAGES),
         }
     }
 
@@ -100,8 +93,7 @@ impl Caches {
             diffs: Cache::in_pool(Self::DIFFS, &budget, disk.enabled),
             signatures: Cache::in_pool(Self::SIGNATURES, &budget, disk.enabled),
             avatars: Cache::in_pool(Self::AVATARS, &budget, disk.enabled),
-            pipelines: Cache::in_pool(Self::PIPELINES, &budget, disk.enabled),
-            logs: Cache::in_pool(Self::LOGS, &budget, disk.enabled),
+            pages: Cache::in_pool(Self::PAGES, &budget, disk.enabled),
         }
     }
 
@@ -112,8 +104,7 @@ impl Caches {
         self.diffs.set_enabled(disk.enabled);
         self.signatures.set_enabled(disk.enabled);
         self.avatars.set_enabled(disk.enabled);
-        self.pipelines.set_enabled(disk.enabled);
-        self.logs.set_enabled(disk.enabled);
+        self.pages.set_enabled(disk.enabled);
     }
 
     /// Forgets everything, in memory now and on disk soon.
@@ -122,8 +113,7 @@ impl Caches {
         self.diffs.clear();
         self.signatures.clear();
         self.avatars.clear();
-        self.pipelines.clear();
-        self.logs.clear();
+        self.pages.clear();
     }
 
     /// How much is on disk. Blocks.
@@ -138,8 +128,7 @@ impl Caches {
                 label: Self::COMMITS,
                 bytes: self.details.disk_size()
                     + self.signatures.disk_size()
-                    + self.pipelines.disk_size()
-                    + self.logs.disk_size(),
+                    + self.pages.disk_size(),
             },
             Usage {
                 label: Self::DIFFS.label,
@@ -154,24 +143,10 @@ impl Caches {
         parts
     }
 
-    /// A commit's pipelines as they were when all were over, from memory or disk. Blocks.
-    pub(crate) fn cached_pipelines(&self, key: &str) -> Option<Arc<Settled>> {
-        self.pipelines.get(key)
-    }
-
-    /// Keeps a commit's finished pipelines. Doesn't wait on the disk.
-    pub(crate) fn store_pipelines(&self, key: &str, settled: Settled) {
-        self.pipelines.insert(key, settled);
-    }
-
-    /// A finished job's log, from memory or disk. Blocks.
-    pub(crate) fn cached_log(&self, key: &str) -> Option<Arc<Finished>> {
-        self.logs.get(key)
-    }
-
-    /// Keeps a finished job's log. Doesn't wait on the disk.
-    pub(crate) fn store_log(&self, key: &str, log: Finished) {
-        self.logs.insert(key, log);
+    /// What forges said to a GET, with the `ETag`s that make the next ask a 304 and let the
+    /// interface draw at once. Clones share the entries.
+    pub(crate) fn pages(&self) -> Cache<Page> {
+        self.pages.clone()
     }
 
     /// What is known of an author's Gravatar from an earlier run: the picture, or that there

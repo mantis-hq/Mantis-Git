@@ -1,5 +1,6 @@
 //! The one place the sign-in talks HTTP, behind a trait so tests can play the server.
 
+use crate::cache::{Cache, Cacheable, Reader, Writer, hash64};
 use std::time::Duration;
 
 #[derive(Clone, Copy)]
@@ -90,26 +91,66 @@ impl Transport for Web {
     }
 }
 
-/// How many answers [`Revalidating`] keeps, and the biggest it keeps. A log is far over the
-/// size, and a finished one is kept on disk by the CI cache instead.
-const KEPT: usize = 256;
-const KEPT_BYTES: usize = 1024 * 1024;
+/// The biggest answer kept. A job's log is the largest thing read, and the body limit of a
+/// read is 16 MB.
+const KEPT_BYTES: usize = 8 * 1024 * 1024;
 
-/// Asks again with what it was told last time. A GET that came with an `ETag` is sent with
-/// `If-None-Match` next time, and a 304 is answered from memory as the 200 it stands for,
-/// so callers never see it. Nothing else changes, and a server that gives no `ETag` is asked
-/// in full, as before.
+/// One answer to a GET as the cache keeps it, in memory and on disk: what was asked, the
+/// `ETag` the server gave it, and the body. Running or finished makes no difference here.
+pub struct Page {
+    url: String,
+    etag: Option<String>,
+    body: String,
+}
+
+impl Cacheable for Page {
+    const FORMAT: u32 = 1;
+
+    fn weight(&self) -> usize {
+        self.url.len() + self.body.len() + self.etag.as_ref().map_or(0, String::len)
+    }
+
+    fn encode(&self, out: &mut Writer) {
+        out.str(&self.url);
+        out.opt_str(self.etag.as_deref());
+        out.str(&self.body);
+    }
+
+    fn decode(input: &mut Reader) -> Option<Self> {
+        Some(Self {
+            url: input.str()?.to_owned(),
+            etag: input.opt_str()?.map(str::to_owned),
+            body: input.str()?.to_owned(),
+        })
+    }
+}
+
+/// The page kept for an address. The address is in the page too, so a clash of hashes is a
+/// miss and not somebody else's answer.
+fn kept(store: &Cache<Page>, url: &str) -> Option<std::sync::Arc<Page>> {
+    store
+        .get(&format!("page/{:016x}", hash64(url.as_bytes())))
+        .filter(|page| page.url == url)
+}
+
+/// Asks again with what it was told last time. Every 200 to a GET is kept with its `ETag`,
+/// and the next ask for that address sends it as `If-None-Match`; a 304 is answered from the
+/// kept body as the 200 it stands for, so callers never see it. A server that gives no
+/// `ETag` is asked in full, as before.
+///
+/// The kept pages outlive the run, so the first ask of the next one can be a 304 too, and
+/// [`Stored`] can answer from them with no ask at all.
+///
+/// A page is kept by its address alone, not by who asked. That is right for CI, where one
+/// account is signed in to a server, and it is cleared with the rest of the cache.
 pub struct Revalidating<T> {
     inner: T,
-    kept: std::sync::Mutex<std::collections::HashMap<u64, (String, String)>>,
+    store: Cache<Page>,
 }
 
 impl<T> Revalidating<T> {
-    pub fn new(inner: T) -> Self {
-        Self {
-            inner,
-            kept: Default::default(),
-        }
+    pub fn new(inner: T, store: Cache<Page>) -> Self {
+        Self { inner, store }
     }
 }
 
@@ -118,50 +159,57 @@ impl<T: Transport> Transport for Revalidating<T> {
         if request.method != "GET" {
             return self.inner.send(request);
         }
-        // The token is part of the key, since two accounts may see different things at one
-        // address. Only its hash is kept.
-        let key = crate::cache::hash64(
-            format!("{}\0{}", request.url, request.bearer.unwrap_or_default()).as_bytes(),
-        );
-        let known = self
-            .kept
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&key)
-            .cloned();
+        let known = kept(&self.store, request.url);
         let reply = self.inner.send(&Request {
-            if_none_match: known.as_ref().map(|(etag, _)| etag.as_str()),
+            if_none_match: known.as_ref().and_then(|page| page.etag.as_deref()),
             ..*request
         })?;
-        let mut kept = self
-            .kept
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match (reply.status, known) {
-            (304, Some((etag, body))) => Ok(Reply {
+            (304, Some(page)) => Ok(Reply {
                 status: 200,
-                body,
-                etag: Some(etag),
+                body: page.body.clone(),
+                etag: page.etag.clone(),
             }),
-            (200, _) => {
-                match &reply.etag {
-                    Some(etag) if reply.body.len() <= KEPT_BYTES => {
-                        if kept.len() >= KEPT {
-                            kept.clear();
-                        }
-                        kept.insert(key, (etag.clone(), reply.body.clone()));
-                    }
-                    _ => {
-                        kept.remove(&key);
-                    }
+            (200, known) => {
+                let same = known.is_some_and(|page| page.body == reply.body);
+                if !same && reply.body.len() <= KEPT_BYTES {
+                    let key = format!("page/{:016x}", hash64(request.url.as_bytes()));
+                    self.store.insert(
+                        &key,
+                        Page {
+                            url: request.url.to_owned(),
+                            etag: reply.etag.clone(),
+                            body: reply.body.clone(),
+                        },
+                    );
                 }
                 Ok(reply)
             }
-            _ => {
-                kept.remove(&key);
-                Ok(reply)
-            }
+            _ => Ok(reply),
         }
+    }
+}
+
+/// Answers only from what [`Revalidating`] kept, and never asks anyone. A page it has never
+/// had is an error, so a read built on it is whole or fails, and the interface can draw what
+/// it has the moment it opens.
+pub struct Stored(Cache<Page>);
+
+impl Stored {
+    pub fn new(store: Cache<Page>) -> Self {
+        Self(store)
+    }
+}
+
+impl Transport for Stored {
+    fn send(&self, request: &Request) -> Result<Reply, String> {
+        kept(&self.0, request.url)
+            .map(|page| Reply {
+                status: 200,
+                body: page.body.clone(),
+                etag: page.etag.clone(),
+            })
+            .ok_or_else(|| "Not read yet.".to_owned())
     }
 }
 
@@ -214,7 +262,14 @@ pub mod fake {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::{Config, DiskSettings};
     use std::sync::Mutex;
+
+    const CONFIG: Config = Config {
+        name: "pages",
+        label: "Pages",
+        memory_bytes: 1024 * 1024,
+    };
 
     /// A server that has one version of one page and says so with an `ETag`.
     #[derive(Default)]
@@ -256,7 +311,7 @@ mod tests {
 
     #[test]
     fn a_page_that_has_not_changed_is_answered_from_memory() {
-        let http = Revalidating::new(Etagged::default());
+        let http = Revalidating::new(Etagged::default(), Cache::memory_only(CONFIG));
         let first = http.send(&get("a")).unwrap();
         let second = http.send(&get("a")).unwrap();
         assert_eq!((first.status, first.body.as_str()), (200, "page"));
@@ -267,10 +322,28 @@ mod tests {
     }
 
     #[test]
-    fn another_account_is_not_given_the_first_ones_answer() {
-        let http = Revalidating::new(Etagged::default());
-        http.send(&get("a")).unwrap();
-        http.send(&get("b")).unwrap();
-        assert_eq!(http.inner.asked.lock().unwrap()[1], None);
+    fn the_first_ask_of_the_next_run_is_a_304_too_and_stored_asks_nobody() {
+        let root = tempfile::tempdir().unwrap();
+        let disk = || Cache::new(CONFIG, root.path().to_owned(), DiskSettings::default());
+
+        let store = disk();
+        let first = Revalidating::new(Etagged::default(), store.clone());
+        first.send(&get("a")).unwrap();
+        store.flush();
+
+        let store = disk();
+        let stored = Stored::new(store.clone());
+        assert_eq!(stored.send(&get("a")).unwrap().body, "page");
+        let mut other = get("a");
+        other.url = "https://x/never-read";
+        assert!(stored.send(&other).is_err());
+
+        let next = Revalidating::new(Etagged::default(), store);
+        assert_eq!(next.send(&get("a")).unwrap().body, "page");
+        assert_eq!(
+            next.inner.asked.lock().unwrap()[0].as_deref(),
+            Some("\"v1\""),
+            "the ETag came from the disk"
+        );
     }
 }
