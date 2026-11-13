@@ -267,12 +267,35 @@ impl Refs {
         chips(self.by_commit.get(oid).map_or(&[], Vec::as_slice))
     }
 
+    /// The forge a chip's remote is on, for the picture beside its name: the remote branch
+    /// itself, or the one a synced local branch follows. `None` for tags, local-only
+    /// branches and remotes whose forge isn't known.
+    pub fn chip_forge(&self, chip: &Chip<'_>) -> Option<Forge> {
+        let remote_branch = match chip.label.kind {
+            RefKind::Remote => chip.label.name.as_str(),
+            RefKind::Branch if chip.synced => self
+                .branches
+                .iter()
+                .find(|branch| branch.name == chip.label.name)?
+                .upstream_name
+                .as_deref()?,
+            _ => return None,
+        };
+        let (remote, _) = crate::repo::remote::split_branch(&self.remote_configs, remote_branch)?;
+        match crate::repo::forge::hosting(remote, self.forge)? {
+            crate::repo::forge::Hosting::Known(site) => Some(site.forge),
+            crate::repo::forge::Hosting::Unknown(_) => None,
+        }
+    }
+
     /// How wide the refs column has to be for no chip to be cut short, in character cells:
     /// the widest of the first `visible` chips at any commit, with room for the cloud of a
     /// chip that is in sync and for the `+n` that stands for the rest.
     pub fn widest_chips(&self, visible: usize) -> usize {
         /// The cloud and the gap before it.
         const CLOUD: usize = 3;
+        /// A tag's or a forge's picture and the gap before it.
+        const ICON: usize = 3;
         /// `+n`, and the gap before it.
         const MORE: usize = 4;
         self.by_commit
@@ -283,7 +306,12 @@ impl Refs {
                     .iter()
                     .take(visible)
                     .map(|chip| {
-                        chip.label.name.chars().count() + if chip.synced { CLOUD } else { 0 }
+                        let icon = match chip.label.kind {
+                            RefKind::Tag => ICON,
+                            _ if self.chip_forge(chip).is_some() => ICON,
+                            _ => 0,
+                        };
+                        chip.label.name.chars().count() + if chip.synced { CLOUD } else { 0 } + icon
                     })
                     .sum();
                 shown + if chips.len() > visible { MORE } else { 0 }
@@ -839,6 +867,38 @@ mod tests {
             is_head: false,
             color: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_chip_has_the_forge_of_its_remote_and_a_tag_or_local_branch_has_none() {
+        let mut refs = Refs {
+            remote_configs: vec![Remote {
+                name: "origin".into(),
+                url: "https://github.com/ada/repo.git".into(),
+                push_url: None,
+            }],
+            branches: vec![Branch {
+                name: "main".into(),
+                tip: "a".into(),
+                color: Default::default(),
+                is_head: false,
+                ahead_behind: None,
+                upstream: Some((0, 0)),
+                upstream_name: Some("origin/main".into()),
+            }],
+            ..Refs::default()
+        };
+        let list = vec![
+            named(RefKind::Branch, "main"),
+            named(RefKind::Remote, "origin/main"),
+            named(RefKind::Remote, "origin/other"),
+            named(RefKind::Tag, "v1"),
+        ];
+        let found = chips(&list);
+        let forges: Vec<_> = found.iter().map(|c| refs.chip_forge(c)).collect();
+        assert_eq!(forges, [Some(Forge::GitHub), Some(Forge::GitHub), None]);
+        refs.remote_configs.clear();
+        assert_eq!(refs.chip_forge(&found[0]), None);
     }
 
     #[test]

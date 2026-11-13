@@ -638,6 +638,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   refs opens a card over the column that lists every one, and each chip on it drags and
   right-clicks like the first.
   A branch and its remote at the same commit are one chip with a small cloud.
+  A tag's chip starts with a small tag picture, and a chip whose remote is on a known forge
+  (a remote branch, or a branch level with one) ends with that forge's mark (GitHub, GitLab
+  or Gitea) after the cloud, in the chip's text colour, so the remote's host reads at a
+  glance (`Refs::chip_forge`). A remote on no known forge has no mark.
 - **Menus:** right-clicking a branch, tag or commit opens one menu, and so does dropping
   a branch or tag on a branch. A card on Mantle with a Surface 0 border, 8 px radius and
   28 px lines, no shadow. It is 300 px wide, or as wide as its longest line up to 460 px, so
