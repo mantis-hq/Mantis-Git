@@ -338,7 +338,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     `MANTISGIT_GITLAB_CLIENT_ID`, `MANTISGIT_CODEBERG_CLIENT_ID`); with none the row says so
     and its button is off. The "Another server" card adds a self-hosted one: a forge chip row
     (the picked one ticked, never blue), a "Server" and a "Client ID" input and "Add server",
-    kept in `hosts` beside the `state` file. While any account is signed in an "SSH keys" card
+    kept in `hosts` beside the `state` file. A server added this way ends its row in quiet "Edit" and "Remove" buttons (the public ones have neither): "Edit" fills the same card, titled "Edit server", with its forge, address and client ID, and "Save <name>" and "Cancel" replace "Add server"; changing the address drops the token, since a token is for one server, and an address already added is refused. "Remove" forgets the server and its token at once. While any account is signed in an "SSH keys" card
     lists each private key in `~/.ssh` that has a `.pub` beside it, with "Add to <server>" for
     each account; only the public file is ever read or sent, and a private key is refused
     before anything leaves the machine. When git asks for an HTTPS login the askpass program

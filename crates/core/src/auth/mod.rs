@@ -51,8 +51,7 @@ pub fn render_registry(hosts: &[Host]) -> String {
 pub fn hosts() -> Vec<Host> {
     let mut all = Host::built_in();
     let added = registry_file()
-        .and_then(|file| std::fs::read_to_string(file).ok())
-        .map(|text| parse_registry(&text))
+        .map(|file| read_registry(&file))
         .unwrap_or_default();
     for host in added {
         match all.iter_mut().find(|known| known.origin == host.origin) {
@@ -65,18 +64,83 @@ pub fn hosts() -> Vec<Host> {
     all
 }
 
-/// Remembers a server, or the client ID of one already there.
-pub fn add_host(host: &Host) -> Result<(), String> {
-    let file = registry_file().ok_or("There is no folder to keep settings in.")?;
-    let mut added = std::fs::read_to_string(&file)
+fn read_registry(file: &std::path::Path) -> Vec<Host> {
+    std::fs::read_to_string(file)
         .map(|text| parse_registry(&text))
-        .unwrap_or_default();
-    added.retain(|known| known.origin != host.origin);
-    added.push(host.clone());
+        .unwrap_or_default()
+}
+
+fn write_registry(file: &std::path::Path, hosts: &[Host]) -> Result<(), String> {
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    std::fs::write(&file, render_registry(&added)).map_err(|e| e.to_string())
+    std::fs::write(file, render_registry(hosts)).map_err(|e| e.to_string())
+}
+
+/// The servers that were added by hand, which can be edited and removed. The public ones
+/// are always there.
+pub fn custom_hosts() -> Vec<Host> {
+    let public: Vec<String> = Host::built_in().into_iter().map(|h| h.origin).collect();
+    registry_file()
+        .map(|file| read_registry(&file))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|host| !public.contains(&host.origin))
+        .collect()
+}
+
+/// Remembers a server, or the client ID of one already there.
+pub fn add_host(host: &Host) -> Result<(), String> {
+    let file = registry_file().ok_or("There is no folder to keep settings in.")?;
+    save_host_in(&file, None, host, &Keychain)
+}
+
+/// Saves `host`. With `replacing` the server of that address is changed into it: the
+/// old entry goes, and so does its token when the address changed, since a token is for
+/// one server.
+pub fn save_host(replacing: Option<&str>, host: &Host) -> Result<(), String> {
+    let file = registry_file().ok_or("There is no folder to keep settings in.")?;
+    save_host_in(&file, replacing, host, &Keychain)
+}
+
+pub fn save_host_in(
+    file: &std::path::Path,
+    replacing: Option<&str>,
+    host: &Host,
+    store: &dyn Store,
+) -> Result<(), String> {
+    let mut added = read_registry(file);
+    // Moving onto another server that is already added would silently overwrite it.
+    let taken = |origin: &str| added.iter().any(|known| known.origin == origin);
+    if replacing != Some(host.origin.as_str()) && replacing.is_some() && taken(&host.origin) {
+        return Err(format!("{} is already added.", host.name()));
+    }
+    if let Some(old) = replacing {
+        added.retain(|known| known.origin != old);
+        if old != host.origin {
+            store.remove(old)?;
+        }
+    }
+    added.retain(|known| known.origin != host.origin);
+    added.push(host.clone());
+    write_registry(file, &added)
+}
+
+/// Forgets a server added by hand, and the token for it.
+pub fn remove_host(origin: &str) -> Result<(), String> {
+    let file = registry_file().ok_or("There is no folder to keep settings in.")?;
+    remove_host_in(&file, origin, &Keychain)
+}
+
+pub fn remove_host_in(
+    file: &std::path::Path,
+    origin: &str,
+    store: &dyn Store,
+) -> Result<(), String> {
+    let mut added = read_registry(file);
+    added.retain(|known| known.origin != origin);
+    store.remove(origin)?;
+    write_registry(file, &added)
 }
 
 /// An account that is signed in.
@@ -245,6 +309,39 @@ mod tests {
 
     fn host() -> Host {
         Host::new(Forge::Gitea, "https://codeberg.org", "id").unwrap()
+    }
+
+    #[test]
+    fn a_server_can_be_edited_and_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("hosts");
+        let store = Memory::default();
+        let one = Host::new(Forge::Gitea, "https://git.corp", "a").unwrap();
+        let two = Host::new(Forge::GitLab, "https://lab.corp", "b").unwrap();
+        let token = Token {
+            access: "t".into(),
+            refresh: None,
+            expires_at: None,
+            login: None,
+        };
+        save_host_in(&file, None, &one, &store).unwrap();
+        save_host_in(&file, None, &two, &store).unwrap();
+        store.set(&one.origin, &token).unwrap();
+        // A new client ID keeps the token, since the server is the same.
+        let newer = Host::new(Forge::Gitea, "https://git.corp", "a2").unwrap();
+        save_host_in(&file, Some(&one.origin), &newer, &store).unwrap();
+        assert_eq!(read_registry(&file), vec![two.clone(), newer.clone()]);
+        assert!(store.get(&one.origin).is_some());
+        // A new address drops the token, and can't land on another added server.
+        let moved = Host::new(Forge::Gitea, "https://git.new", "a2").unwrap();
+        save_host_in(&file, Some(&newer.origin), &moved, &store).unwrap();
+        assert!(store.get(&one.origin).is_none());
+        let clash = Host::new(Forge::Gitea, "https://lab.corp", "x").unwrap();
+        let err = save_host_in(&file, Some(&moved.origin), &clash, &store).unwrap_err();
+        assert!(err.contains("already added"));
+        assert_eq!(read_registry(&file), vec![two.clone(), moved.clone()]);
+        remove_host_in(&file, &moved.origin, &store).unwrap();
+        assert_eq!(read_registry(&file), vec![two]);
     }
 
     #[test]
