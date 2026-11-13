@@ -147,8 +147,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   space says so. For working changes the header starts with a tick box for the whole file,
   and each hunk's header starts with one too (see "Staging").
 - The sidebar starts closed below 1500 px, because the two side panels would leave 520 px
-  for the graph at the default window. `Ctrl B` opens and closes it at any width; there is
-  no button for it in the header.
+  for the graph at the default window. It has no shortcut and no button in the header.
 - There are no task screens. Committing is the foot of the inspector, and so are conflicts
   (see "Conflicts"): the graph window is the one window for everything about a repository.
 - Settings: a quiet "Settings" button at the end of the header, or `Ctrl ,`, opens a
@@ -714,7 +713,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     conflict header with each side named). Pictures use only the palette, and show chips and
     buttons as they are drawn elsewhere.
   - "Keys worth knowing": keycaps in Surface 0 (`Ctrl O` open a repository, `Ctrl T` new
-    tab, `Ctrl B` sidebar, `Ctrl ,` settings).
+    tab, `Ctrl ,` settings).
   - For a portable copy that has no launcher, a tick box, ticked: "Add Mantis Git to the
     application menu" ("Start menu" on Windows), with a muted sentence that names what will
     be written and where, and says Settings → App takes it away. A launcher that is already

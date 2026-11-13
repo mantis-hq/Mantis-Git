@@ -334,7 +334,6 @@ fn keys_worth_knowing() -> impl Iterator<Item = (String, &'static str)> {
     [
         ("O", "Open a repository"),
         ("T", "New tab"),
-        ("B", "Sidebar"),
         (",", "Settings"),
     ]
     .into_iter()

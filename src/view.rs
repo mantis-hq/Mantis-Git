@@ -61,7 +61,6 @@ actions!(
         SelectFirst,
         SelectLast,
         Refresh,
-        ToggleSidebar,
         CloseMenu,
         ActivateMenu,
         MenuLeft,
@@ -80,10 +79,10 @@ pub fn bind_keys(cx: &mut App) {
     settings::bind_keys(cx);
     dock::bind_keys(cx);
     // KeyBinding::new has no OS to resolve a `secondary-` modifier against, and panics.
-    let (refresh, sidebar, find) = if cfg!(target_os = "macos") {
-        ("cmd-r", "cmd-b", "cmd-f")
+    let (refresh, find) = if cfg!(target_os = "macos") {
+        ("cmd-r", "cmd-f")
     } else {
-        ("ctrl-r", "ctrl-b", "ctrl-f")
+        ("ctrl-r", "ctrl-f")
     };
     let context = Some(KEY_CONTEXT);
     // Letter keys would swallow typing, so they only act while no text input has focus.
@@ -99,7 +98,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("end", SelectLast, context),
         KeyBinding::new("f5", Refresh, context),
         KeyBinding::new(refresh, Refresh, context),
-        KeyBinding::new(sidebar, ToggleSidebar, context),
         KeyBinding::new(find, FindCommits, context),
         KeyBinding::new("escape", CloseMenu, context),
         KeyBinding::new("enter", ActivateMenu, context),
@@ -1028,7 +1026,6 @@ impl Render for GraphView {
                 this.open_menu_line(cx);
             }))
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.reload(cx)))
-            .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| this.toggle_sidebar(cx)))
             .on_action(
                 cx.listener(|this, _: &FindCommits, window, cx| this.open_search(window, cx)),
             )
