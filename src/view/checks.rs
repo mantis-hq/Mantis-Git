@@ -112,19 +112,59 @@ impl GraphView {
         }
         self.checks.reading = true;
         self.checks.refreshed = Some(Instant::now());
+        let caches = self.caches.clone();
+        // First what was kept from the last read, which is only the disk and so is on screen
+        // at once; then the forge, which is a 304 when nothing moved.
+        Self::spawn_blocking(
+            {
+                let caches = caches.clone();
+                move || {
+                    let target = ci::target(site.as_ref(), &auth::accounts())?;
+                    let kept = ci::recent_stored(&target, &caches);
+                    Some((target, kept))
+                }
+            },
+            move |this, result, cx| {
+                // The tab may have moved to another repository meanwhile.
+                if this.repo != repo {
+                    this.checks.reading = false;
+                    return;
+                }
+                let Some((target, kept)) = result else {
+                    this.checks.reading = false;
+                    this.checks_arrived(None, cx);
+                    return;
+                };
+                // Only into an empty column: anything already there is newer than the disk.
+                if this.checks.statuses.is_empty()
+                    && let Ok(kept) = kept
+                {
+                    this.checks_arrived(Some((target.clone(), Ok(kept))), cx);
+                }
+                this.read_checks_live(target, repo, caches, cx);
+            },
+            cx,
+        );
+    }
+
+    fn read_checks_live(
+        &mut self,
+        target: Target,
+        repo: Option<std::path::PathBuf>,
+        caches: mantisgit_core::cache::keys::Caches,
+        cx: &mut Context<Self>,
+    ) {
         Self::spawn_blocking(
             move || {
-                let target = ci::target(site.as_ref(), &auth::accounts())?;
-                let found = ci::recent_live(&target);
-                Some((target, found))
+                let found = ci::recent_live(&target, &caches);
+                (target, found)
             },
             move |this, result, cx| {
                 this.checks.reading = false;
-                // The tab may have moved to another repository meanwhile.
                 if this.repo != repo {
                     return;
                 }
-                this.checks_arrived(result, cx);
+                this.checks_arrived(Some(result), cx);
             },
             cx,
         );
@@ -277,8 +317,32 @@ impl GraphView {
             cx.notify();
         }
         let sha = oid.to_string();
+        // What was kept the last time is drawn while the forge is asked, so a commit seen
+        // before opens at once. It only fills a tab that is still empty.
+        if !here {
+            let (target, caches, sha, oid) =
+                (target.clone(), caches.clone(), sha.clone(), oid.clone());
+            Self::spawn_blocking(
+                move || ci::for_commit_stored(&target, &caches, &sha),
+                move |this, result, cx| {
+                    let waiting = this
+                        .checks
+                        .detail
+                        .as_ref()
+                        .is_some_and(|d| d.oid == oid && matches!(d.load, Load::Loading));
+                    if let (true, Ok(pipelines)) = (waiting, result) {
+                        this.checks.detail = Some(Detail {
+                            oid: oid.clone(),
+                            load: Load::Done(pipelines),
+                        });
+                        cx.notify();
+                    }
+                },
+                cx,
+            );
+        }
         Self::spawn_blocking(
-            move || ci::for_commit_cached(&target, &caches, &sha, again),
+            move || ci::for_commit_live(&target, &caches, &sha),
             move |this, result, cx| {
                 // Another commit may have been picked while this was read.
                 let current = this.checks.detail.as_ref().is_some_and(|d| d.oid == oid);
@@ -328,7 +392,7 @@ impl GraphView {
         self.checks.log_scroll = UniformListScrollHandle::new();
         cx.notify();
         Self::spawn_blocking(
-            move || ci::log_cached(&target, &caches, &job),
+            move || ci::log_live(&target, &caches, &job),
             move |this, result, cx| {
                 let Some(view) = this.checks.log.as_mut().filter(|view| view.job.id == id) else {
                     return;
