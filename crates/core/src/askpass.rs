@@ -145,6 +145,10 @@ fn ask_through(
     if let Some(value) = remembered(|kept| kept.recall(prompt, asker)) {
         return Some(value);
     }
+    // A signed-in account answers git's HTTPS login itself, so nobody is asked.
+    if let Some(value) = crate::auth::answer_git(prompt) {
+        return Some(value);
+    }
     let (reply, answer) = async_channel::bounded(1);
     let request = Request {
         prompt: prompt.to_owned(),

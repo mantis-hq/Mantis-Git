@@ -6,6 +6,7 @@
 //! press Enter or leave the field, and the header says what happened.
 
 mod about;
+mod accounts;
 mod app;
 mod appearance;
 mod git_config;
@@ -131,18 +132,20 @@ enum Page {
     App,
     Theme,
     Repository,
+    Accounts,
     About,
 }
 
 impl Page {
     /// In the order of the side panel: what belongs to the open repository, then what
     /// holds everywhere (the app's own settings first, git's after), then About.
-    const ALL: [Page; 6] = [
+    const ALL: [Page; 7] = [
         Page::Repository,
         Page::App,
         Page::Theme,
         Page::GitConfig,
         Page::Identities,
+        Page::Accounts,
         Page::About,
     ];
 
@@ -163,6 +166,7 @@ impl Page {
             Page::App => "App",
             Page::Theme => "Theme",
             Page::Repository => "Repository",
+            Page::Accounts => "Accounts",
             Page::About => "About",
         }
     }
@@ -362,6 +366,7 @@ pub struct Settings {
     forge_choice: Option<mantisgit_core::repo::forge::choice::Choice>,
     /// Which license on the About page is picked, and how its list is scrolled.
     picked_license: Option<usize>,
+    accounts: accounts::State,
     licenses_scroll: UniformListScrollHandle,
     feedback: Feedback,
     /// Inputs the user has typed in since they were last saved or filled in.
@@ -453,6 +458,9 @@ impl Settings {
             ));
         }
 
+        let (accounts_state, account_events) = accounts::State::new(window, cx);
+        new_inputs.extend(account_events);
+
         let state_file = matches!(base, Scope::Global)
             .then(state::default_file)
             .flatten();
@@ -518,6 +526,7 @@ impl Settings {
             writing_graph: false,
             forge_choice: None,
             picked_license: None,
+            accounts: accounts_state,
             licenses_scroll: UniformListScrollHandle::new(),
             feedback: Feedback::None,
             dirty: Default::default(),
@@ -554,6 +563,7 @@ impl Settings {
                 self.load_commit_graph(cx);
                 self.load_forge_choice(cx);
             }
+            Page::Accounts => self.load_accounts(cx),
             Page::GitConfig | Page::Identities | Page::Theme | Page::About => {}
         }
         cx.notify();
@@ -864,6 +874,7 @@ impl Settings {
                     }
                     Page::App => "App preferences save as you make them.".to_owned(),
                     Page::Theme => "Colours apply as you change them.".to_owned(),
+                    Page::Accounts => "Signing in saves a token in the system keychain.".to_owned(),
                     Page::About => "Mantis Git, and what is in it.".to_owned(),
                     Page::Repository => format!(
                         "Showing {}, the repository in the front tab.",
@@ -1009,6 +1020,7 @@ impl Render for Settings {
             Page::App => self.render_app(cx),
             Page::Theme => self.render_theme(cx),
             Page::Repository => self.render_repository(cx),
+            Page::Accounts => self.render_accounts(cx),
             Page::About => self.render_about(cx),
         };
         let body = div()
