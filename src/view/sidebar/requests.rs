@@ -226,9 +226,14 @@ impl GraphView {
         let (muted, text) = (theme.muted_foreground, theme.foreground);
         let number = request.number;
         let url = site.request_url(number);
+        let name = format!("{} {}", site.label(number), request.detail());
         Some(
             panel_row(("request", index), false, cx)
                 .h(px(30.))
+                .tooltip(move |window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(name.clone()).build(window, cx)
+                })
+                .tooltip_show_delay(std::time::Duration::ZERO)
                 .pl(indent(0))
                 .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&url)))
                 .on_mouse_down(
