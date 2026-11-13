@@ -7,6 +7,11 @@ use super::*;
 use mantisgit_core::auth::{self, Account, Host, flow};
 use mantisgit_core::ops::Cancel;
 use mantisgit_core::repo::forge::Forge;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+/// How long the keychain has to say who is signed in.
+const KEYCHAIN_PATIENCE: Duration = Duration::from_secs(5);
 
 pub(super) struct State {
     hosts: Vec<Host>,
@@ -20,6 +25,8 @@ pub(super) struct State {
     loaded: bool,
     /// Whether the keychain has said who is signed in.
     accounts_read: bool,
+    /// The keychain didn't answer in time, so who is signed in is unknown.
+    keychain_silent: bool,
     /// Addresses of the servers added by hand, which can be edited and removed.
     custom: Vec<String>,
     /// The address of the server the form is changing, when it isn't adding a new one.
@@ -57,6 +64,7 @@ impl State {
             adding_key: None,
             loaded: false,
             accounts_read: false,
+            keychain_silent: false,
             custom: Vec::new(),
             editing: None,
             new_origin,
@@ -93,11 +101,29 @@ impl Settings {
                 cx.notify();
             })
             .ok();
-            let accounts = cx
-                .background_spawn(async move { auth::accounts_in(&auth::token::Keychain, &known) })
-                .await;
+            // The keychain can wait forever on a locked keyring, and a blocked call can't
+            // be cancelled, so it runs on a thread of its own and is given a few seconds.
+            let slot = Arc::new(Mutex::new(None));
+            let reply = slot.clone();
+            std::thread::spawn(move || {
+                let accounts = auth::accounts_in(&auth::token::Keychain, &known);
+                if let Ok(mut slot) = reply.lock() {
+                    *slot = Some(accounts);
+                }
+            });
+            let mut accounts = None;
+            for _ in 0..KEYCHAIN_PATIENCE.as_millis() / 100 {
+                accounts = slot.lock().ok().and_then(|mut slot| slot.take());
+                if accounts.is_some() {
+                    break;
+                }
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+            }
             this.update(cx, |this, cx| {
-                this.accounts.accounts = accounts;
+                this.accounts.keychain_silent = accounts.is_none();
+                this.accounts.accounts = accounts.unwrap_or_default();
                 this.accounts.accounts_read = true;
                 cx.notify();
             })
@@ -326,6 +352,10 @@ impl Settings {
             "Waiting for the browser…".to_owned()
         } else if !self.accounts.accounts_read {
             "Asking the system keychain…".to_owned()
+        } else if self.accounts.keychain_silent && account.is_none() {
+            "The system keychain didn't answer, so this can't say. Is a keyring service \
+             running and unlocked? Open this page again to retry."
+                .to_owned()
         } else {
             auth::status_sentence(host, account)
         };
