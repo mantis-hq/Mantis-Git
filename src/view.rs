@@ -473,7 +473,14 @@ impl GraphView {
     /// Applies one step of a load.
     pub fn apply(&mut self, event: LoadEvent, cx: &mut Context<Self>) {
         match event {
-            LoadEvent::Refs(refs) => self.pending_refs = Some(refs),
+            LoadEvent::Refs(refs) => {
+                // CI is asked about as soon as the remote is known, not once the history
+                // has been read, which is where a big repository spends its seconds.
+                let site = mantisgit_core::repo::forge::pick(&refs.remote_configs, refs.forge)
+                    .map(|(_, site)| site);
+                self.pending_refs = Some(refs);
+                self.refresh_checks_for(site, cx);
+            }
             LoadEvent::Batch(batch) => {
                 // The first batch is how long the history took to start arriving, which is
                 // where git sorts everything and a commit graph saves the most.
@@ -555,7 +562,8 @@ impl GraphView {
         self.select_head_if_unselected(cx);
         self.refresh_spotlight();
         self.probe_forge(cx);
-        self.refresh_checks(cx);
+        // Started when the refs arrived; this only catches a load that had no remote then.
+        self.refresh_checks_if_stale(cx);
         // Asked here too, so the graph can mark commits that a request points at.
         self.requests_opened(cx);
         self.check_paused_operation(cx);

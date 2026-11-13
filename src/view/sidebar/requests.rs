@@ -64,6 +64,8 @@ impl GraphView {
                 // The section is drawn from what the probe left in memory.
                 if found.is_some() {
                     this.requests_opened(cx);
+                    // A server that said what it is may be one CI can be read from.
+                    this.refresh_checks(cx);
                     cx.notify();
                 }
             },
