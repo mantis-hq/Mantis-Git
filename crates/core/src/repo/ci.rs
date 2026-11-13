@@ -175,7 +175,11 @@ pub fn target_unchecked(site: Option<&Site>, hosts: &[Host]) -> Option<Target> {
 /// Whether someone is signed in to the target's server. One keychain read, not one for each
 /// server there is.
 pub fn signed_in(target: &Target) -> bool {
-    !auth::accounts_in(&Keychain, std::slice::from_ref(&target.host)).is_empty()
+    let signed_in = !auth::accounts_in(&Keychain, std::slice::from_ref(&target.host)).is_empty();
+    if !signed_in {
+        tokens().remove(&target.host.origin);
+    }
+    signed_in
 }
 
 /// What a read of the forge can answer.
@@ -583,8 +587,30 @@ fn web(caches: &Caches) -> &'static Revalidating<Web> {
     WEB.get_or_init(|| Revalidating::new(Web, caches.pages()))
 }
 
+/// How long a token read from the keychain is reused. The keychain is a call to the system's
+/// secret service, which costs time on every request that goes through it; a token that
+/// still has a minute left is as good the second time. Signing out forgets it at once
+/// (`signed_in`, which every refresh runs).
+const TOKEN_KEPT: Duration = Duration::from_secs(300);
+
+type Tokens = HashMap<String, (Instant, auth::Token)>;
+
+fn tokens() -> std::sync::MutexGuard<'static, Tokens> {
+    static TOKENS: LazyLock<Mutex<Tokens>> = LazyLock::new(Mutex::default);
+    TOKENS.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 fn session(target: &Target) -> Reply<String> {
-    Ok(auth::fresh_token(&target.host, &Keychain, &Web)?.access)
+    let origin = &target.host.origin;
+    if let Some((at, token)) = tokens().get(origin)
+        && at.elapsed() < TOKEN_KEPT
+        && !token.is_expired(auth::token::now())
+    {
+        return Ok(token.access.clone());
+    }
+    let token = auth::fresh_token(&target.host, &Keychain, &Web)?;
+    tokens().insert(origin.clone(), (Instant::now(), token.clone()));
+    Ok(token.access)
 }
 
 /// `recent` against the real server, as whoever is signed in.
