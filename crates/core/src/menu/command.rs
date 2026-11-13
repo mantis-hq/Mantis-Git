@@ -127,12 +127,12 @@ pub enum Command {
     /// such as a new branch's name, then runs what the form says.
     Form(Form),
     /// Locks a worktree so git won't prune or remove it, or lifts that lock.
-    LockWorktree {
-        path: PathBuf,
+    LockWorktrees {
+        paths: Vec<PathBuf>,
         lock: bool,
     },
-    RemoveWorktree {
-        path: PathBuf,
+    RemoveWorktrees {
+        paths: Vec<PathBuf>,
         /// What removing it does and how to bring it back, worked out when the menu opened.
         warning: String,
     },
@@ -297,9 +297,9 @@ impl Command {
             Self::ApplyFile { .. } => "Applying",
             Self::SwitchWorktree { .. } | Self::OpenWorktreeInTab { .. } => "Switching",
             Self::Form(form) => form.progress(),
-            Self::LockWorktree { lock: true, .. } => "Locking the worktree",
-            Self::LockWorktree { lock: false, .. } => "Unlocking the worktree",
-            Self::RemoveWorktree { .. } => "Removing the worktree",
+            Self::LockWorktrees { lock: true, .. } => "Locking",
+            Self::LockWorktrees { lock: false, .. } => "Unlocking",
+            Self::RemoveWorktrees { .. } => "Removing",
             Self::OpenSubmoduleInTab { .. } => "Switching",
             Self::UpdateSubmodule { .. } | Self::UpdateSubmodules => "Updating",
             Self::RemoveRemote { .. } => "Removing the remote",
@@ -367,7 +367,7 @@ impl Command {
                 action: "Delete",
                 weight: Weight::DoublePress,
             }),
-            Self::RemoveWorktree { warning, .. } => Some(Confirmation {
+            Self::RemoveWorktrees { warning, .. } => Some(Confirmation {
                 message: warning.clone(),
                 action: "Remove",
                 weight: Weight::Popup,
@@ -544,8 +544,8 @@ impl Command {
                 path,
                 old_path,
             } => actions::apply_file(repo, oid, path, old_path.as_deref()),
-            Self::LockWorktree { path, lock } => worktree::set_locked(repo, path, *lock),
-            Self::RemoveWorktree { path, .. } => worktree::remove(repo, path),
+            Self::LockWorktrees { paths, lock } => worktree::set_locked_many(repo, paths, *lock),
+            Self::RemoveWorktrees { paths, .. } => worktree::remove_many(repo, paths),
             Self::UpdateSubmodule { path, .. } => submodule::update(repo, path),
             Self::UpdateSubmodules => submodule::update_all(repo),
             Self::RemoveRemote { name, .. } => remote::remove(repo, name),

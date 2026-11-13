@@ -611,6 +611,7 @@ impl GraphView {
         self.show_menu(position, menu::folder_menu(path, files, side), cx);
     }
 
+    /// The menu of one worktree, from a commit's folder icon.
     pub(super) fn open_worktree_menu(
         &mut self,
         path: &Path,
@@ -618,6 +619,32 @@ impl GraphView {
         cx: &mut Context<Self>,
     ) {
         let lines = menu::worktree_menu(&self.refs, path);
+        self.show_menu(position, lines, cx);
+    }
+
+    /// The menu of the picked worktrees in the sidebar.
+    pub(super) fn open_picked_worktrees_menu(
+        &mut self,
+        index: usize,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        // A right-click on one of several picked worktrees acts on all of them; one outside
+        // them starts over.
+        if !self.sidebar.worktree_picks.contains(index) {
+            self.sidebar
+                .worktree_picks
+                .click(index, mantisgit_core::repo::worktree::Click::Plain);
+        }
+        let paths: Vec<std::path::PathBuf> = self
+            .sidebar
+            .worktree_picks
+            .indexes()
+            .into_iter()
+            .filter_map(|index| self.refs.worktrees.get(index))
+            .map(|tree| tree.path.clone())
+            .collect();
+        let lines = menu::worktrees_menu(&self.refs, &paths);
         self.show_menu(position, lines, cx);
     }
 

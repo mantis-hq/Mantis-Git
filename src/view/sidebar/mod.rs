@@ -22,6 +22,7 @@ use mantisgit_core::menu::form::Form;
 use mantisgit_core::repo::branch::Dragged;
 use mantisgit_core::repo::stash::{self, Picks as StashPicks};
 use mantisgit_core::repo::submodule::State as SubmoduleState;
+use mantisgit_core::repo::worktree::{self, Picks as WorktreePicks};
 use mantisgit_core::tree::branches::{self, Folder};
 use std::ops::Range;
 use std::path::PathBuf;
@@ -138,6 +139,8 @@ pub(super) struct State {
     pub(super) picks: Picks,
     /// The stashes picked in the list, by their number.
     stash_picks: StashPicks,
+    /// The worktrees picked in the list, by their place in it.
+    pub(super) worktree_picks: WorktreePicks,
     /// The branch, by its place in the list, that the pointer is over. Its row then shows its
     /// count against the default branch. That changes the row's layout, so it can't be a
     /// hover style: gpui lays out before it paints, and panics if a style adds an element.
@@ -182,6 +185,34 @@ fn toggle<T: PartialEq>(list: &mut Vec<T>, item: T) {
 impl GraphView {
     pub fn sidebar_is_open(&self) -> bool {
         self.sidebar.open.unwrap_or(self.sidebar.window_is_wide)
+    }
+
+    /// A click on a worktree. Plain picks it alone, `Ctrl` adds or removes it and `Shift`
+    /// picks the run from the last one. A double-click opens it instead.
+    fn pick_worktree(
+        &mut self,
+        index: usize,
+        path: PathBuf,
+        openable: bool,
+        event: &ClickEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if event.click_count() >= 2 {
+            if openable && self.busy.is_none() {
+                self.switch_worktree(path, cx);
+            }
+            return;
+        }
+        let modifiers = event.modifiers();
+        let click = if modifiers.shift {
+            worktree::Click::Range
+        } else if modifiers.secondary(cx) {
+            worktree::Click::Add
+        } else {
+            worktree::Click::Plain
+        };
+        self.sidebar.worktree_picks.click(index, click);
+        cx.notify();
     }
 
     /// Switches to another working tree, which the window's tabs take care of.
@@ -239,6 +270,9 @@ impl GraphView {
         self.sidebar
             .stash_picks
             .retain_below(self.refs.stashes.len());
+        self.sidebar
+            .worktree_picks
+            .retain_below(self.refs.worktrees.len());
         self.update_spotlight();
     }
 
@@ -881,8 +915,8 @@ impl GraphView {
             })
     }
 
-    /// One of the repository's working trees. Picking another opens it, in the tab
-    /// already on it or a new one.
+    /// One of the repository's working trees. A click picks it, so several can be locked or
+    /// removed together, and a double-click opens it in the tab already on it or a new one.
     fn render_worktree_row(&self, index: usize, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let tree = self.refs.worktrees.get(index)?;
         let theme = cx.theme();
@@ -900,25 +934,22 @@ impl GraphView {
         let path = tree.path.clone();
         let detail = tree.detail();
         let locked = tree.locked;
-        let menu_path = tree.path.clone();
-        let row = panel_row(("worktree", index), tree.is_current, cx)
+        let openable = !tree.is_current && unavailable.is_none();
+        let on = self.sidebar.worktree_picks.contains(index);
+        let row = panel_row(("worktree", index), on, cx)
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    this.open_worktree_menu(&menu_path, event.position, cx);
+                    this.open_picked_worktrees_menu(index, event.position, cx);
                 }),
             )
             .h(px(30.))
             .pl(indent(0))
-            .when(unavailable.is_some(), |row| {
-                row.opacity(0.5).cursor_default()
-            })
-            .when(!tree.is_current && unavailable.is_none(), |row| {
-                row.on_click(
-                    cx.listener(move |this, _, _, cx| this.switch_worktree(path.clone(), cx)),
-                )
-            });
+            .when(unavailable.is_some(), |row| row.opacity(0.5))
+            .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                this.pick_worktree(index, path.clone(), openable, event, cx)
+            }));
         Some(
             row.child(div().size(px(8.)).flex_none().rounded_full().bg(color))
                 .child(

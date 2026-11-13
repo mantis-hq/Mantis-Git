@@ -121,6 +121,83 @@ pub fn set_locked(repo: &Path, path: &Path, lock: bool) -> Result<Option<String>
     }))
 }
 
+/// Which worktrees are picked in the sidebar, by their place in the list. They are picked
+/// the way stashes are.
+pub use super::stash::{Click, Picks};
+
+/// Locks or unlocks each of `paths`. Stops at the first that git refuses, and says which.
+pub fn set_locked_many(
+    repo: &Path,
+    paths: &[PathBuf],
+    lock: bool,
+) -> Result<Option<String>, String> {
+    if let [one] = paths {
+        return set_locked(repo, one, lock);
+    }
+    for (done, path) in paths.iter().enumerate() {
+        set_locked(repo, path, lock).map_err(|error| {
+            let verb = if lock { "Locked" } else { "Unlocked" };
+            format!(
+                "{verb} {done} of {} worktrees, then stopped at {}: {error}",
+                paths.len(),
+                path.display()
+            )
+        })?;
+    }
+    let (verb, undo) = if lock {
+        ("Locked", "unlock")
+    } else {
+        ("Unlocked", "lock")
+    };
+    Ok(Some(format!(
+        "{verb} {} worktrees. To undo, {undo} them from their menu.",
+        paths.len()
+    )))
+}
+
+/// Removes each of `paths`. Stops at the first that git refuses (changes in it), and says
+/// which, so the ones before it are gone and the rest stay.
+pub fn remove_many(repo: &Path, paths: &[PathBuf]) -> Result<Option<String>, String> {
+    if let [one] = paths {
+        return remove(repo, one);
+    }
+    for (done, path) in paths.iter().enumerate() {
+        remove(repo, path).map_err(|error| {
+            format!(
+                "Removed {done} of {} worktrees, then stopped at {}: {error}",
+                paths.len(),
+                path.display()
+            )
+        })?;
+    }
+    Ok(Some(format!("Removed {} worktrees.", paths.len())))
+}
+
+/// What removing `trees` does. One gets its own undo; several list theirs.
+pub fn remove_many_warning(trees: &[&Worktree]) -> String {
+    match trees {
+        [one] => remove_warning(one),
+        many => {
+            let mut text = format!(
+                "This deletes the folders of {} worktrees. Git won't remove one that has \
+                 changes that aren't committed. To bring them back, run each of:",
+                many.len()
+            );
+            for tree in many {
+                let path = tree.path.display();
+                text.push_str(&match (&tree.branch, tree.head.as_str()) {
+                    (Some(branch), _) => format!(" `git worktree add {path} {branch}`"),
+                    (None, head) if !head.is_empty() => {
+                        format!(" `git worktree add --detach {path} {head}`")
+                    }
+                    _ => format!(" `git worktree add {path}`"),
+                });
+            }
+            text
+        }
+    }
+}
+
 /// What removing `worktree` does, and how to bring it back.
 pub fn remove_warning(worktree: &Worktree) -> String {
     // The undo is typed in a terminal, which in WSL is the distribution's.
