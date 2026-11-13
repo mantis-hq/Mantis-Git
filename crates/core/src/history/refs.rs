@@ -344,6 +344,14 @@ impl Refs {
             .iter()
             .position(|commit| &**commit == oid)
     }
+
+    /// Another worktree that has this commit checked out and can be opened: not the one
+    /// on show, and not one whose folder is gone.
+    pub fn other_worktree_at(&self, oid: &str) -> Option<&Worktree> {
+        self.worktrees
+            .iter()
+            .find(|tree| tree.head == oid && !tree.is_current && tree.unavailable().is_none())
+    }
 }
 
 pub fn read_refs(repo: &Path) -> Result<Refs, String> {
