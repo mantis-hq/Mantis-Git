@@ -32,6 +32,10 @@ jobs:
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'docker' }}
     container:
       image: rust:1-bookworm
+    env:
+      # Debian bookworm's nodejs is 18, which has no global `crypto`, and the artifact
+      # actions need it. Newer Node ignores the flag.
+      NODE_OPTIONS: --experimental-global-webcrypto
     steps:
       - run: apt-get update && apt-get install -y --no-install-recommends nodejs
       - uses: actions/checkout@v7
