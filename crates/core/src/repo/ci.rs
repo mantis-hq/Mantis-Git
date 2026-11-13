@@ -244,11 +244,7 @@ fn status_of(value: &Value) -> Status {
 
 /// The newest pipelines, as the one status each commit stands for. A commit that has none
 /// among them is missing, not passing: the column leaves it empty.
-pub fn recent(
-    target: &Target,
-    http: &dyn Transport,
-    token: &str,
-) -> Reply<HashMap<String, Status>> {
+pub fn recent(target: &Target, http: &dyn Transport, token: &str) -> Reply<Newest> {
     let (path, list_key, sha_key) = match target.forge {
         Forge::GitHub => (
             format!("/repos/{}/actions/runs?per_page={RECENT}", target.path),
@@ -278,10 +274,29 @@ pub fn recent(
             seen.entry(sha.to_owned()).or_default().push(status_of(run));
         }
     }
-    Ok(seen
+    // Whether this is every pipeline the repository has, which is what makes a commit that
+    // is missing from it a commit with none. GitHub and Gitea say how many there are; GitLab
+    // doesn't, but never gives a page shorter than asked for unless that was all.
+    let listed = runs.and_then(Value::as_array).map_or(0, Vec::len);
+    let complete = match body.get("total_count").and_then(Value::as_u64) {
+        Some(total) => listed as u64 >= total,
+        None => target.forge == Forge::GitLab && listed < RECENT,
+    };
+    let statuses = seen
         .into_iter()
         .filter_map(|(sha, all)| Some((sha, Status::worst(all)?)))
-        .collect())
+        .collect();
+    Ok(Newest { statuses, complete })
+}
+
+/// What the newest pipelines say.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Newest {
+    /// The one status each commit among them stands for.
+    pub statuses: HashMap<String, Status>,
+    /// Whether they are all the repository has. Then a commit that isn't among them has no
+    /// pipelines, and nobody needs asking; when not, it may only be older than these.
+    pub complete: bool,
 }
 
 /// Every pipeline on one commit, each with its jobs.
@@ -537,13 +552,13 @@ fn session(target: &Target) -> Reply<String> {
 }
 
 /// `recent` against the real server, as whoever is signed in.
-pub fn recent_live(target: &Target, caches: &Caches) -> Reply<HashMap<String, Status>> {
+pub fn recent_live(target: &Target, caches: &Caches) -> Reply<Newest> {
     recent(target, web(caches), &session(target)?)
 }
 
 /// `recent` as the store last had it. Asks nobody, so it is quick; `Err` when it has never
 /// been read.
-pub fn recent_stored(target: &Target, caches: &Caches) -> Reply<HashMap<String, Status>> {
+pub fn recent_stored(target: &Target, caches: &Caches) -> Reply<Newest> {
     recent(target, &Stored::new(caches.pages()), "")
 }
 
@@ -684,11 +699,42 @@ mod tests {
             {"head_sha":"bbb","status":"in_progress","conclusion":null}]}"#;
         let http = Fake::answering(&[(200, body)]);
         let found = recent(&target(Forge::GitHub, "https://github.com"), &http, "t").unwrap();
-        assert_eq!(found["aaa"], Status::Failed);
-        assert_eq!(found["bbb"], Status::Running);
+        assert_eq!(found.statuses["aaa"], Status::Failed);
+        assert_eq!(found.statuses["bbb"], Status::Running);
         assert!(
             http.seen.lock().unwrap()[0]
                 .starts_with("GET https://api.github.com/repos/ada/tool/actions/runs?per_page=100")
+        );
+    }
+
+    #[test]
+    fn the_list_is_complete_only_when_the_forge_says_nothing_is_left_out() {
+        let run = r#"{"head_sha":"aaa","status":"completed","conclusion":"success"}"#;
+        let github = |total: u32| {
+            let body = format!(r#"{{"total_count":{total},"workflow_runs":[{run}]}}"#);
+            let http = Fake::answering(&[(200, &body)]);
+            recent(&target(Forge::GitHub, "https://github.com"), &http, "t")
+                .unwrap()
+                .complete
+        };
+        assert!(github(1), "it listed every run there is");
+        assert!(!github(250), "there are older runs it didn't list");
+
+        // Without a count, only GitLab's short page says it was all.
+        let gitea = Fake::answering(&[(200, &format!(r#"{{"workflow_runs":[{run}]}}"#))]);
+        let found = recent(&target(Forge::Gitea, "https://codeberg.org"), &gitea, "t");
+        assert!(!found.unwrap().complete, "Gitea may cap a page below ours");
+        let gitlab = Fake::answering(&[(200, r#"[{"sha":"aaa","status":"success"}]"#)]);
+        let found = recent(&target(Forge::GitLab, "https://gitlab.com"), &gitlab, "t");
+        assert!(found.unwrap().complete);
+        let full: Vec<String> = (0..RECENT)
+            .map(|n| format!(r#"{{"sha":"s{n}","status":"success"}}"#))
+            .collect();
+        let gitlab = Fake::answering(&[(200, &format!("[{}]", full.join(",")))]);
+        let found = recent(&target(Forge::GitLab, "https://gitlab.com"), &gitlab, "t");
+        assert!(
+            !found.unwrap().complete,
+            "a full page may have more behind it"
         );
     }
 
@@ -698,7 +744,7 @@ mod tests {
         let mut gitlab = target(Forge::GitLab, "https://gitlab.com");
         gitlab.path = "group/sub/tool".into();
         let found = recent(&gitlab, &http, "t").unwrap();
-        assert_eq!(found["aaa"], Status::Passed);
+        assert_eq!(found.statuses["aaa"], Status::Passed);
         assert!(
             http.seen.lock().unwrap()[0].contains("/api/v4/projects/group%2Fsub%2Ftool/pipelines")
         );
