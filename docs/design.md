@@ -702,8 +702,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   bottom, each under a Surface 0 rule:
   - The app's mark (the icon, drawn at 56 px: a Blue disc (the accent) with the mantis on it in Crust,
     its antennae ending in commit nodes and a lane running from its chin to a HEAD node;
-    `src/icons/mantis-git.svg`, the launcher's `mantisgit.svg` and `assets/mantisgit.ico`
-    are the same drawing), "Welcome to Mantis Git" as a commit title, and one status sentence.
+    `src/icons/mantis-git.svg` is that drawing in one colour. The launcher's `mantisgit.svg` and
+    `assets/mantisgit.ico` are the same mantis on a raised disc: lit from the top left, with a
+    Lavender highlight fading into a Crust shade, a light-to-dark rim, and a soft Crust shadow
+    under the mantis. This is the one place the app draws a gradient, and it is made of
+    Catppuccin tokens only. There is no ring inside the disc), "Welcome to Mantis Git" as a commit title, and one status sentence.
   - Three ideas side by side, each a picture on Base over a one-line heading and a few words:
     "Your branch is straight" (a small graph: HEAD's blue lane, `main` below the fork in
     its own colour, another branch bending away), "Say what will happen" (a primary button

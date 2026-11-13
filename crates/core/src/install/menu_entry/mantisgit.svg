@@ -1,14 +1,38 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <mask id="eyes" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="512" fill="#fff"/>
+      <path d="M189.4 240.8L229.0 285.8M322.6 240.8L283.0 285.8" fill="none" stroke="#000" stroke-width="32.4" stroke-linecap="round"/>
+    </mask>
+    <linearGradient id="lit" gradientUnits="userSpaceOnUse" x1="90" y1="30" x2="330" y2="330">
+      <stop offset="0" stop-color="#b4befe" stop-opacity=".85"/>
+      <stop offset=".6" stop-color="#b4befe" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="dim" gradientUnits="userSpaceOnUse" x1="200" y1="150" x2="420" y2="500">
+      <stop offset="0" stop-color="#11111b" stop-opacity="0"/>
+      <stop offset="1" stop-color="#11111b" stop-opacity=".34"/>
+    </linearGradient>
+    <linearGradient id="rim" gradientUnits="userSpaceOnUse" x1="256" y1="6" x2="256" y2="506">
+      <stop offset="0" stop-color="#cdd6f4" stop-opacity=".7"/>
+      <stop offset=".45" stop-color="#cdd6f4" stop-opacity="0"/>
+      <stop offset=".6" stop-color="#11111b" stop-opacity="0"/>
+      <stop offset="1" stop-color="#11111b" stop-opacity=".4"/>
+    </linearGradient>
+    <g id="mantis">
+      <path d="M256 380V428" fill="none" stroke="#11111b" stroke-width="12" stroke-linecap="round"/>
+      <circle cx="256" cy="436" r="16" fill="none" stroke="#11111b" stroke-width="12"/>
+      <path d="M225.4 203.0L180.8 138.5M286.6 203.0L331.2 138.5" fill="none" stroke="#11111b" stroke-width="11.7"/>
+      <circle cx="173.2" cy="127.4" r="13.5" fill="none" stroke="#11111b" stroke-width="9"/>
+      <circle cx="338.8" cy="127.4" r="13.5" fill="none" stroke="#11111b" stroke-width="9"/>
+      <path d="M151.6 210.2L360.4 210.2L256.0 368.6Z" fill="#11111b" stroke="#11111b" stroke-width="27" stroke-linejoin="round" mask="url(#eyes)"/>
+    </g>
+  </defs>
   <circle cx="256" cy="256" r="250" fill="#89b4fa"/>
-  <mask id="eyes" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
-    <rect width="512" height="512" fill="#fff"/>
-    <path d="M189.4 240.8L229.0 285.8M322.6 240.8L283.0 285.8" fill="none" stroke="#000" stroke-width="32.4" stroke-linecap="round"/>
-  </mask>
-  <circle cx="256" cy="256" r="226" fill="none" stroke="#11111b" stroke-width="7" opacity=".35"/>
-  <path d="M256 380V428" fill="none" stroke="#11111b" stroke-width="12" stroke-linecap="round"/>
-  <circle cx="256" cy="436" r="16" fill="none" stroke="#11111b" stroke-width="12"/>
-  <path d="M225.4 203.0L180.8 138.5M286.6 203.0L331.2 138.5" fill="none" stroke="#11111b" stroke-width="11.7"/>
-  <circle cx="173.2" cy="127.4" r="13.5" fill="none" stroke="#11111b" stroke-width="9"/>
-  <circle cx="338.8" cy="127.4" r="13.5" fill="none" stroke="#11111b" stroke-width="9"/>
-  <path d="M151.6 210.2L360.4 210.2L256.0 368.6Z" fill="#11111b" stroke="#11111b" stroke-width="27" stroke-linejoin="round" mask="url(#eyes)"/>
+  <circle cx="256" cy="256" r="250" fill="url(#lit)"/>
+  <circle cx="256" cy="256" r="250" fill="url(#dim)"/>
+  <circle cx="256" cy="256" r="244" fill="none" stroke="url(#rim)" stroke-width="7"/>
+  <g opacity=".16"><use href="#mantis" transform="translate(0 14)"/></g>
+  <g opacity=".2"><use href="#mantis" transform="translate(0 8)"/></g>
+  <g opacity=".24"><use href="#mantis" transform="translate(0 3)"/></g>
+  <use href="#mantis"/>
 </svg>
