@@ -79,10 +79,10 @@ pub(super) struct State {
     target: Option<Target>,
     /// The newest pipelines, as one status for each commit they ran on.
     statuses: HashMap<String, Status>,
-    /// Whether `statuses` is every pipeline the repository has, as the forge just said. A
-    /// commit that isn't in it then has none, and opening its checks asks nobody. Only
-    /// ever true of what the forge answered, never of what was kept on disk.
-    complete: bool,
+    /// What the forge last said about the newest pipelines, from which core says which
+    /// commits have none (`Newest::lacks`) so that opening their checks asks nobody. Only
+    /// ever what the forge answered, never what was kept on disk, which can be old.
+    listing: Newest,
     /// Why the last read failed, shown where the pipelines would be.
     error: Option<String>,
     refreshed: Option<Instant>,
@@ -155,6 +155,7 @@ impl GraphView {
                 {
                     // Old news can say what there was, never that there is nothing more.
                     kept.complete = false;
+                    kept.oldest = None;
                     this.checks_arrived(Some((target.clone(), Ok(kept))), cx);
                 }
                 this.read_checks_live(target, repo, caches, cx);
@@ -202,7 +203,7 @@ impl GraphView {
             // Signed out, or a repository on no forge: all of it goes.
             let had = self.checks.target.take().is_some();
             self.checks.statuses.clear();
-            self.checks.complete = false;
+            self.checks.listing = Newest::default();
             self.checks.error = None;
             self.checks.detail = None;
             self.checks.log = None;
@@ -216,9 +217,9 @@ impl GraphView {
         let appeared = self.checks.target.as_ref() != Some(&target);
         self.checks.target = Some(target);
         match found {
-            Ok(Newest { statuses, complete }) => {
-                let found = statuses;
-                self.checks.complete = complete;
+            Ok(newest) => {
+                let found = newest.statuses.clone();
+                self.checks.listing = newest;
                 self.checks.error = None;
                 // What a commit's own read said is newer than the list for the commits it
                 // names, so those are kept.
@@ -328,7 +329,7 @@ impl GraphView {
         else {
             return;
         };
-        let oid = commit.oid.clone();
+        let (oid, made) = (commit.oid.clone(), commit.time);
         let here = self
             .checks
             .detail
@@ -337,9 +338,14 @@ impl GraphView {
         if here && !again {
             return;
         }
-        // The forge listed every pipeline the repository has and this commit isn't one: it
-        // has none, and that is the answer. Refresh and the polls still ask.
-        if !again && !here && self.checks.complete && !self.checks.statuses.contains_key(&*oid) {
+        // The forge's list shows this commit has no pipelines (it is the whole list and the
+        // commit isn't in it, or the commit is newer than the list reaches back): that is
+        // the answer. Refresh and the polls still ask.
+        if !again
+            && !here
+            && !self.checks.statuses.contains_key(&*oid)
+            && self.checks.listing.lacks(&oid, made)
+        {
             self.checks.detail = Some(Detail {
                 oid,
                 load: Load::Done(Vec::new()),

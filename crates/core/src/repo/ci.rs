@@ -286,8 +286,25 @@ pub fn recent(target: &Target, http: &dyn Transport, token: &str) -> Reply<Newes
         .into_iter()
         .filter_map(|(sha, all)| Some((sha, Status::worst(all)?)))
         .collect();
-    Ok(Newest { statuses, complete })
+    // When the oldest of them started, if every one says. Nothing older is in the list.
+    let oldest = runs
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|run| parse_time(text(run, "created_at")))
+        .collect::<Option<Vec<_>>>()
+        .and_then(|times| times.into_iter().min());
+    Ok(Newest {
+        statuses,
+        complete,
+        oldest,
+    })
 }
+
+/// How much newer than the oldest listed pipeline a commit must be for the list to be
+/// trusted to hold its pipelines: clocks differ between an author and a server, and
+/// `parse_time` ignores a time zone, so a day more than covers both.
+const CLOCK_SLACK: u64 = 86_400;
 
 /// What the newest pipelines say.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -295,8 +312,27 @@ pub struct Newest {
     /// The one status each commit among them stands for.
     pub statuses: HashMap<String, Status>,
     /// Whether they are all the repository has. Then a commit that isn't among them has no
-    /// pipelines, and nobody needs asking; when not, it may only be older than these.
+    /// pipelines, and nobody needs asking.
     pub complete: bool,
+    /// When the oldest of them was created, in seconds since the epoch, if all say.
+    pub oldest: Option<u64>,
+}
+
+impl Newest {
+    /// Whether a commit is known to have no pipelines without asking the forge. Either the
+    /// list is all there is and the commit isn't in it, or the commit was made well after
+    /// the oldest pipeline listed: its pipelines can't be older than it is, so they would be
+    /// among these, being the newest. `committed` is seconds since the epoch.
+    pub fn lacks(&self, sha: &str, committed: i64) -> bool {
+        if self.statuses.contains_key(sha) {
+            return false;
+        }
+        self.complete
+            || self
+                .oldest
+                .zip(u64::try_from(committed).ok())
+                .is_some_and(|(oldest, committed)| committed >= oldest.saturating_add(CLOCK_SLACK))
+    }
 }
 
 /// Every pipeline on one commit, each with its jobs.
@@ -736,6 +772,42 @@ mod tests {
             !found.unwrap().complete,
             "a full page may have more behind it"
         );
+    }
+
+    #[test]
+    fn a_commit_newer_than_the_whole_list_reaches_back_has_none() {
+        // 250 runs exist and the newest two are listed, the older made on 2024-05-01.
+        let body = r#"{"total_count":250,"workflow_runs":[
+            {"head_sha":"aaa","status":"completed","conclusion":"success","created_at":"2024-05-03T10:00:00Z"},
+            {"head_sha":"bbb","status":"completed","conclusion":"success","created_at":"2024-05-01T12:00:00Z"}]}"#;
+        let http = Fake::answering(&[(200, body)]);
+        let newest = recent(&target(Forge::GitHub, "https://github.com"), &http, "t").unwrap();
+        assert!(!newest.complete);
+        let oldest = parse_time("2024-05-01T12:00:00Z").unwrap() as i64;
+        let day = 86_400;
+        assert!(
+            newest.lacks("new", oldest + day),
+            "made a day after the oldest listed"
+        );
+        assert!(
+            !newest.lacks("new", oldest + day - 1),
+            "inside the clock slack"
+        );
+        assert!(
+            !newest.lacks("old", oldest - 10 * day),
+            "may be among the older ones"
+        );
+        assert!(!newest.lacks("aaa", oldest + 5 * day), "it is listed");
+        assert!(!newest.lacks("new", -1), "a date before 1970 says nothing");
+
+        // One run without a time and nothing is known of how far back the list goes.
+        let body = r#"{"total_count":250,"workflow_runs":[
+            {"head_sha":"aaa","status":"completed","conclusion":"success","created_at":"2024-05-03T10:00:00Z"},
+            {"head_sha":"bbb","status":"completed","conclusion":"success"}]}"#;
+        let http = Fake::answering(&[(200, body)]);
+        let newest = recent(&target(Forge::GitHub, "https://github.com"), &http, "t").unwrap();
+        assert_eq!(newest.oldest, None);
+        assert!(!newest.lacks("new", oldest + 100 * day));
     }
 
     #[test]
