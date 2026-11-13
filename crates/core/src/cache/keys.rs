@@ -280,10 +280,7 @@ pub fn fingerprint(repo: &Path) -> String {
         text.push_str(&value);
         text.push('\0');
     };
-    add(
-        "version",
-        ops::run(repo, &["--version"]).unwrap_or_default(),
-    );
+    add("version", ops::version_for(repo));
     // Exit status 1 means no such setting, which is a value like any other.
     add(
         "config",

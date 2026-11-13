@@ -382,7 +382,7 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
     fn gone<T>() -> T {
         panic!("a read stopped")
     }
-    let (listing, head_ref, head, status, remote_configs, forge, workdir, worktrees, submodules) =
+    let (listing, mut status, remote_configs, forge, workdir, worktrees, submodules) =
         std::thread::scope(|scope| {
             let listing = scope.spawn(|| {
                 ops::run(
@@ -397,10 +397,6 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
                     ],
                 )
             });
-            // Both of these fail, as expected, in some states: HEAD can be detached or unborn.
-            let head_ref = scope.spawn(|| ops::run(repo, &["symbolic-ref", "-q", "HEAD"]).ok());
-            let head = scope
-                .spawn(|| ops::run(repo, &["rev-parse", "-q", "--verify", "HEAD^{commit}"]).ok());
             let toplevel = scope.spawn(|| ops::run(repo, &["rev-parse", "--show-toplevel"]).ok());
             let status = scope.spawn(|| status::read(repo));
             let remote_configs = scope.spawn(|| remote::list(repo));
@@ -416,8 +412,6 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
             let submodules = scope.spawn(move || submodule::list(&for_submodules));
             (
                 listing.join().unwrap_or_else(|_| gone()),
-                head_ref.join().unwrap_or_else(|_| gone()),
-                head.join().unwrap_or_else(|_| gone()),
                 status.join().unwrap_or_else(|_| gone()),
                 remote_configs.join().unwrap_or_else(|_| gone()),
                 forge.join().unwrap_or_else(|_| gone()),
@@ -427,8 +421,28 @@ pub fn read_refs(repo: &Path) -> Result<Refs, String> {
             )
         });
     let listing = listing?;
-    let head_ref = head_ref.map(|name| name.trim().to_owned());
-    let head: Option<Arc<str>> = head.map(|oid| oid.trim().into());
+    // `status` already says where HEAD is, so git isn't asked again. When it says nothing,
+    // as for a repository with no working tree, git is asked directly. Either may be
+    // missing, since HEAD can be detached or unborn.
+    let (head_ref, head): (Option<String>, Option<Arc<str>>) =
+        if status.branch.is_some() || status.head.is_some() {
+            (
+                status
+                    .branch
+                    .as_ref()
+                    .map(|branch| format!("refs/heads/{branch}")),
+                status.head.as_deref().map(Arc::from),
+            )
+        } else {
+            let head_ref = ops::run(repo, &["symbolic-ref", "-q", "HEAD"]).ok();
+            let head = ops::run(repo, &["rev-parse", "-q", "--verify", "HEAD^{commit}"]).ok();
+            (
+                head_ref.map(|name| name.trim().to_owned()),
+                head.map(|oid| Arc::from(oid.trim())),
+            )
+        };
+    status.remote =
+        status::publish_remote(remote_configs.iter().map(|remote| remote.name.as_str()));
 
     let mut refs = Refs {
         fingerprint: format!(

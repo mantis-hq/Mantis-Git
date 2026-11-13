@@ -158,20 +158,22 @@ impl RepoStatus {
     }
 }
 
-/// Reads the status. A repository with no working tree simply reports nothing.
+/// Where a branch would be published: `origin` when there is one, else the first remote.
+pub fn publish_remote<'a>(mut names: impl Iterator<Item = &'a str> + Clone) -> Option<String> {
+    names
+        .clone()
+        .find(|name| *name == "origin")
+        .or_else(|| names.next())
+        .map(str::to_owned)
+}
+
+/// Reads the status. A repository with no working tree simply reports nothing. `remote` is
+/// left for the caller, who already has the remotes (see [`publish_remote`]).
 pub fn read(repo: &Path) -> RepoStatus {
     let args = ["status", "--porcelain=v2", "--branch", "-z"];
     let mut status = ops::run(repo, &args)
         .map(|output| parse(&output))
         .unwrap_or_default();
-
-    let remotes = ops::run(repo, &["remote"]).unwrap_or_default();
-    let mut remotes = remotes.lines();
-    status.remote = remotes
-        .clone()
-        .find(|remote| *remote == "origin")
-        .or_else(|| remotes.next())
-        .map(str::to_owned);
 
     status.base = default_branch(repo).and_then(|(name, full)| {
         let range = format!("HEAD..{full}");
@@ -254,6 +256,14 @@ mod tests {
     use super::*;
     use crate::testing::{empty_commit as commit, git};
     use tempfile::TempDir;
+
+    /// The status as the graph's read has it, with the remote filled in from the remotes.
+    fn read(repo: &Path) -> RepoStatus {
+        let mut status = super::read(repo);
+        let remotes = crate::repo::remote::list(repo);
+        status.remote = publish_remote(remotes.iter().map(|remote| remote.name.as_str()));
+        status
+    }
 
     fn cloned() -> (TempDir, TempDir, TempDir) {
         let (remote, one, two) = (

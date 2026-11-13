@@ -107,7 +107,7 @@ impl std::fmt::Display for Version {
 /// Asks the installed git for its version. Fails with a sentence when there is none,
 /// which a window launched from a menu, with a short `PATH`, can easily meet.
 pub fn git_version() -> Result<Version, String> {
-    let output = run_command(git_anywhere().arg("--version"), None).map_err(|_| {
+    let output = crate::ops::host_version().map_err(|_| {
         "Git wasn't found. Install git, or start Mantis Git from a place where git is on the PATH."
             .to_owned()
     })?;
