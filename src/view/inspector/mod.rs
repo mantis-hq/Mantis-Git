@@ -633,6 +633,21 @@ impl GraphView {
                 .child(short_oid(parent).to_owned())
                 .on_click(cx.listener(move |this, _, _, cx| this.select_oid(&oid, cx)))
         });
+        let requests = self.requests_at(&commit.oid);
+        let has_requests = !requests.is_empty();
+        let request_links = requests.into_iter().enumerate().map(|(n, (label, url))| {
+            div()
+                .id(("request-link", n))
+                .cursor_pointer()
+                .text_size(TEXT_SMALL)
+                .text_color(link)
+                .child(label)
+                .on_click(move |_, _, cx| cx.open_url(&url))
+        });
+        let request_noun = self
+            .request_source()
+            .map(|(_, site)| site.forge.heading().trim_end_matches('s').to_owned())
+            .unwrap_or_default();
         let label = if commit.is_merge() {
             "Parents"
         } else {
@@ -653,6 +668,16 @@ impl GraphView {
                     .child(SharedString::from(commit.oid.clone()))
                     .into_any_element(),
             ))
+            .when(has_requests, |facts| {
+                facts.child(fact(
+                    &request_noun,
+                    div()
+                        .h_flex()
+                        .gap_2()
+                        .children(request_links)
+                        .into_any_element(),
+                ))
+            })
             .child(fact(
                 label,
                 div()

@@ -1,9 +1,9 @@
 //! The commit rows: lanes on a canvas, then the subject, author and time.
 
-use super::GraphView;
 use super::avatars::{self, Face, avatar_mark};
 use super::menu::wire_ref;
 use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL, status_icon};
+use super::{GraphView, OpenWorktreeInTab};
 use crate::icons::Icon;
 use crate::theme::{lane_color, selected_row, tokens};
 use chrono::{Datelike, Local, TimeZone, Utc};
@@ -282,6 +282,11 @@ impl GraphView {
             let is_stash = self.refs.stash_at(&commit.oid).is_some();
             let chips = self.refs.chips_at(&commit.oid);
             let signature = self.signature_of(&commit.oid);
+            let worktree = self
+                .refs
+                .other_worktree_at(&commit.oid)
+                .map(|tree| (tree.path.clone(), tree.open_hint()));
+            let requests = self.requests_at(&commit.oid);
             let (prefix, description) = split_subject(&commit.subject);
             let covered =
                 !matches!(face, Face::None) && !(is_working || is_stash || is_clipped(&lane_row));
@@ -393,6 +398,35 @@ impl GraphView {
                                                 .child(description.to_owned()),
                                         ),
                                 )
+                                .children(requests.into_iter().enumerate().map(
+                                    |(n, (label, url))| {
+                                        div()
+                                            .id((
+                                                ElementId::from(("request", index)),
+                                                n.to_string(),
+                                            ))
+                                            .flex_none()
+                                            .px_1p5()
+                                            .rounded(px(4.))
+                                            .cursor_pointer()
+                                            .text_size(TEXT_CHIP)
+                                            .font_semibold()
+                                            .text_color(head)
+                                            .bg(head.opacity(0.14))
+                                            .tooltip(move |window, cx| {
+                                                gpui_kit::component::tooltip::Tooltip::new(
+                                                    "Open on the forge",
+                                                )
+                                                .build(window, cx)
+                                            })
+                                            .tooltip_show_delay(std::time::Duration::ZERO)
+                                            .on_click(move |_, _, cx| {
+                                                cx.stop_propagation();
+                                                cx.open_url(&url);
+                                            })
+                                            .child(label)
+                                    },
+                                ))
                                 .children(signature.hint().map(|hint| {
                                     let (icon, color) = match signature {
                                         Signature::Bad => (Icon::ShieldAlert, danger),
@@ -404,6 +438,24 @@ impl GraphView {
                                         hint.to_owned(),
                                         color,
                                     )
+                                }))
+                                .children(worktree.map(|(path, hint)| {
+                                    status_icon(
+                                        (ElementId::from(("worktree-open", index)), "worktree"),
+                                        Icon::FolderOpen,
+                                        hint,
+                                        muted,
+                                    )
+                                    .cursor_pointer()
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .on_click(cx.listener(
+                                        move |_, _, _, cx| {
+                                            cx.stop_propagation();
+                                            cx.emit(OpenWorktreeInTab(path.clone()));
+                                        },
+                                    ))
                                 }))
                                 .into_any_element(),
                             div()
