@@ -859,7 +859,7 @@ impl Settings {
             .max_w(PAGE_WIDTH)
             .child(self.page_head(
                 "App",
-                "What Mantis Git itself remembers. Git settings are on the other pages.",
+                "What Mantis Git itself remembers, for every repository. What belongs to one repository is under This repository.",
                 cx,
             ))
             .child(self.render_group(
@@ -876,11 +876,11 @@ impl Settings {
                 ],
                 cx,
             ))
-            .children(self.render_launcher_group(cx))
-            .child(self.render_remotes_group(cx))
             .child(self.render_graph_group(cx))
             .child(self.render_avatars_group(cx))
+            .child(self.render_remotes_group(cx))
             .child(self.render_cache_group(cx))
+            .children(self.render_launcher_group(cx))
             .into_any_element()
     }
 }
