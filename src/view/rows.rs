@@ -3,7 +3,7 @@
 use super::avatars::{self, Face, avatar_mark};
 use super::menu::wire_ref;
 use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL, status_icon};
-use super::{GraphView, OpenWorktreeInTab};
+use super::{GraphView, SwitchWorktree};
 use crate::icons::Icon;
 use crate::theme::{lane_color, selected_row, tokens};
 use chrono::{Datelike, Local, TimeZone, Utc};
@@ -440,6 +440,7 @@ impl GraphView {
                                     )
                                 }))
                                 .children(worktree.map(|(path, hint)| {
+                                    let menu_path = path.clone();
                                     status_icon(
                                         (ElementId::from(("worktree-open", index)), "worktree"),
                                         Icon::FolderOpen,
@@ -450,10 +451,17 @@ impl GraphView {
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                         cx.stop_propagation()
                                     })
+                                    .on_mouse_down(
+                                        MouseButton::Right,
+                                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                            cx.stop_propagation();
+                                            this.open_worktree_menu(&menu_path, event.position, cx);
+                                        }),
+                                    )
                                     .on_click(cx.listener(
                                         move |_, _, _, cx| {
                                             cx.stop_propagation();
-                                            cx.emit(OpenWorktreeInTab(path.clone()));
+                                            cx.emit(SwitchWorktree(path.clone()));
                                         },
                                     ))
                                 }))

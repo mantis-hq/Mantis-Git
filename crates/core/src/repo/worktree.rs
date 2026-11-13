@@ -35,9 +35,10 @@ impl Worktree {
         }
     }
 
-    /// What the button on a commit it is checked out at says it will do.
+    /// What the button on a commit it is checked out at says it will do. A right-click
+    /// offers the other ways to open it.
     pub fn open_hint(&self) -> String {
-        format!("Open {} ({}) in a new tab", self.label(), self.detail())
+        format!("Open {} ({})", self.label(), self.detail())
     }
 
     /// Why it can't be switched to, when it can't.
@@ -202,7 +203,7 @@ mod tests {
             "folder gone"
         );
         let tree = refs.other_worktree_at("bbbbbbbbbb").unwrap();
-        assert_eq!(tree.open_hint(), "Open app-fix (fix/x) in a new tab");
+        assert_eq!(tree.open_hint(), "Open app-fix (fix/x)");
     }
 
     #[test]
