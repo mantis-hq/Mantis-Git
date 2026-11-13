@@ -1016,7 +1016,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     forge as before). The kept marks fill an empty
     column only, and a forge that can't be reached leaves them standing. A job that is
     over has a log that never changes, so its kept copy is the answer and nobody is asked;
-    a running one is asked each time. A page is kept by its address, not by who asked,
+    a running one is asked each time. A job that is waiting or was skipped has no log, so
+    its log opens at once saying so and nobody is asked; when a server says a job has none,
+    that is believed for a minute (in the status the job was in), so opening it again costs
+    nothing either. A page is kept by its address, not by who asked,
     since one account is signed in to a server; "Clear cache" forgets them all.
     Only one read of the newest pipelines is in flight at a time, so a load, a return to
     the window (not within 60 seconds of the last) and a poll that land together are one
