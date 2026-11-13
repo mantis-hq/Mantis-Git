@@ -478,8 +478,11 @@ impl GraphView {
                 // has been read, which is where a big repository spends its seconds.
                 let site = mantisgit_core::repo::forge::pick(&refs.remote_configs, refs.forge)
                     .map(|(_, site)| site);
+                // What this load brought: a push finds no run yet, so it is looked for again.
+                let fresh = refs.new_tips(&self.refs);
                 self.pending_refs = Some(refs);
                 self.refresh_checks_for(site, cx);
+                self.expect_pipelines(fresh, cx);
             }
             LoadEvent::Batch(batch) => {
                 // The first batch is how long the history took to start arriving, which is
