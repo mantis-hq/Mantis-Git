@@ -154,6 +154,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Settings: a quiet "Settings" button at the end of the header, or `Ctrl ,`, opens a
   second window (1000×720) and brings it forward if it is already open. It has the 52 px
   header, a 220 px Mantle side panel of pages, and the page in a column up to 720 px wide.
+  The side panel groups pages by reach, each group under a section label: "This repository"
+  (Repository, drawn only while a repository is open), then "Everywhere" (App, Theme, Git
+  config, Identities), then About. The App page's cards run from daily use to system
+  chores: Startup, Graph, Avatars, Remotes, Cache, Launcher.
   The header sentence says what was saved or why not. There is no Save button: toggles and
   choices apply when clicked, text applies on Enter or when you leave the field. Settings
   sit in Mantle cards (8 px radius) grouped under section labels. A choice is a row of
