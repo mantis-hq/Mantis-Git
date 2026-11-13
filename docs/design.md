@@ -972,6 +972,36 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   megabytes, as terrain and baked data have in a Unity scene, takes the window a second or
   more to lay out (`Line::clipped` in core). Staging works on git's own hunks, so it is
   unaffected.
+- **Checks:** what the forge's CI says about a commit, for a repository whose remote is on
+  GitHub, GitLab or Gitea (see "Forges") while an account is signed in to that same server
+  (Settings → Accounts). Without one there is no column, no tab and nothing is asked, so the
+  interface never shows an empty promise. The sign-in is looked at again after every load and
+  whenever the window is used again, so signing in shows up without a restart. It is read
+  through the forge's API with that token (`mantisgit_core::repo::ci`): GitHub Actions
+  runs, GitLab pipelines and Gitea or Forgejo Actions runs.
+  - The **Checks column** is the last of the graph's columns by default and drags like the
+    others (`checks` in `graph_columns`; a saved order without it is mended, so it appears
+    last). It is 56 px and holds one 14 px mark per commit, from one call for the newest
+    100 pipelines, so older commits are empty until opened. A commit with several pipelines
+    shows the one most worth looking at: failed, then running, waiting, cancelled, passed,
+    skipped. The shapes differ (check, cross, dot, dashed ring, slash), so no meaning rests
+    on colour: Green for passed, Red for failed, Subtext 0 for running and Overlay 2 for the
+    rest. The tooltip names the status, and a click opens the commit's Checks tab.
+  - The **Checks tab** is a chip beside "Files" over a commit's lists, labelled with the
+    status ("Checks · Failed"). It lists the commit's pipelines, failures first, each a row
+    with its mark, name, a summary ("1 of 4 jobs failed") and a quiet "Open" for its page
+    on the forge, and under it the jobs, with GitLab's stage in Overlay 2 and how long each
+    took, or its status while it runs. A quiet "Refresh" asks again. While anything is
+    running or waiting the forge is asked again every 20 seconds. A refusal is said in Peach
+    in words a person can act on (sign in again, or the server has no CI for this
+    repository).
+  - A **log** opens when a job is clicked, over the whole graph as a diff does, with a 40 px
+    header (mark, job, "pipeline · status", a quiet "Open on GitHub" and "Close"). Its lines
+    are 20 px rows with line numbers in Overlay 1, in Subtext 0, and Red for a line that
+    begins `error` or carries GitHub's `##[error]`. Colour codes, the time stamp each line
+    starts with and progress bars rewritten with a carriage return are removed. It opens at
+    the end, where what went wrong is, and a line over 1000 characters is cut as in a diff.
+    `Esc` or "Close" brings the graph back, and so does opening a file's diff.
 - **Dock tabs:** the bar holds tabs like the repository tabs, the same 28 px quiet button.
   The first is always the **Log**, then one per terminal, a `+` to open another, and
   `Clear` and `Hide` at the right. Terminals start in the repository's folder and keep

@@ -3,7 +3,7 @@
 //! or written by another version, naming columns twice, leaving some out or inventing new.
 
 /// How many columns there are.
-pub const COUNT: usize = 6;
+pub const COUNT: usize = 7;
 
 /// One column of a commit row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,6 +14,8 @@ pub enum Column {
     Hash,
     Author,
     Date,
+    /// What the forge's CI says. Only drawn while signed in to the repository's forge.
+    Checks,
 }
 
 impl Column {
@@ -25,6 +27,7 @@ impl Column {
         Column::Hash,
         Column::Author,
         Column::Date,
+        Column::Checks,
     ];
 
     pub fn key(self) -> &'static str {
@@ -35,6 +38,7 @@ impl Column {
             Column::Hash => "hash",
             Column::Author => "author",
             Column::Date => "date",
+            Column::Checks => "checks",
         }
     }
 
@@ -53,6 +57,7 @@ impl Column {
             Column::Hash => "Hash",
             Column::Author => "Author",
             Column::Date => "Date",
+            Column::Checks => "Checks",
         }
     }
 }
@@ -171,7 +176,7 @@ mod tests {
     fn the_default_order_is_the_one_the_graph_always_had() {
         assert_eq!(
             ColumnOrder::default().render(),
-            "refs,graph,subject,hash,author,date"
+            "refs,graph,subject,hash,author,date,checks"
         );
     }
 
@@ -179,15 +184,15 @@ mod tests {
     fn dropping_on_a_column_takes_its_place() {
         let mut order = ColumnOrder::default();
         order.move_to(Column::Date, Column::Refs);
-        assert_eq!(order.render(), "date,refs,graph,subject,hash,author");
+        assert_eq!(order.render(), "date,refs,graph,subject,hash,author,checks");
         order.move_to(Column::Date, Column::Author);
-        assert_eq!(order.render(), "refs,graph,subject,hash,author,date");
+        assert_eq!(order.render(), "refs,graph,subject,hash,author,date,checks");
     }
 
     #[test]
     fn a_damaged_list_still_has_every_column_once() {
         let order = ColumnOrder::parse("date, nonsense,date,subject,,");
-        assert_eq!(order.render(), "date,subject,refs,graph,hash,author");
+        assert_eq!(order.render(), "date,subject,refs,graph,hash,author,checks");
         assert_eq!(ColumnOrder::parse(""), ColumnOrder::default());
     }
 

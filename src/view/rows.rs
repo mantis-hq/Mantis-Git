@@ -62,6 +62,7 @@ impl GraphView {
             Column::Hash => HASH_WIDTH,
             Column::Author => AUTHOR_WIDTH,
             Column::Date => DATE_WIDTH,
+            Column::Checks => super::checks::WIDTH,
         })
     }
 
@@ -322,6 +323,7 @@ impl GraphView {
                     }))
                     .children(cells(
                         self.columns,
+                        self.checks_shown(),
                         [
                             self.render_refs_column(index, &chips, refs_width, cx)
                                 .into_any_element(),
@@ -486,6 +488,7 @@ impl GraphView {
                                     date.child(format_when(commit, Utc::now().timestamp()))
                                 })
                                 .into_any_element(),
+                            self.render_checks_cell(index, &commit.oid, cx),
                         ],
                     )),
             );
@@ -499,74 +502,76 @@ impl GraphView {
         let theme = cx.theme();
         let (panel, border, muted) = (theme.title_bar, theme.border, theme.muted_foreground);
         let primary = theme.primary;
-        let headers = self.columns.columns().map(|column| {
-            let heading = div()
-                .id(("column", column as usize))
-                .h_full()
-                .w_full()
-                .h_flex()
-                .cursor_pointer()
-                .rounded(px(4.))
-                .when(matches!(column, Column::Author | Column::Date), |h| {
-                    h.justify_end()
-                })
-                .child(column.label())
-                .on_drag(DraggedColumn(column), |dragged, _, _, cx| {
-                    cx.new(|_| dragged.clone())
-                })
-                .can_drop(move |dragged, _, _| {
-                    dragged
-                        .downcast_ref::<DraggedColumn>()
-                        .is_some_and(|source| source.0 != column)
-                })
-                .drag_over::<DraggedColumn>(|style, _, _, cx| {
-                    style.bg(cx.theme().primary.opacity(0.14))
-                })
-                .on_drop(cx.listener(move |this, source: &DraggedColumn, _, cx| {
-                    this.move_column(source.0, column, cx)
-                }))
-                .tooltip(move |window, cx| {
-                    Tooltip::new(format!("Drag to move {}", column.label())).build(window, cx)
-                });
-            // The wrapper takes the column's width, so the handle can sit on its right edge
-            // without being part of the heading that drags to reorder.
-            let wrapper = div().h_full().relative().min_w_0();
-            if column == Column::Subject {
-                return wrapper.flex_1().child(heading);
-            }
-            let handle = div()
-                .id(("column-edge", column as usize))
-                .absolute()
-                .top_0()
-                .right(px(-8.))
-                .w(px(8.))
-                .h_full()
-                .cursor_col_resize()
-                .hover(move |style| style.bg(primary.opacity(0.5)))
-                .on_drag(ResizeColumn(column), |_, _, _, cx| cx.new(|_| Ghost))
-                .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
-                    if event.click_count() == 2 {
-                        this.reset_column_width(column, cx);
-                    }
-                }))
-                .tooltip(move |window, cx| {
-                    Tooltip::new(format!("Drag to resize {}", column.label())).build(window, cx)
-                });
-            wrapper
-                .w(px(self.column_width(column)))
-                .flex_none()
-                .child(heading)
-                .child(deferred(handle).with_priority(5))
-                .on_drag_move(cx.listener(
-                    move |this, event: &DragMoveEvent<ResizeColumn>, _, cx| {
-                        if event.drag(cx).0 == column {
-                            let width = f32::from(event.event.position.x - event.bounds.left());
-                            this.set_column_width(column, width);
-                            cx.notify();
+        let headers = (self.columns.columns().into_iter())
+            .filter(|column| self.checks_shown() || *column != Column::Checks)
+            .map(|column| {
+                let heading = div()
+                    .id(("column", column as usize))
+                    .h_full()
+                    .w_full()
+                    .h_flex()
+                    .cursor_pointer()
+                    .rounded(px(4.))
+                    .when(matches!(column, Column::Author | Column::Date), |h| {
+                        h.justify_end()
+                    })
+                    .child(column.label())
+                    .on_drag(DraggedColumn(column), |dragged, _, _, cx| {
+                        cx.new(|_| dragged.clone())
+                    })
+                    .can_drop(move |dragged, _, _| {
+                        dragged
+                            .downcast_ref::<DraggedColumn>()
+                            .is_some_and(|source| source.0 != column)
+                    })
+                    .drag_over::<DraggedColumn>(|style, _, _, cx| {
+                        style.bg(cx.theme().primary.opacity(0.14))
+                    })
+                    .on_drop(cx.listener(move |this, source: &DraggedColumn, _, cx| {
+                        this.move_column(source.0, column, cx)
+                    }))
+                    .tooltip(move |window, cx| {
+                        Tooltip::new(format!("Drag to move {}", column.label())).build(window, cx)
+                    });
+                // The wrapper takes the column's width, so the handle can sit on its right edge
+                // without being part of the heading that drags to reorder.
+                let wrapper = div().h_full().relative().min_w_0();
+                if column == Column::Subject {
+                    return wrapper.flex_1().child(heading);
+                }
+                let handle = div()
+                    .id(("column-edge", column as usize))
+                    .absolute()
+                    .top_0()
+                    .right(px(-8.))
+                    .w(px(8.))
+                    .h_full()
+                    .cursor_col_resize()
+                    .hover(move |style| style.bg(primary.opacity(0.5)))
+                    .on_drag(ResizeColumn(column), |_, _, _, cx| cx.new(|_| Ghost))
+                    .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                        if event.click_count() == 2 {
+                            this.reset_column_width(column, cx);
                         }
-                    },
-                ))
-        });
+                    }))
+                    .tooltip(move |window, cx| {
+                        Tooltip::new(format!("Drag to resize {}", column.label())).build(window, cx)
+                    });
+                wrapper
+                    .w(px(self.column_width(column)))
+                    .flex_none()
+                    .child(heading)
+                    .child(deferred(handle).with_priority(5))
+                    .on_drag_move(cx.listener(
+                        move |this, event: &DragMoveEvent<ResizeColumn>, _, cx| {
+                            if event.drag(cx).0 == column {
+                                let width = f32::from(event.event.position.x - event.bounds.left());
+                                this.set_column_width(column, width);
+                                cx.notify();
+                            }
+                        },
+                    ))
+            });
         div()
             .h_flex()
             .h(px(28.))
@@ -628,8 +633,11 @@ impl Render for DraggedColumn {
 }
 
 /// The cells of one row, given in the columns' usual order, set in the order chosen.
-fn cells(order: ColumnOrder, cells: [AnyElement; COUNT]) -> Vec<AnyElement> {
-    let mut cells: Vec<_> = Column::ALL.into_iter().zip(cells).collect();
+fn cells(order: ColumnOrder, checks: bool, cells: [AnyElement; COUNT]) -> Vec<AnyElement> {
+    let mut cells: Vec<_> = (Column::ALL.into_iter().zip(cells))
+        // The checks column is only there while there is a forge to ask.
+        .filter(|(column, _)| checks || *column != Column::Checks)
+        .collect();
     let place = |column: Column| order.columns().iter().position(|&other| other == column);
     cells.sort_by_key(|(column, _)| place(*column));
     cells.into_iter().map(|(_, cell)| cell).collect()

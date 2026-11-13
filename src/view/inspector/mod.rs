@@ -3,6 +3,7 @@
 pub(super) mod commit_form;
 mod files;
 
+use super::checks;
 use super::parts::TEXT_SMALL;
 use super::parts::{loading, title};
 use super::{GraphView, Status};
@@ -153,7 +154,7 @@ impl GraphView {
         self.entries.get(self.selected?)
     }
 
-    fn selected_commit(&self) -> Option<&Commit> {
+    pub(in crate::view) fn selected_commit(&self) -> Option<&Commit> {
         let entry = self.selected_entry()?;
         (!entry.working).then_some(&entry.commit)
     }
@@ -168,6 +169,7 @@ impl GraphView {
     pub(super) fn selection_changed(&mut self, cx: &mut Context<Self>) {
         self.refresh_files_view();
         self.stop_loading_details();
+        self.checks_selection_changed(cx);
         if self.working_row_is_selected() {
             return self.reload_working(cx);
         }
@@ -525,6 +527,7 @@ impl GraphView {
             );
         };
         let loaded = self.selected_details();
+        let on_checks = self.checks_shown() && self.checks.tab == checks::Tab::Checks;
 
         Some(
             panel
@@ -546,11 +549,15 @@ impl GraphView {
                                 .child(self.render_facts(commit, cx))
                                 .child(self.render_actions(commit, cx)),
                         )
-                        .when_some(loaded, |panel, details| {
+                        .when(self.checks_shown(), |panel| {
+                            panel.child(self.render_inspector_tabs(cx))
+                        })
+                        .when(on_checks, |panel| panel.child(self.render_checks(cx)))
+                        .when_some(loaded.filter(|_| !on_checks), |panel, details| {
                             panel.child(self.render_commit_files(commit.is_merge(), details, cx))
                         })
                         .when(
-                            loaded.is_none() && self.inspector.loading.is_some(),
+                            loaded.is_none() && self.inspector.loading.is_some() && !on_checks,
                             |panel| {
                                 panel.child(loading(
                                     "inspector-loading",

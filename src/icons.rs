@@ -20,6 +20,11 @@ pub enum Icon {
     ShieldCheck,
     ShieldAlert,
     ArrowUp,
+    CircleCheck,
+    CircleX,
+    CircleDot,
+    CircleDashed,
+    CircleSlash,
     WindowMinimize,
     WindowMaximize,
     WindowClose,
@@ -42,6 +47,11 @@ impl Icon {
             Self::ShieldCheck => "icons/shield-check.svg",
             Self::ShieldAlert => "icons/shield-alert.svg",
             Self::ArrowUp => "icons/arrow-up.svg",
+            Self::CircleCheck => "icons/circle-check.svg",
+            Self::CircleX => "icons/circle-x.svg",
+            Self::CircleDot => "icons/circle-dot.svg",
+            Self::CircleDashed => "icons/circle-dashed.svg",
+            Self::CircleSlash => "icons/circle-slash.svg",
             Self::WindowMinimize => "icons/window-minimize.svg",
             Self::WindowMaximize => "icons/window-maximize.svg",
             Self::WindowClose => "icons/window-close.svg",
@@ -62,6 +72,11 @@ impl Icon {
             "icons/shield-check.svg" => include_bytes!("icons/shield-check.svg"),
             "icons/shield-alert.svg" => include_bytes!("icons/shield-alert.svg"),
             "icons/arrow-up.svg" => include_bytes!("icons/arrow-up.svg"),
+            "icons/circle-check.svg" => include_bytes!("icons/circle-check.svg"),
+            "icons/circle-x.svg" => include_bytes!("icons/circle-x.svg"),
+            "icons/circle-dot.svg" => include_bytes!("icons/circle-dot.svg"),
+            "icons/circle-dashed.svg" => include_bytes!("icons/circle-dashed.svg"),
+            "icons/circle-slash.svg" => include_bytes!("icons/circle-slash.svg"),
             "icons/window-minimize.svg" => include_bytes!("icons/window-minimize.svg"),
             "icons/window-maximize.svg" => include_bytes!("icons/window-maximize.svg"),
             "icons/window-close.svg" => include_bytes!("icons/window-close.svg"),
@@ -92,6 +107,11 @@ impl AssetSource for Icons {
             Icon::ShieldCheck,
             Icon::ShieldAlert,
             Icon::ArrowUp,
+            Icon::CircleCheck,
+            Icon::CircleX,
+            Icon::CircleDot,
+            Icon::CircleDashed,
+            Icon::CircleSlash,
             Icon::WindowMinimize,
             Icon::WindowMaximize,
             Icon::WindowClose,
@@ -126,6 +146,11 @@ mod tests {
             Icon::ShieldCheck,
             Icon::ShieldAlert,
             Icon::ArrowUp,
+            Icon::CircleCheck,
+            Icon::CircleX,
+            Icon::CircleDot,
+            Icon::CircleDashed,
+            Icon::CircleSlash,
             Icon::WindowMinimize,
             Icon::WindowMaximize,
             Icon::WindowClose,
@@ -135,6 +160,6 @@ mod tests {
             assert!(bytes.starts_with(b"<svg"), "{}", icon.path());
         }
         assert!(Icons.load("icons/none.svg").unwrap().is_none());
-        assert_eq!(Icons.list("icons/").unwrap().len(), 15);
+        assert_eq!(Icons.list("icons/").unwrap().len(), 20);
     }
 }
