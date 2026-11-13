@@ -213,6 +213,7 @@ impl GraphView {
     pub fn show_file(&mut self, index: usize, cx: &mut Context<Self>) {
         self.conflict.open = false;
         self.diff.closed = false;
+        self.drop_log();
         self.load_file(index, cx);
     }
 

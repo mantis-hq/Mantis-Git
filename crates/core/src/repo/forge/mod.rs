@@ -177,6 +177,16 @@ pub fn hosting(remote: &Remote, chosen: Option<Forge>) -> Option<Hosting> {
 }
 
 impl Site {
+    /// The server's own address, `https://github.com`.
+    pub fn origin(&self) -> String {
+        self.address.origin()
+    }
+
+    /// `owner/repo`, or `group/subgroup/repo`.
+    pub fn path(&self) -> &str {
+        &self.address.path
+    }
+
     /// The page of this repository on its forge.
     pub fn web(&self) -> String {
         self.address.web()

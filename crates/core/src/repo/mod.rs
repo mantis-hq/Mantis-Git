@@ -3,6 +3,7 @@
 
 pub mod auto_fetch;
 pub mod branch;
+pub mod ci;
 pub mod clone;
 pub mod commit_graph;
 pub mod conflict;

@@ -2,6 +2,7 @@
 //! layout; each region and screen lives in its own module.
 
 mod avatars;
+mod checks;
 mod conflicts;
 mod dialog;
 mod diff;
@@ -209,6 +210,8 @@ pub struct GraphView {
     in_background: bool,
     avatars: avatars::State,
     signatures: signatures::State,
+    /// What the forge's CI says, once signed in to it.
+    checks: checks::State,
     caches: Caches,
     /// What besides a commit decides how git reports it, which keys the caches. `None`
     /// until it has been read, and the caches go unused until then.
@@ -291,6 +294,7 @@ impl GraphView {
             in_background: false,
             avatars: avatars::State::new(),
             signatures: Default::default(),
+            checks: Default::default(),
             caches: shared_caches(cx),
             fingerprint: None,
             _activation: activation,
@@ -322,6 +326,7 @@ impl GraphView {
             self.reload_working(cx);
         }
         self.check_paused_operation(cx);
+        self.refresh_checks_if_stale(cx);
     }
 
     pub fn open(&mut self, repo: PathBuf, cx: &mut Context<Self>) {
@@ -341,6 +346,7 @@ impl GraphView {
         self.stop_loading_details();
         self.fingerprint = None;
         self.signatures = Default::default();
+        self.forget_checks();
         self.inspector = Default::default();
         self.diff = Default::default();
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -549,6 +555,7 @@ impl GraphView {
         self.select_head_if_unselected(cx);
         self.refresh_spotlight();
         self.probe_forge(cx);
+        self.refresh_checks(cx);
         self.check_paused_operation(cx);
         self.load_branch_counts(cx);
         cx.notify();
@@ -866,7 +873,9 @@ impl GraphView {
         let sidebar = self.render_sidebar(cx);
         let inspector = self.render_inspector(cx);
         // One file's diff, or the two sides of a conflict, covers the graph.
-        let diff = self.render_diff(cx).or_else(|| self.render_resolver(cx));
+        let diff = (self.render_log(cx))
+            .or_else(|| self.render_diff(cx))
+            .or_else(|| self.render_resolver(cx));
         let (has_sidebar, has_inspector) = (sidebar.is_some(), inspector.is_some());
         // An open diff takes the place of the whole graph, and the inspector beside it stays
         // for picking another file.

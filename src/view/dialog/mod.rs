@@ -69,6 +69,8 @@ impl GraphView {
     fn dismiss(&mut self, cx: &mut Context<Self>) {
         if self.menu.is_some() {
             self.back_menu(cx);
+        } else if self.log_is_open() {
+            self.close_log(cx);
         } else if self.diff_is_open() {
             self.close_diff(cx);
         } else if self.conflict.open {

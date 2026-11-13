@@ -68,7 +68,7 @@ impl Transport for Web {
         let body = response
             .body_mut()
             .with_config()
-            .limit(1024 * 1024)
+            .limit(16 * 1024 * 1024)
             .read_to_string()
             .unwrap_or_default();
         Ok(Reply { status, body })
