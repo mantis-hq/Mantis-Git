@@ -18,6 +18,10 @@ pub(super) struct State {
     /// The key being added, as `origin key`, so its button can say so.
     adding_key: Option<String>,
     loaded: bool,
+    /// Addresses of the servers added by hand, which can be edited and removed.
+    custom: Vec<String>,
+    /// The address of the server the form is changing, when it isn't adding a new one.
+    editing: Option<String>,
     new_origin: Entity<InputState>,
     new_client_id: Entity<InputState>,
     new_forge: Forge,
@@ -32,14 +36,16 @@ impl State {
         let new_client_id = field("Client ID of the OAuth app", "", window, cx);
         let mut events = Vec::new();
         for input in [&new_origin, &new_client_id] {
-            events.push(
-                cx.subscribe_in(input, window, |this, _, event: &InputEvent, _, cx| {
+            events.push(cx.subscribe_in(
+                input,
+                window,
+                |this, _, event: &InputEvent, window, cx| {
                     if matches!(event, InputEvent::PressEnter { .. }) {
-                        this.add_host(cx);
+                        this.save_host(window, cx);
                     }
                     cx.notify();
-                }),
-            );
+                },
+            ));
         }
         let state = Self {
             hosts: Vec::new(),
@@ -48,6 +54,8 @@ impl State {
             signing_in: None,
             adding_key: None,
             loaded: false,
+            custom: Vec::new(),
+            editing: None,
             new_origin,
             new_client_id,
             new_forge: Forge::Gitea,
@@ -64,16 +72,18 @@ impl Settings {
     /// Reads the servers, who is signed in (a keychain call) and the local keys.
     pub(super) fn load_accounts(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            let (hosts, accounts, keys) = cx
+            let (hosts, accounts, keys, custom) = cx
                 .background_spawn(async {
                     let hosts = auth::hosts();
                     let accounts = auth::accounts_in(&auth::token::Keychain, &hosts);
-                    (hosts, accounts, ssh::keys())
+                    let custom = auth::custom_hosts().into_iter().map(|h| h.origin).collect();
+                    (hosts, accounts, ssh::keys(), custom)
                 })
                 .await;
             this.update(cx, |this, cx| {
                 let state = &mut this.accounts;
                 (state.hosts, state.accounts, state.keys) = (hosts, accounts, keys);
+                state.custom = custom;
                 state.loaded = true;
                 cx.notify();
             })
@@ -187,32 +197,104 @@ impl Settings {
         .detach();
     }
 
-    /// Remembers a server of the person's own, with the client ID of their OAuth app.
-    fn add_host(&mut self, cx: &mut Context<Self>) {
+    /// Fills the form with a server added by hand, to change it.
+    fn edit_host(&mut self, host: &Host, window: &mut Window, cx: &mut Context<Self>) {
+        let state = &mut self.accounts;
+        state.editing = Some(host.origin.clone());
+        state.new_forge = host.forge;
+        let (origin, id) = (host.origin.clone(), host.client_id.clone());
+        state
+            .new_origin
+            .update(cx, |input, cx| input.set_value(origin, window, cx));
+        state
+            .new_client_id
+            .update(cx, |input, cx| input.set_value(id, window, cx));
+        cx.notify();
+    }
+
+    fn clear_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = &mut self.accounts;
+        state.editing = None;
+        for input in [&state.new_origin, &state.new_client_id] {
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        cx.notify();
+    }
+
+    /// Adds the server in the form, or saves the changes to the one being edited.
+    fn save_host(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let origin = self.accounts.new_origin.read(cx).value().to_string();
         let client_id = self.accounts.new_client_id.read(cx).value().to_string();
         let Some(host) = Host::new(self.accounts.new_forge, &origin, &client_id) else {
             self.feedback = Feedback::Failed(
                 "That isn't a server address. Write it as https://git.example.com.".into(),
             );
+            cx.notify();
             return;
         };
         if client_id.trim().is_empty() {
             self.feedback =
                 Feedback::Failed("Paste the client ID of the OAuth app you made there.".into());
+            cx.notify();
             return;
         }
-        match auth::add_host(&host) {
-            Ok(()) => {
-                self.feedback = Feedback::Saved(format!(
-                    "Added {}. Redirect address to register: http://127.0.0.1",
-                    host.name()
-                ));
-                self.load_accounts(cx);
-            }
-            Err(message) => self.feedback = Feedback::Failed(message),
-        }
-        cx.notify();
+        let replacing = self.accounts.editing.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let saved = {
+                let (replacing, host) = (replacing.clone(), host.clone());
+                cx.background_spawn(async move { auth::save_host(replacing.as_deref(), &host) })
+                    .await
+            };
+            this.update_in(cx, |this, window, cx| {
+                match saved {
+                    Ok(()) => {
+                        this.feedback = Feedback::Saved(match replacing {
+                            Some(_) => format!("Saved {}.", host.name()),
+                            None => format!(
+                                "Added {}. Redirect address to register: http://127.0.0.1",
+                                host.name()
+                            ),
+                        });
+                        this.clear_form(window, cx);
+                        this.load_accounts(cx);
+                    }
+                    Err(message) => this.feedback = Feedback::Failed(message),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Forgets a server added by hand and its token.
+    fn remove_host(&mut self, host: Host, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            let origin = host.origin.clone();
+            let removed = {
+                let origin = origin.clone();
+                cx.background_spawn(async move { auth::remove_host(&origin) })
+                    .await
+            };
+            this.update_in(cx, |this, window, cx| {
+                match removed {
+                    Ok(()) => {
+                        this.feedback = Feedback::Saved(format!(
+                            "Removed {}. Its token is gone from this computer.",
+                            host.name()
+                        ));
+                        if this.accounts.editing.as_deref() == Some(origin.as_str()) {
+                            this.clear_form(window, cx);
+                        }
+                        this.load_accounts(cx);
+                    }
+                    Err(message) => this.feedback = Feedback::Failed(message),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn render_host_row(&self, index: usize, host: &Host, cx: &mut Context<Self>) -> AnyElement {
@@ -224,6 +306,7 @@ impl Settings {
             .as_ref()
             .is_some_and(|(origin, _)| *origin == host.origin);
         let busy = self.accounts.signing_in.is_some();
+        let custom = self.accounts.custom.contains(&host.origin);
         let sentence = if waiting {
             "Waiting for the browser…".to_owned()
         } else {
@@ -277,7 +360,37 @@ impl Settings {
                             .child(sentence),
                     ),
             )
-            .child(button)
+            .child(
+                div()
+                    .h_flex()
+                    .gap_1()
+                    .child(button)
+                    .children(custom.then(|| {
+                        let (edit, remove) = (host.clone(), host.clone());
+                        div()
+                            .h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new(("edit-host", index))
+                                    .ghost()
+                                    .small()
+                                    .label("Edit")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.edit_host(&edit, window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new(("remove-host", index))
+                                    .ghost()
+                                    .small()
+                                    .label("Remove")
+                                    .disabled(busy)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.remove_host(remove.clone(), window, cx)
+                                    })),
+                            )
+                    })),
+            )
             .into_any_element()
     }
 
@@ -380,13 +493,33 @@ impl Settings {
             .child(labelled("Server", &self.accounts.new_origin))
             .child(labelled("Client ID", &self.accounts.new_client_id))
             .child(
-                div().h_flex().child(
-                    Button::new("add-host")
-                        .ghost()
-                        .small()
-                        .label("Add server")
-                        .on_click(cx.listener(|this, _, _, cx| this.add_host(cx))),
-                ),
+                div()
+                    .h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new("add-host")
+                            .ghost()
+                            .small()
+                            .label(match &self.accounts.editing {
+                                Some(origin) => format!(
+                                    "Save {}",
+                                    origin.split_once("://").map_or(origin.as_str(), |p| p.1)
+                                ),
+                                None => "Add server".to_owned(),
+                            })
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.save_host(window, cx)),
+                            ),
+                    )
+                    .children(self.accounts.editing.is_some().then(|| {
+                        Button::new("cancel-host")
+                            .ghost()
+                            .small()
+                            .label("Cancel")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.clear_form(window, cx)),
+                            )
+                    })),
             )
             .into_any_element()
     }
@@ -415,7 +548,15 @@ impl Settings {
             let rows = self.render_key_rows(cx);
             page = page.child(self.render_group("SSH keys", rows, cx));
         }
-        page.child(self.render_group("Another server", vec![self.render_add_host(cx)], cx))
-            .into_any_element()
+        page.child(self.render_group(
+            if self.accounts.editing.is_some() {
+                "Edit server"
+            } else {
+                "Another server"
+            },
+            vec![self.render_add_host(cx)],
+            cx,
+        ))
+        .into_any_element()
     }
 }
