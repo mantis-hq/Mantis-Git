@@ -489,8 +489,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Worktrees: when a repository has more than one working tree, the sidebar lists them
   under "Worktrees", open by default, between Remotes and Tags. A row is the folder's
   name, then its branch (or `detached at <hash>`) in Overlay 2, with a dot in that
-  branch's colour. The one on show is selected and semibold. Clicking another switches
-  the current tab to it, so the tab strip doesn't grow. A commit that another worktree has
+  branch's colour. The one on show is semibold. A click picks a row (selected-row
+  fill), as for stashes: `Ctrl`-click adds or removes one and `Shift`-click picks the run
+  from the last. Double-clicking another switches the current tab to it, so the tab strip
+  doesn't grow. A commit that another worktree has
   checked out ends its subject in a 14 px folder (Overlay 2) with the tooltip "Open app-fix
   (fix/x)"; clicking it switches the current tab to that worktree, and right-clicking it opens
   the worktree's usual menu (below) to open it in a new tab instead, copy its path, and so on
@@ -502,7 +504,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   main worktree can't be locked), and in red "Remove worktree <name>", which asks first and gives the
   `git worktree add` that brings it back. The main worktree, the one on show and a locked
   one stay, and the menu says why. Git refuses to remove one with uncommitted changes,
-  and the app never forces it. With one working tree the section isn't drawn.
+  and the app never forces it. Right-clicking one of several picked opens a menu for the
+  group: "Lock 2 worktrees", "Unlock 1 worktree" and in red "Remove 2 worktrees", each
+  counting only the ones it can act on, with the same confirmation (Enter once, listing each
+  `git worktree add`). With one working tree the section isn't drawn.
 - Submodules: the sidebar ends in a "Submodules" section pinned to its foot, under a
   Surface 0 border, so it stays in view however long the lists above run. It is open by
   default and always drawn, but with no submodules it is its header alone, with a count of 0

@@ -18,7 +18,7 @@ use crate::text::{count, short_oid};
 use crate::working::{self, Side};
 use command::Command;
 use form::Form;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A small picture that starts a line, saying what the line is about. The interface draws
 /// it, since this crate knows nothing of icons.
@@ -435,8 +435,8 @@ pub fn worktree_menu(refs: &Refs, path: &Path) -> Vec<Line> {
             } else {
                 format!("Unlock worktree {name}")
             },
-            Command::LockWorktree {
-                path: tree.path.clone(),
+            Command::LockWorktrees {
+                paths: vec![tree.path.clone()],
                 lock,
             },
         )
@@ -451,13 +451,85 @@ pub fn worktree_menu(refs: &Refs, path: &Path) -> Vec<Line> {
     } else {
         Line::item(
             format!("Remove worktree {name}"),
-            Command::RemoveWorktree {
-                path: tree.path.clone(),
+            Command::RemoveWorktrees {
+                paths: vec![tree.path.clone()],
                 warning: worktree::remove_warning(tree),
             },
         )
         .danger()
     });
+    lines
+}
+
+/// The menu for the picked worktrees in the sidebar. One gets its own menu; several get the
+/// lines that work on a group: lock, unlock and remove, each naming how many it acts on and
+/// leaving out the ones it can't touch.
+pub fn worktrees_menu(refs: &Refs, paths: &[PathBuf]) -> Vec<Line> {
+    let trees: Vec<&worktree::Worktree> = paths
+        .iter()
+        .filter_map(|path| refs.worktrees.iter().find(|tree| tree.path == *path))
+        .collect();
+    if let [one] = trees.as_slice() {
+        return worktree_menu(refs, &one.path);
+    }
+    if trees.is_empty() {
+        return Vec::new();
+    }
+    let paths_of = |list: &[&worktree::Worktree]| -> Vec<PathBuf> {
+        list.iter().map(|tree| tree.path.clone()).collect()
+    };
+    let to_lock: Vec<_> = trees
+        .iter()
+        .copied()
+        .filter(|tree| !tree.is_main && !tree.locked)
+        .collect();
+    let to_unlock: Vec<_> = trees.iter().copied().filter(|tree| tree.locked).collect();
+    let to_remove: Vec<_> = trees
+        .iter()
+        .copied()
+        .filter(|tree| !tree.is_main && !tree.is_current && !tree.locked)
+        .collect();
+    let mut lines = vec![Line::Heading(format!("{} selected", trees.len()))];
+    lines.push(if to_lock.is_empty() {
+        Line::unavailable("None of them can be locked")
+    } else {
+        Line::item(
+            format!("Lock {}", count(to_lock.len(), "worktree")),
+            Command::LockWorktrees {
+                paths: paths_of(&to_lock),
+                lock: true,
+            },
+        )
+    });
+    lines.push(if to_unlock.is_empty() {
+        Line::unavailable("None of them is locked")
+    } else {
+        Line::item(
+            format!("Unlock {}", count(to_unlock.len(), "worktree")),
+            Command::LockWorktrees {
+                paths: paths_of(&to_unlock),
+                lock: false,
+            },
+        )
+    });
+    lines.push(Line::Separator);
+    lines.push(if to_remove.is_empty() {
+        Line::unavailable("None of them can be removed")
+    } else {
+        Line::item(
+            format!("Remove {}", count(to_remove.len(), "worktree")),
+            Command::RemoveWorktrees {
+                paths: paths_of(&to_remove),
+                warning: worktree::remove_many_warning(&to_remove),
+            },
+        )
+        .danger()
+    });
+    if to_remove.len() < trees.len() {
+        lines.push(Line::unavailable(
+            "The main, shown and locked ones stay when removing",
+        ));
+    }
     lines
 }
 
@@ -1446,6 +1518,36 @@ mod tests {
         let locked = worktree_menu(&refs, Path::new("/code/app-l"));
         assert!(labels(&locked).contains(&"app-l is locked, so it stays"));
         assert!(worktree_menu(&refs, Path::new("/nowhere")).is_empty());
+    }
+
+    #[test]
+    fn several_worktrees_lock_and_remove_only_those_that_may() {
+        let mut refs = refs();
+        refs.worktrees = crate::repo::worktree::parse(
+            "worktree /code/app\nHEAD aaaaaaaa\nbranch refs/heads/main\n\n\
+             worktree /code/app-x\nHEAD bbbbbbbb\nbranch refs/heads/feat/x\n\n\
+             worktree /code/app-y\nHEAD bbbbbbbb\nbranch refs/heads/feat/y\n\n\
+             worktree /code/app-l\nHEAD bbbbbbbb\ndetached\nlocked\n",
+        );
+        refs.worktrees[0].is_current = true;
+        let all: Vec<PathBuf> = refs.worktrees.iter().map(|t| t.path.clone()).collect();
+        let lines = worktrees_menu(&refs, &all);
+        let got = labels(&lines);
+        assert_eq!(
+            got[..3],
+            [
+                "Lock 2 worktrees",
+                "Unlock 1 worktree",
+                "Remove 2 worktrees"
+            ]
+        );
+        let remove = lines.iter().filter_map(Line::command).last().unwrap();
+        assert!(matches!(remove, Command::RemoveWorktrees { paths, .. } if paths.len() == 2));
+        assert!(remove.confirmation().is_some());
+        assert_eq!(
+            worktrees_menu(&refs, &all[1..2]).len(),
+            worktree_menu(&refs, &all[1]).len()
+        );
     }
 
     #[test]
