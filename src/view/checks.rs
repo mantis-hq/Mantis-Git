@@ -16,7 +16,7 @@ use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use mantisgit_core::auth;
-use mantisgit_core::repo::ci::{self, Job, Pipeline, Status, Target};
+use mantisgit_core::repo::ci::{self, Job, Newest, Pipeline, Status, Target};
 use mantisgit_core::repo::forge;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -48,7 +48,7 @@ pub(super) enum Tab {
 }
 
 /// What the newest pipelines said, by commit, or why they couldn't be read.
-type Recent = Result<HashMap<String, Status>, String>;
+type Recent = Result<Newest, String>;
 
 enum Load<T> {
     Loading,
@@ -79,6 +79,10 @@ pub(super) struct State {
     target: Option<Target>,
     /// The newest pipelines, as one status for each commit they ran on.
     statuses: HashMap<String, Status>,
+    /// Whether `statuses` is every pipeline the repository has, as the forge just said. A
+    /// commit that isn't in it then has none, and opening its checks asks nobody. Only
+    /// ever true of what the forge answered, never of what was kept on disk.
+    complete: bool,
     /// Why the last read failed, shown where the pipelines would be.
     error: Option<String>,
     refreshed: Option<Instant>,
@@ -147,8 +151,10 @@ impl GraphView {
                 };
                 // Only into an empty column: anything already there is newer than the disk.
                 if this.checks.statuses.is_empty()
-                    && let Ok(kept) = kept
+                    && let Ok(mut kept) = kept
                 {
+                    // Old news can say what there was, never that there is nothing more.
+                    kept.complete = false;
                     this.checks_arrived(Some((target.clone(), Ok(kept))), cx);
                 }
                 this.read_checks_live(target, repo, caches, cx);
@@ -196,6 +202,7 @@ impl GraphView {
             // Signed out, or a repository on no forge: all of it goes.
             let had = self.checks.target.take().is_some();
             self.checks.statuses.clear();
+            self.checks.complete = false;
             self.checks.error = None;
             self.checks.detail = None;
             self.checks.log = None;
@@ -209,7 +216,9 @@ impl GraphView {
         let appeared = self.checks.target.as_ref() != Some(&target);
         self.checks.target = Some(target);
         match found {
-            Ok(found) => {
+            Ok(Newest { statuses, complete }) => {
+                let found = statuses;
+                self.checks.complete = complete;
                 self.checks.error = None;
                 // What a commit's own read said is newer than the list for the commits it
                 // names, so those are kept.
@@ -232,6 +241,12 @@ impl GraphView {
                 let stale = kept
                     .as_ref()
                     .is_some_and(|(oid, status)| found.get(oid).is_some_and(|s| s != status));
+                // A commit shown as having none that now has some: a pipeline started.
+                let started = self.checks.detail.as_ref().is_some_and(|detail| {
+                    matches!(&detail.load, Load::Done(p) if p.is_empty())
+                        && found.contains_key(&*detail.oid)
+                });
+                let stale = stale || started;
                 self.checks.statuses = found;
                 match kept {
                     Some((oid, status)) if !stale => {
@@ -320,6 +335,16 @@ impl GraphView {
             .as_ref()
             .is_some_and(|detail| detail.oid == oid && !matches!(detail.load, Load::Failed(_)));
         if here && !again {
+            return;
+        }
+        // The forge listed every pipeline the repository has and this commit isn't one: it
+        // has none, and that is the answer. Refresh and the polls still ask.
+        if !again && !here && self.checks.complete && !self.checks.statuses.contains_key(&*oid) {
+            self.checks.detail = Some(Detail {
+                oid,
+                load: Load::Done(Vec::new()),
+            });
+            cx.notify();
             return;
         }
         // A refresh keeps what is showing until the new read replaces it.

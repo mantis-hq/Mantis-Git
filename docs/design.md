@@ -1029,7 +1029,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     that is believed for a minute (in the status the job was in), so opening it again costs
     nothing either. A page is kept by its address, not by who asked,
     since one account is signed in to a server; "Clear cache" forgets them all.
-    Only one read of the newest pipelines is in flight at a time, so a load, a return to
+    When the forge's list of the newest pipelines is every one the repository has (it says
+    how many there are, or on GitLab the page came back short), a commit that is not in it
+    has none, so its Checks tab says so at once and asks nobody; "Refresh" and the polls
+    still ask, and kept marks from an earlier run never say it. Only one read of the newest
+    pipelines is in flight at a time, so a load, a return to
     the window (not within 60 seconds of the last) and a poll that land together are one
     question. When the column's newer answer disagrees with a commit's pipelines already on
     show (a re-run), the commit is read again.
