@@ -608,6 +608,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   is already in the repository, else its short hash. Clicking one opens it in the browser.
   Right-clicking opens the usual menu: "Open #42 on GitHub" and "Copy link". While asking,
   the section says "Asking origin…", and if git can't reach the remote it says why in Peach.
+  The list is also asked for once after a repository loads, so the graph can mark a
+  commit that a request's newest commit is: its row ends the subject in a chip with the
+  number (`#42`, 14% Blue with Blue text, tooltip "Open on the forge"), and the inspector has
+  a "Pull request" or "Merge request" fact with the same link. Clicking either opens the
+  request in the browser.
   A remote on no known forge has no section. What each host's pages are called and where
   they live is in core (`mantisgit_core::repo::forge`).
 - A branch row ends with its count against the remote branch it tracks (`↑1 ↓2`: to push,
