@@ -1029,7 +1029,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     pipelines of a commit can't be older than it is and so would be among the newest; the
     day covers clocks that differ. A list whose pipelines don't all say when they began
     gives no such answer. "Refresh" and the polls still ask, and kept marks from an
-    earlier run never say it. Only one read of the newest
+    earlier run never say it. What is left of a request's time is the network's, so none is
+    spent twice: every request goes through one HTTP agent
+    (`mantisgit_core::auth::transport`), which keeps connections open, so a log or a
+    commit's jobs asked right after another request to the same server pay for no new TLS
+    handshake, and a token read from the keychain is reused for 5 minutes while it has more
+    than a minute left (signing out forgets it at once). Only one read of the newest
     pipelines is in flight at a time, so a load, a return to
     the window (not within 60 seconds of the last) and a poll that land together are one
     question. When the column's newer answer disagrees with a commit's pipelines already on

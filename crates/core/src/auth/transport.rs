@@ -31,14 +31,25 @@ pub trait Transport: Send + Sync {
 /// The real thing.
 pub struct Web;
 
-impl Transport for Web {
-    fn send(&self, request: &Request) -> Result<Reply, String> {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
+/// One agent for every request, so a server that was just asked is asked again over the
+/// connection that is still open: no new TCP and TLS handshake, which is a few round trips
+/// each. A job's log and the jobs of a commit are the case, a request after another to one
+/// server.
+fn agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::LazyLock<ureq::Agent> = std::sync::LazyLock::new(|| {
+        ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(30)))
             .http_status_as_error(false)
             .user_agent(format!("mantisgit/{}", env!("CARGO_PKG_VERSION")))
             .build()
-            .into();
+            .into()
+    });
+    &AGENT
+}
+
+impl Transport for Web {
+    fn send(&self, request: &Request) -> Result<Reply, String> {
+        let agent = agent();
         let url = request.url;
         let with_headers = |builder: ureq::RequestBuilder<ureq::typestate::WithBody>| {
             let builder = builder.header("Accept", "application/json");
