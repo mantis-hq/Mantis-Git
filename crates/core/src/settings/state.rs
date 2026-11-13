@@ -9,7 +9,7 @@
 use super::theme::Overrides;
 use crate::cache::{DEFAULT_DISK_MB, DiskSettings};
 use crate::history::avatar::Style as AvatarStyle;
-use crate::history::columns::ColumnOrder;
+use crate::history::columns::{ColumnOrder, ColumnWidths};
 use crate::install::update::Track;
 use crate::text::count;
 use crate::tree::FileView;
@@ -38,6 +38,8 @@ pub struct AppState {
     pub files_view: FileView,
     /// The order of the commit graph's columns, left to right.
     pub graph_columns: ColumnOrder,
+    /// Widths the user dragged those columns to.
+    pub graph_column_widths: ColumnWidths,
     /// What the graph draws on commit dots to say who wrote them.
     pub avatars: AvatarStyle,
     /// A picture the user chose for their own commits, which beats a Gravatar.
@@ -101,6 +103,7 @@ impl Default for AppState {
             commit_limit: DEFAULT_COMMIT_LIMIT,
             files_view: FileView::List,
             graph_columns: ColumnOrder::default(),
+            graph_column_widths: ColumnWidths::default(),
             avatars: AvatarStyle::default(),
             own_avatar: None,
             dock: DockLayout::default(),
@@ -175,6 +178,7 @@ impl AppState {
                 }
                 "files_view" => state.files_view = FileView::from_key(value),
                 "graph_columns" => state.graph_columns = ColumnOrder::parse(value),
+                "graph_column_widths" => state.graph_column_widths = ColumnWidths::parse(value),
                 "avatars" => state.avatars = AvatarStyle::from_key(value),
                 "own_avatar" if !value.trim().is_empty() => {
                     state.own_avatar = Some(PathBuf::from(value.trim()));
@@ -215,6 +219,10 @@ impl AppState {
         text.push_str(&format!("commit_limit={}\n", self.commit_limit));
         text.push_str(&format!("files_view={}\n", self.files_view.key()));
         text.push_str(&format!("graph_columns={}\n", self.graph_columns.render()));
+        text.push_str(&format!(
+            "graph_column_widths={}\n",
+            self.graph_column_widths.render()
+        ));
         text.push_str(&format!("avatars={}\n", self.avatars.key()));
         if let Some(file) = self.own_avatar.as_deref().and_then(Path::to_str)
             && !file.contains('\n')
@@ -549,6 +557,7 @@ mod tests {
             commit_limit: 1000,
             files_view: FileView::Tree,
             graph_columns: ColumnOrder::parse("date,subject"),
+            graph_column_widths: ColumnWidths::parse("refs:120,author:150"),
             avatars: AvatarStyle::Gravatar,
             own_avatar: Some("/home/ada/me.png".into()),
             dock: DockLayout {

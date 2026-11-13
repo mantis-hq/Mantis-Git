@@ -110,9 +110,62 @@ impl ColumnOrder {
     }
 }
 
+/// The narrowest and widest a column can be dragged to, in pixels.
+pub const MIN_WIDTH: f32 = 40.;
+pub const MAX_WIDTH: f32 = 600.;
+
+/// Widths the user dragged columns to. A column without one is sized by the app, and the
+/// subject takes whatever is left, so it never has one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ColumnWidths([Option<u16>; COUNT]);
+
+impl ColumnWidths {
+    pub fn get(&self, column: Column) -> Option<f32> {
+        if column == Column::Subject {
+            return None;
+        }
+        self.0[column as usize].map(f32::from)
+    }
+
+    /// Sets a width, kept between `MIN_WIDTH` and `MAX_WIDTH`. The subject can't be set.
+    pub fn set(&mut self, column: Column, width: f32) {
+        if column != Column::Subject && width.is_finite() {
+            self.0[column as usize] = Some(width.clamp(MIN_WIDTH, MAX_WIDTH).round() as u16);
+        }
+    }
+
+    /// Puts a column back to the width the app picks.
+    pub fn reset(&mut self, column: Column) {
+        self.0[column as usize] = None;
+    }
+
+    /// Reads `refs:120,author:150`. Anything that isn't a known column and a number is skipped.
+    pub fn parse(text: &str) -> Self {
+        let mut widths = Self::default();
+        for part in text.split(',') {
+            let Some((key, value)) = part.split_once(':') else {
+                continue;
+            };
+            if let (Some(column), Ok(width)) = (Column::from_key(key), value.trim().parse::<f32>())
+            {
+                widths.set(column, width);
+            }
+        }
+        widths
+    }
+
+    pub fn render(&self) -> String {
+        let parts: Vec<String> = Column::ALL
+            .into_iter()
+            .filter_map(|column| Some(format!("{}:{}", column.key(), self.get(column)?)))
+            .collect();
+        parts.join(",")
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Column, ColumnOrder};
+    use super::{Column, ColumnOrder, ColumnWidths};
 
     #[test]
     fn the_default_order_is_the_one_the_graph_always_had() {
@@ -143,5 +196,24 @@ mod tests {
         let mut order = ColumnOrder::default();
         order.move_to(Column::Author, Column::Graph);
         assert_eq!(ColumnOrder::parse(&order.render()), order);
+    }
+
+    #[test]
+    fn widths_are_kept_in_range_and_read_back() {
+        let mut widths = ColumnWidths::default();
+        widths.set(Column::Author, 10_000.);
+        widths.set(Column::Hash, 1.);
+        widths.set(Column::Subject, 200.);
+        assert_eq!(widths.render(), "hash:40,author:600");
+        assert_eq!(ColumnWidths::parse(&widths.render()), widths);
+        assert_eq!(widths.get(Column::Subject), None);
+        widths.reset(Column::Hash);
+        assert_eq!(widths.get(Column::Hash), None);
+    }
+
+    #[test]
+    fn damaged_widths_are_skipped() {
+        let widths = ColumnWidths::parse("date:90,nonsense:5,hash:wide,,author");
+        assert_eq!(widths.render(), "date:90");
     }
 }
