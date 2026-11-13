@@ -1,9 +1,9 @@
 //! The commit rows: lanes on a canvas, then the subject, author and time.
 
-use super::GraphView;
 use super::avatars::{self, Face, avatar_mark};
 use super::menu::wire_ref;
 use super::parts::{TEXT_BODY, TEXT_CHIP, TEXT_SMALL, status_icon};
+use super::{GraphView, OpenWorktreeInTab};
 use crate::icons::Icon;
 use crate::theme::{lane_color, selected_row, tokens};
 use chrono::{Datelike, Local, TimeZone, Utc};
@@ -281,6 +281,10 @@ impl GraphView {
             let is_stash = self.refs.stash_at(&commit.oid).is_some();
             let chips = self.refs.chips_at(&commit.oid);
             let signature = self.signature_of(&commit.oid);
+            let worktree = self
+                .refs
+                .other_worktree_at(&commit.oid)
+                .map(|tree| (tree.path.clone(), tree.open_hint()));
             let (prefix, description) = split_subject(&commit.subject);
             let covered =
                 !matches!(face, Face::None) && !(is_working || is_stash || is_clipped(&lane_row));
@@ -402,6 +406,24 @@ impl GraphView {
                                         hint.to_owned(),
                                         color,
                                     )
+                                }))
+                                .children(worktree.map(|(path, hint)| {
+                                    status_icon(
+                                        (ElementId::from(("worktree-open", index)), "worktree"),
+                                        Icon::FolderOpen,
+                                        hint,
+                                        muted,
+                                    )
+                                    .cursor_pointer()
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .on_click(cx.listener(
+                                        move |_, _, _, cx| {
+                                            cx.stop_propagation();
+                                            cx.emit(OpenWorktreeInTab(path.clone()));
+                                        },
+                                    ))
                                 }))
                                 .into_any_element(),
                             div()

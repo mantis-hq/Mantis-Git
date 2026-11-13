@@ -490,7 +490,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   under "Worktrees", open by default, between Remotes and Tags. A row is the folder's
   name, then its branch (or `detached at <hash>`) in Overlay 2, with a dot in that
   branch's colour. The one on show is selected and semibold. Clicking another switches
-  the current tab to it, so the tab strip doesn't grow. A locked worktree ends its row in a small lock (Overlay 2) with the tooltip "Locked", not
+  the current tab to it, so the tab strip doesn't grow. A commit that another worktree has
+  checked out ends its subject in a 14 px folder (Overlay 2) with the tooltip "Open app-fix
+  (fix/x) in a new tab"; clicking it opens that worktree in a tab, or brings its tab forward
+  (`Refs::other_worktree_at`). The one on show and one whose folder is gone get none. A locked worktree ends its row in a small lock (Overlay 2) with the tooltip "Locked", not
   a word. A worktree whose
   folder is gone is dimmed and says so.
   Right-clicking one opens the usual menu: "Switch to <name>", "Open <name> in a new tab",

@@ -35,6 +35,11 @@ impl Worktree {
         }
     }
 
+    /// What the button on a commit it is checked out at says it will do.
+    pub fn open_hint(&self) -> String {
+        format!("Open {} ({}) in a new tab", self.label(), self.detail())
+    }
+
     /// Why it can't be switched to, when it can't.
     pub fn unavailable(&self) -> Option<&'static str> {
         self.missing.then_some("Its folder is gone")
@@ -180,6 +185,24 @@ mod tests {
         assert_eq!(got[2].label(), "app-old");
         assert_eq!(got[2].detail(), "detached at ccccccc");
         assert_eq!(got[0].detail(), "main");
+    }
+
+    #[test]
+    fn a_commit_offers_only_other_worktrees_that_can_be_opened() {
+        let mut refs = crate::history::refs::Refs::default();
+        refs.worktrees = parse(
+            "worktree /code/app\nHEAD aaaaaaaaaa\nbranch refs/heads/main\n\n\
+             worktree /code/app-fix\nHEAD bbbbbbbbbb\nbranch refs/heads/fix/x\n\n\
+             worktree /code/app-old\nHEAD cccccccccc\ndetached\nprunable gone\n",
+        );
+        refs.worktrees[0].is_current = true;
+        assert!(refs.other_worktree_at("aaaaaaaaaa").is_none(), "on show");
+        assert!(
+            refs.other_worktree_at("cccccccccc").is_none(),
+            "folder gone"
+        );
+        let tree = refs.other_worktree_at("bbbbbbbbbb").unwrap();
+        assert_eq!(tree.open_hint(), "Open app-fix (fix/x) in a new tab");
     }
 
     #[test]
