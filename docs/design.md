@@ -492,7 +492,8 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   branch's colour. The one on show is selected and semibold. Clicking another switches
   the current tab to it, so the tab strip doesn't grow. A commit that another worktree has
   checked out ends its subject in a 14 px folder (Overlay 2) with the tooltip "Open app-fix
-  (fix/x) in a new tab"; clicking it opens that worktree in a tab, or brings its tab forward
+  (fix/x)"; clicking it switches the current tab to that worktree, and right-clicking it opens
+  the worktree's usual menu (below) to open it in a new tab instead, copy its path, and so on
   (`Refs::other_worktree_at`). The one on show and one whose folder is gone get none. A locked worktree ends its row in a small lock (Overlay 2) with the tooltip "Locked", not
   a word. A worktree whose
   folder is gone is dimmed and says so.
