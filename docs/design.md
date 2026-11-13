@@ -424,7 +424,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   `graph_columns` in the `state` file, a comma separated list of `refs`, `graph`, `subject`,
   `hash`, `author` and `date`. A list that is damaged, repeats a column or leaves one out is mended
   when read, so every column always shows once (`ColumnOrder` in
-  `mantisgit_core::history::columns`). The headings stay over the graph, not over search
+  `mantisgit_core::history::columns`). Every column but the subject, which takes what is left, also drags wider or narrower by an 8 px
+  strip on the right edge of its heading, which tints 50% Blue and shows a resize cursor, between
+  40 and 600 px; a double-click puts it back to the width the app picks. The widths are kept for
+  every repository as `graph_column_widths` (`refs:120,author:150`), and one that is damaged or
+  unknown is skipped (`ColumnWidths`). The headings stay over the graph, not over search
   results, which are a list of their own.
 - Resizing: every panel edge drags, so a panel can be made smaller or bigger. These are
   the sidebar, inspector, dock and its log list, and the settings side panel. The pointer shows a resize cursor

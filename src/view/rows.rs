@@ -48,19 +48,39 @@ const FADED_ROW: f32 = 0.28;
 const FADED_LINE: f32 = 0.16;
 
 /// Seven characters of Maple Mono at the body size, with room to spare.
-const HASH_WIDTH: Pixels = px(68.);
-const AUTHOR_WIDTH: Pixels = px(120.);
-const DATE_WIDTH: Pixels = px(72.);
+const HASH_WIDTH: f32 = 68.;
+const AUTHOR_WIDTH: f32 = 120.;
+const DATE_WIDTH: f32 = 72.;
 
 impl GraphView {
+    /// A column's width: the one the user dragged it to, else the one the app picks.
+    pub(super) fn column_width(&self, column: Column) -> f32 {
+        self.column_widths.get(column).unwrap_or(match column {
+            Column::Refs => self.auto_refs_width(),
+            Column::Graph => self.auto_graph_width(),
+            Column::Subject => 0.,
+            Column::Hash => HASH_WIDTH,
+            Column::Author => AUTHOR_WIDTH,
+            Column::Date => DATE_WIDTH,
+        })
+    }
+
     pub(super) fn graph_width(&self) -> f32 {
+        self.column_width(Column::Graph)
+    }
+
+    pub(super) fn refs_width(&self) -> f32 {
+        self.column_width(Column::Refs)
+    }
+
+    fn auto_graph_width(&self) -> f32 {
         let lanes = self.max_columns.clamp(1, MAX_VISIBLE_LANES);
         lanes as f32 * LANE_WIDTH + GRAPH_PADDING * 2.
     }
 
     /// The refs column's width, from the longest chip the repository has, so a repository
     /// of short branch names doesn't leave a wide empty strip beside the graph.
-    pub(super) fn refs_width(&self) -> f32 {
+    fn auto_refs_width(&self) -> f32 {
         let cells = self.refs.widest_chips(MAX_VISIBLE_REFS);
         let width = cells as f32 * CHIP_CELL + CHIP_PADDING + 8.;
         width.clamp(REFS_MIN_WIDTH, REFS_MAX_WIDTH)
@@ -238,6 +258,9 @@ impl GraphView {
         let subtext0 = tokens(is_dark).subtext0;
         let graph_width = self.graph_width();
         let refs_width = self.refs_width();
+        let hash_width = self.column_width(Column::Hash);
+        let author_width = self.column_width(Column::Author);
+        let date_width = self.column_width(Column::Date);
 
         let mut rows = Vec::with_capacity(range.len());
         for index in range {
@@ -382,8 +405,9 @@ impl GraphView {
                                 }))
                                 .into_any_element(),
                             div()
-                                .w(HASH_WIDTH)
+                                .w(px(hash_width))
                                 .flex_none()
+                                .overflow_hidden()
                                 .text_size(TEXT_SMALL)
                                 .text_color(muted)
                                 .when(!is_working, |hash| {
@@ -391,7 +415,7 @@ impl GraphView {
                                 })
                                 .into_any_element(),
                             div()
-                                .w(AUTHOR_WIDTH)
+                                .w(px(author_width))
                                 .flex_none()
                                 .truncate()
                                 .text_right()
@@ -400,8 +424,9 @@ impl GraphView {
                                 .child(SharedString::from(commit.author.clone()))
                                 .into_any_element(),
                             div()
-                                .w(DATE_WIDTH)
+                                .w(px(date_width))
                                 .flex_none()
+                                .overflow_hidden()
                                 .text_right()
                                 .text_size(TEXT_SMALL)
                                 .text_color(muted)
@@ -421,25 +446,19 @@ impl GraphView {
     pub(super) fn render_column_headers(&self, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
         let (panel, border, muted) = (theme.title_bar, theme.border, theme.muted_foreground);
-        let graph_width = self.graph_width();
-        let refs_width = self.refs_width();
+        let primary = theme.primary;
         let headers = self.columns.columns().map(|column| {
             let heading = div()
                 .id(("column", column as usize))
                 .h_full()
+                .w_full()
                 .h_flex()
                 .cursor_pointer()
                 .rounded(px(4.))
-                .child(column.label());
-            let heading = match column {
-                Column::Refs => heading.w(px(refs_width)).flex_none(),
-                Column::Graph => heading.w(px(graph_width)).flex_none(),
-                Column::Subject => heading.flex_1().min_w_0(),
-                Column::Hash => heading.w(HASH_WIDTH).flex_none(),
-                Column::Author => heading.w(AUTHOR_WIDTH).flex_none().justify_end(),
-                Column::Date => heading.w(DATE_WIDTH).flex_none().justify_end(),
-            };
-            heading
+                .when(matches!(column, Column::Author | Column::Date), |h| {
+                    h.justify_end()
+                })
+                .child(column.label())
                 .on_drag(DraggedColumn(column), |dragged, _, _, cx| {
                     cx.new(|_| dragged.clone())
                 })
@@ -456,7 +475,45 @@ impl GraphView {
                 }))
                 .tooltip(move |window, cx| {
                     Tooltip::new(format!("Drag to move {}", column.label())).build(window, cx)
-                })
+                });
+            // The wrapper takes the column's width, so the handle can sit on its right edge
+            // without being part of the heading that drags to reorder.
+            let wrapper = div().h_full().relative().min_w_0();
+            if column == Column::Subject {
+                return wrapper.flex_1().child(heading);
+            }
+            let handle = div()
+                .id(("column-edge", column as usize))
+                .absolute()
+                .top_0()
+                .right(px(-8.))
+                .w(px(8.))
+                .h_full()
+                .cursor_col_resize()
+                .hover(move |style| style.bg(primary.opacity(0.5)))
+                .on_drag(ResizeColumn(column), |_, _, _, cx| cx.new(|_| Ghost))
+                .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                    if event.click_count() == 2 {
+                        this.reset_column_width(column, cx);
+                    }
+                }))
+                .tooltip(move |window, cx| {
+                    Tooltip::new(format!("Drag to resize {}", column.label())).build(window, cx)
+                });
+            wrapper
+                .w(px(self.column_width(column)))
+                .flex_none()
+                .child(heading)
+                .child(deferred(handle).with_priority(5))
+                .on_drag_move(cx.listener(
+                    move |this, event: &DragMoveEvent<ResizeColumn>, _, cx| {
+                        if event.drag(cx).0 == column {
+                            let width = f32::from(event.event.position.x - event.bounds.left());
+                            this.set_column_width(column, width);
+                            cx.notify();
+                        }
+                    },
+                ))
         });
         div()
             .h_flex()
@@ -472,7 +529,27 @@ impl GraphView {
             .text_size(TEXT_SMALL)
             .font_medium()
             .text_color(muted)
+            // Whichever way the drag ends, what was dragged to is kept.
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| this.finish_column_resize(cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| this.finish_column_resize(cx)),
+            )
             .children(headers)
+    }
+}
+
+/// What a drag of a column's right edge carries. It draws nothing: the column itself moves.
+struct ResizeColumn(Column);
+
+struct Ghost;
+
+impl Render for Ghost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
     }
 }
 

@@ -39,7 +39,9 @@ impl GraphView {
     /// Sets the file where the way of listing files is remembered.
     pub(in crate::view) fn set_state_file(&mut self, file: Option<PathBuf>) {
         if let Some(file) = &file {
-            self.columns = AppState::load(file).graph_columns;
+            let state = AppState::load(file);
+            self.columns = state.graph_columns;
+            self.column_widths = state.graph_column_widths;
         }
         self.commit.state_file = file;
     }
@@ -56,6 +58,37 @@ impl GraphView {
         if let Some(file) = &self.commit.state_file {
             let order = self.columns;
             if let Err(error) = AppState::change(file, |state| state.graph_columns = order) {
+                self.notice = Some(Notice::Error(error.into()));
+            }
+        }
+        cx.notify();
+    }
+
+    /// Gives a column the width it was dragged to, in memory only. Call `save_column_widths`
+    /// when the drag ends.
+    pub(in crate::view) fn set_column_width(&mut self, column: Column, width: f32) {
+        self.column_widths.set(column, width);
+        self.column_widths_dirty = true;
+    }
+
+    /// Saves the widths if a drag changed them.
+    pub(in crate::view) fn finish_column_resize(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.column_widths_dirty) {
+            self.save_column_widths(cx);
+        }
+    }
+
+    /// Puts a column back to the width the app picks, and remembers that.
+    pub(in crate::view) fn reset_column_width(&mut self, column: Column, cx: &mut Context<Self>) {
+        self.column_widths.reset(column);
+        self.save_column_widths(cx);
+    }
+
+    /// Remembers the widths for every repository. The file's other settings are left alone.
+    pub(in crate::view) fn save_column_widths(&mut self, cx: &mut Context<Self>) {
+        if let Some(file) = &self.commit.state_file {
+            let widths = self.column_widths;
+            if let Err(error) = AppState::change(file, |state| state.graph_column_widths = widths) {
                 self.notice = Some(Notice::Error(error.into()));
             }
         }
