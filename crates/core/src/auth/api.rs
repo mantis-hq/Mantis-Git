@@ -14,6 +14,7 @@ pub fn login(host: &Host, http: &dyn Transport, token: &str) -> Result<String, S
         bearer: Some(token),
         form: None,
         json: None,
+        if_none_match: None,
     })?;
     if reply.status == 401 {
         return Err(format!("{} didn't accept the token.", host.name()));
@@ -55,6 +56,7 @@ pub fn add_ssh_key(
         bearer: Some(token),
         form: None,
         json: Some(&body),
+        if_none_match: None,
     })?;
     let value: Value = serde_json::from_str(&reply.body).unwrap_or(Value::Null);
     let said = ["message", "error"]
