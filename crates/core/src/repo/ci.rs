@@ -17,7 +17,7 @@ use crate::auth::{self, Account, Host};
 use crate::cache::keys::Caches;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 /// What the server's "no log" says between the server's name and the job's, so the sentence
@@ -322,7 +322,32 @@ pub struct Newest {
     pub oldest: Option<u64>,
 }
 
+/// How long to wait before each look for pipelines that a push is yet to start. A forge makes
+/// a run a few seconds after the push arrives, and the load that sees the push is quicker
+/// than that, so it finds none. Three more looks, 5, 15 and 45 seconds after it, end in a
+/// run showing within seconds of its existing; after that the polling that follows a run
+/// takes over, and a push that starts none stops costing anything.
+pub const CATCH_UP: [Duration; 3] = [
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(30),
+];
+
 impl Newest {
+    /// Which of `tips`, the commits just pushed or made, have no pipeline listed, in a
+    /// repository that has pipelines at all. They are the ones to look for again
+    /// ([`CATCH_UP`]) and not to say have none ([`lacks`](Self::lacks)) in the meantime. A
+    /// repository with no pipelines is not waited on, so a push there costs nothing.
+    pub fn awaiting(&self, tips: &[Arc<str>]) -> Vec<Arc<str>> {
+        if self.statuses.is_empty() {
+            return Vec::new();
+        }
+        tips.iter()
+            .filter(|tip| !self.statuses.contains_key(&***tip))
+            .cloned()
+            .collect()
+    }
+
     /// Whether a commit is known to have no pipelines without asking the forge. Either the
     /// list is all there is and the commit isn't in it, or the commit was made well after
     /// the oldest pipeline listed: its pipelines can't be older than it is, so they would be
@@ -797,6 +822,25 @@ mod tests {
         assert!(
             !found.unwrap().complete,
             "a full page may have more behind it"
+        );
+    }
+
+    #[test]
+    fn only_a_repository_with_pipelines_waits_for_a_pushed_commits_run() {
+        let tips: Vec<Arc<str>> = vec!["new".into(), "old".into()];
+        let mut newest = Newest::default();
+        assert!(
+            newest.awaiting(&tips).is_empty(),
+            "no pipelines in the repository: no wait"
+        );
+        newest.statuses.insert("old".into(), Status::Passed);
+        let waiting = newest.awaiting(&tips);
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(&*waiting[0], "new");
+        assert_eq!(
+            CATCH_UP.iter().sum::<Duration>(),
+            Duration::from_secs(45),
+            "looks 5, 15 and 45 seconds after the load"
         );
     }
 

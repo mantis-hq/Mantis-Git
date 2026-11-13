@@ -92,6 +92,11 @@ pub(super) struct State {
     log_scroll: UniformListScrollHandle,
     /// Asks again later while something runs. Dropping it cancels the wait.
     poll: Option<Task<()>>,
+    /// Commits just pushed or made that have no pipeline yet but are likely to, because a
+    /// forge makes a run a few seconds after the push. They are looked for again on a
+    /// short schedule (`ci::CATCH_UP`) and not said to have none until it is over.
+    expecting: Vec<Arc<str>>,
+    catch_up: Option<Task<()>>,
     /// How many times in a row that wait ended with nothing new, which lengthens it.
     quiet_polls: u32,
     /// A read of the newest pipelines is on its way, so another isn't started beside it.
@@ -191,6 +196,46 @@ impl GraphView {
         );
     }
 
+    /// A load brought these tips (see `Refs::new_tips`). If the repository has pipelines and
+    /// they have none yet, the forge is probably about to make one, so it is asked again
+    /// 5, 15 and 45 seconds from now, and until then they are not said to have none. The
+    /// run, once made, is then polled like any other.
+    pub(super) fn expect_pipelines(&mut self, tips: Vec<Arc<str>>, cx: &mut Context<Self>) {
+        let tips = self.checks.listing.awaiting(&tips);
+        if tips.is_empty() || self.checks.target.is_none() {
+            return;
+        }
+        for tip in tips {
+            if !self.checks.expecting.contains(&tip) {
+                self.checks.expecting.push(tip);
+            }
+        }
+        self.checks.catch_up = Some(cx.spawn(async move |this, cx| {
+            for wait in ci::CATCH_UP {
+                cx.background_executor().timer(wait).await;
+                let again = this
+                    .update(cx, |this, cx| {
+                        // What turned up needs no more looking for.
+                        if this.checks.expecting.is_empty() {
+                            return false;
+                        }
+                        this.refresh_checks(cx);
+                        true
+                    })
+                    .unwrap_or(false);
+                if !again {
+                    break;
+                }
+            }
+            this.update(cx, |this, cx| {
+                this.checks.expecting.clear();
+                this.checks.catch_up = None;
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
     /// Like [`refresh_checks`](Self::refresh_checks) but not when it just ran.
     pub(super) fn refresh_checks_if_stale(&mut self, cx: &mut Context<Self>) {
         if self.checks.refreshed.is_none_or(|at| at.elapsed() > STALE) {
@@ -204,6 +249,8 @@ impl GraphView {
             let had = self.checks.target.take().is_some();
             self.checks.statuses.clear();
             self.checks.listing = Newest::default();
+            self.checks.expecting.clear();
+            self.checks.catch_up = None;
             self.checks.error = None;
             self.checks.detail = None;
             self.checks.log = None;
@@ -249,6 +296,14 @@ impl GraphView {
                 });
                 let stale = stale || started;
                 self.checks.statuses = found;
+                // A run that has turned up ends the wait for it.
+                let statuses = &self.checks.statuses;
+                self.checks
+                    .expecting
+                    .retain(|tip| !statuses.contains_key(&**tip));
+                if self.checks.expecting.is_empty() {
+                    self.checks.catch_up = None;
+                }
                 match kept {
                     Some((oid, status)) if !stale => {
                         self.checks.statuses.insert(oid, status);
@@ -344,6 +399,7 @@ impl GraphView {
         if !again
             && !here
             && !self.checks.statuses.contains_key(&*oid)
+            && !self.checks.expecting.contains(&oid)
             && self.checks.listing.lacks(&oid, made)
         {
             self.checks.detail = Some(Detail {

@@ -234,6 +234,25 @@ impl Refs {
         }
     }
 
+    /// The commits a branch or remote branch points at now that none did in `previous`:
+    /// what a push, a commit or a fetch just brought. Nothing on the first load, when
+    /// everything would be new. Tags and stashes don't count.
+    pub fn new_tips(&self, previous: &Refs) -> Vec<Arc<str>> {
+        if previous.by_commit.is_empty() {
+            return Vec::new();
+        }
+        self.by_commit
+            .iter()
+            .filter(|(oid, refs)| {
+                !previous.by_commit.contains_key(*oid)
+                    && refs
+                        .iter()
+                        .any(|r| matches!(r.kind, RefKind::Branch | RefKind::Remote))
+            })
+            .map(|(oid, _)| oid.clone())
+            .collect()
+    }
+
     pub fn is_head(&self, oid: &Arc<str>) -> bool {
         self.head.as_ref() == Some(oid)
     }
@@ -746,6 +765,49 @@ fn classify_ref(full_name: &str) -> Option<(RefKind, &str)> {
 mod tests {
     use super::*;
     use crate::history::Commit;
+
+    fn at(kind: RefKind, name: &str) -> Ref {
+        Ref {
+            kind,
+            name: name.into(),
+            is_head: false,
+            color: LaneColor::default(),
+        }
+    }
+
+    fn with(tips: &[(&str, RefKind)]) -> Refs {
+        let mut refs = Refs::default();
+        for (oid, kind) in tips {
+            refs.by_commit
+                .entry(Arc::from(*oid))
+                .or_default()
+                .push(at(*kind, "x"));
+        }
+        refs
+    }
+
+    #[test]
+    fn a_push_is_a_new_tip_and_a_first_load_or_a_tag_is_not() {
+        let before = with(&[("a", RefKind::Branch), ("t0", RefKind::Tag)]);
+        let after = with(&[
+            ("a", RefKind::Branch),
+            ("b", RefKind::Remote),
+            ("c", RefKind::Branch),
+            ("t1", RefKind::Tag),
+        ]);
+        let mut fresh: Vec<_> = after
+            .new_tips(&before)
+            .iter()
+            .map(|t| t.to_string())
+            .collect();
+        fresh.sort();
+        assert_eq!(fresh, ["b", "c"], "tags and unmoved branches are not news");
+        assert!(
+            after.new_tips(&Refs::default()).is_empty(),
+            "nothing is new on a first load"
+        );
+        assert!(before.new_tips(&before).is_empty());
+    }
 
     #[test]
     fn track_text_reads_as_counts() {
