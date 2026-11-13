@@ -148,6 +148,30 @@ pub fn target(site: Option<&Site>, accounts: &[Account]) -> Option<Target> {
     })
 }
 
+/// Where CI would be read from, with nobody asked whether they are signed in there. The
+/// keychain is slow (a call to the secret service for each server), and what was kept from
+/// the last read needs only the address, so the interface draws that first and checks the
+/// sign-in after with [`signed_in`].
+pub fn target_unchecked(site: Option<&Site>, hosts: &[Host]) -> Option<Target> {
+    let site = site?;
+    let origin = site.origin();
+    let host = hosts
+        .iter()
+        .find(|host| host.origin == origin && host.forge == site.forge)?;
+    Some(Target {
+        host: host.clone(),
+        forge: site.forge,
+        path: site.path().to_owned(),
+        web: site.web(),
+    })
+}
+
+/// Whether someone is signed in to the target's server. One keychain read, not one for each
+/// server there is.
+pub fn signed_in(target: &Target) -> bool {
+    !auth::accounts_in(&Keychain, std::slice::from_ref(&target.host)).is_empty()
+}
+
 /// What a read of the forge can answer.
 pub type Reply<T> = Result<T, String>;
 

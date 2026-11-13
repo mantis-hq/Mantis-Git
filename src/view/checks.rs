@@ -105,6 +105,13 @@ impl GraphView {
     /// here without a restart.
     pub(super) fn refresh_checks(&mut self, cx: &mut Context<Self>) {
         let site = forge::pick(&self.refs.remote_configs, self.refs.forge).map(|(_, site)| site);
+        self.refresh_checks_for(site, cx);
+    }
+
+    /// The same for a remote that is already known, which is how it starts the moment a
+    /// load's refs arrive and not when its whole history has been read, which in a big
+    /// repository is seconds later.
+    pub(super) fn refresh_checks_for(&mut self, site: Option<forge::Site>, cx: &mut Context<Self>) {
         let repo = self.repo.clone();
         // One read at a time: a load, a focus and a poll landing together are one question.
         if self.checks.reading {
@@ -113,13 +120,16 @@ impl GraphView {
         self.checks.reading = true;
         self.checks.refreshed = Some(Instant::now());
         let caches = self.caches.clone();
-        // First what was kept from the last read, which is only the disk and so is on screen
-        // at once; then the forge, which is a 304 when nothing moved.
+        // Three steps, each as soon as the one before is on screen. What was kept from the
+        // last read needs only the disk, so it is drawn first, with nobody asked whether
+        // they are signed in: that is a call to the system keychain, which can take a
+        // second. Then the sign-in is checked, for the one server and not every one, and
+        // last the forge is asked, which is a 304 when nothing moved.
         Self::spawn_blocking(
             {
                 let caches = caches.clone();
                 move || {
-                    let target = ci::target(site.as_ref(), &auth::accounts())?;
+                    let target = ci::target_unchecked(site.as_ref(), &auth::hosts())?;
                     let kept = ci::recent_stored(&target, &caches);
                     Some((target, kept))
                 }
@@ -156,15 +166,19 @@ impl GraphView {
     ) {
         Self::spawn_blocking(
             move || {
+                // Signed out since it was kept: the column and the tab go.
+                if !ci::signed_in(&target) {
+                    return None;
+                }
                 let found = ci::recent_live(&target, &caches);
-                (target, found)
+                Some((target, found))
             },
             move |this, result, cx| {
                 this.checks.reading = false;
                 if this.repo != repo {
                     return;
                 }
-                this.checks_arrived(Some(result), cx);
+                this.checks_arrived(result, cx);
             },
             cx,
         );

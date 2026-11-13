@@ -1013,11 +1013,15 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     `mantisgit_core::auth::transport`). The next ask sends the `ETag` as `If-None-Match`, so
     a poll that finds nothing new is a 304 with no body that costs no rate limit, and so is
     the first ask after a restart. A forge that gives no `ETag` is asked in full.
-    The interface draws from what is kept before it asks: the column's marks when a
-    repository opens, a commit's pipelines when its Checks tab opens, so a repository seen
-    before shows its CI as soon as its history does and the forge's answer then only
-    corrects it (`Stored`, which never touches the network; a page it has never had is a
-    miss and the interface waits for the forge as before). The kept marks fill an empty
+    The interface draws from what is kept before it asks, and starts as soon as a load's
+    refs name the remote, not when the history has been read, which in a big repository is
+    seconds later. The kept marks are drawn before anyone is asked whether they are signed
+    in, since that is a call to the system keychain for each server and can take a second;
+    the sign-in is checked after, for the one server, and a user who has since signed out
+    loses the marks then. A commit's pipelines likewise show from the cache when its Checks
+    tab opens, and the forge's answer then only corrects them (`Stored`, which never
+    touches the network; a page it has never had is a miss and the interface waits for the
+    forge as before). The kept marks fill an empty
     column only, and a forge that can't be reached leaves them standing. A job that is
     over has a log that never changes, so its kept copy is the answer and nobody is asked;
     a running one is asked each time. A page is kept by its address, not by who asked,
