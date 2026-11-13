@@ -519,6 +519,7 @@ impl GraphView {
         let theme = cx.theme();
         let (panel, border, muted) = (theme.title_bar, theme.border, theme.muted_foreground);
         let primary = theme.primary;
+        let separator = theme.border;
         let order = self.columns.columns();
         let subject_at = order.iter().position(|c| *c == Column::Subject);
         let headers = (order.iter().copied())
@@ -562,16 +563,27 @@ impl GraphView {
                 if column == Column::Subject {
                     return wrapper.flex_1().child(heading);
                 }
+                let width_now = self.column_width(column);
+                // A 1 px line shows where the edge is. It sits in the gap between columns.
                 let handle = div()
                     .id(("column-edge", column as usize))
                     .absolute()
                     .top_0()
-                    .when(after_subject, |h| h.left(px(-8.)))
-                    .when(!after_subject, |h| h.right(px(-8.)))
+                    .when(after_subject, |h| h.left(px(-10.)))
+                    .when(!after_subject, |h| h.right(px(-10.)))
                     .w(px(8.))
                     .h_full()
+                    .h_flex()
+                    .justify_center()
                     .cursor_col_resize()
                     .hover(move |style| style.bg(primary.opacity(0.5)))
+                    .child(div().w(px(1.)).h(px(14.)).self_center().bg(separator))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                            this.column_grab = Some((f32::from(event.position.x), width_now));
+                        }),
+                    )
                     .on_drag(ResizeColumn(column), |_, _, _, cx| cx.new(|_| Ghost))
                     .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
                         if event.click_count() == 2 {
@@ -582,21 +594,30 @@ impl GraphView {
                         Tooltip::new(format!("Drag to resize {}", column.label())).build(window, cx)
                     });
                 wrapper
-                    .w(px(self.column_width(column)))
+                    .w(px(width_now))
                     .flex_none()
                     .child(heading)
                     .child(deferred(handle).with_priority(5))
                     .on_drag_move(cx.listener(
                         move |this, event: &DragMoveEvent<ResizeColumn>, _, cx| {
-                            if event.drag(cx).0 == column {
-                                let width = if after_subject {
-                                    f32::from(event.bounds.right() - event.event.position.x)
-                                } else {
-                                    f32::from(event.event.position.x - event.bounds.left())
-                                };
-                                this.set_column_width(column, width);
-                                cx.notify();
+                            if event.drag(cx).0 != column {
+                                return;
                             }
+                            let Some((start_x, start_width)) = this.column_grab else {
+                                return;
+                            };
+                            // The edge the pointer holds moves and the other stays: a column
+                            // before the subject grows rightwards, one after it leftwards.
+                            // Measured from the grab, not from the column's bounds, which
+                            // change as it is resized.
+                            let moved = f32::from(event.event.position.x) - start_x;
+                            let width = if after_subject {
+                                start_width - moved
+                            } else {
+                                start_width + moved
+                            };
+                            this.set_column_width(column, width);
+                            cx.notify();
                         },
                     ))
             });

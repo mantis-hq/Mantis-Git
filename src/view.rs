@@ -177,6 +177,8 @@ pub struct GraphView {
     /// Widths the user dragged columns to.
     column_widths: ColumnWidths,
     column_widths_dirty: bool,
+    /// Where a column's edge was grabbed: the pointer's x and the column's width then.
+    column_grab: Option<(f32, f32)>,
     scroll: UniformListScrollHandle,
     focus: FocusHandle,
     load_task: Option<Task<()>>,
@@ -271,6 +273,7 @@ impl GraphView {
             columns: ColumnOrder::default(),
             column_widths: ColumnWidths::default(),
             column_widths_dirty: false,
+            column_grab: None,
             scroll: UniformListScrollHandle::new(),
             focus,
             load_task: None,
