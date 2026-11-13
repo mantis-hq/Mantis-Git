@@ -510,9 +510,15 @@ impl GraphView {
         let theme = cx.theme();
         let (panel, border, muted) = (theme.title_bar, theme.border, theme.muted_foreground);
         let primary = theme.primary;
-        let headers = (self.columns.columns().into_iter())
-            .filter(|column| self.checks_shown() || *column != Column::Checks)
-            .map(|column| {
+        let order = self.columns.columns();
+        let subject_at = order.iter().position(|c| *c == Column::Subject);
+        let headers = (order.iter().copied())
+            .enumerate()
+            .filter(|(_, column)| self.checks_shown() || *column != Column::Checks)
+            .map(|(at, column)| {
+                // The subject takes what is left, so a column after it is held by its right
+                // edge and grows leftwards: its handle is on the left edge, where the pointer is.
+                let after_subject = subject_at.is_some_and(|s| at > s);
                 let heading = div()
                     .id(("column", column as usize))
                     .h_full()
@@ -551,7 +557,8 @@ impl GraphView {
                     .id(("column-edge", column as usize))
                     .absolute()
                     .top_0()
-                    .right(px(-8.))
+                    .when(after_subject, |h| h.left(px(-8.)))
+                    .when(!after_subject, |h| h.right(px(-8.)))
                     .w(px(8.))
                     .h_full()
                     .cursor_col_resize()
@@ -573,7 +580,11 @@ impl GraphView {
                     .on_drag_move(cx.listener(
                         move |this, event: &DragMoveEvent<ResizeColumn>, _, cx| {
                             if event.drag(cx).0 == column {
-                                let width = f32::from(event.event.position.x - event.bounds.left());
+                                let width = if after_subject {
+                                    f32::from(event.bounds.right() - event.event.position.x)
+                                } else {
+                                    f32::from(event.event.position.x - event.bounds.left())
+                                };
                                 this.set_column_width(column, width);
                                 cx.notify();
                             }
