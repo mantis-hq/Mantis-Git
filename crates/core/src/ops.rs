@@ -55,6 +55,32 @@ fn is_quiet(command: &Command) -> bool {
         .any(|(name, value)| name == NEVER_ASK && value.is_some())
 }
 
+/// What `git --version` says for the git on this machine. It can't change while the app
+/// runs, so it is asked once; only an answer is kept, so a git that wasn't found is looked
+/// for again.
+pub(crate) fn host_version() -> Result<String, String> {
+    static VERSION: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    // Held while git runs, so two reads that start together share one answer.
+    let mut known = VERSION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(version) = known.as_ref() {
+        return Ok(version.clone());
+    }
+    let version = run_command(git_anywhere().arg("--version"), None)?;
+    *known = Some(version.clone());
+    Ok(version)
+}
+
+/// The version of the git that runs for `repo`: the machine's, or a WSL distribution's own.
+pub(crate) fn version_for(repo: &Path) -> String {
+    if wsl::locate(repo).is_some() {
+        run(repo, &["--version"]).unwrap_or_default()
+    } else {
+        host_version().unwrap_or_default()
+    }
+}
+
 /// Runs git and returns its output, or what it said went wrong.
 pub fn run(repo: &Path, args: &[&str]) -> Result<String, String> {
     run_command(git(repo).args(args), None)
