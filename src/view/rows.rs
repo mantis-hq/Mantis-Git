@@ -281,6 +281,7 @@ impl GraphView {
             let is_stash = self.refs.stash_at(&commit.oid).is_some();
             let chips = self.refs.chips_at(&commit.oid);
             let signature = self.signature_of(&commit.oid);
+            let requests = self.requests_at(&commit.oid);
             let (prefix, description) = split_subject(&commit.subject);
             let covered =
                 !matches!(face, Face::None) && !(is_working || is_stash || is_clipped(&lane_row));
@@ -391,6 +392,35 @@ impl GraphView {
                                                 .child(description.to_owned()),
                                         ),
                                 )
+                                .children(requests.into_iter().enumerate().map(
+                                    |(n, (label, url))| {
+                                        div()
+                                            .id((
+                                                ElementId::from(("request", index)),
+                                                n.to_string(),
+                                            ))
+                                            .flex_none()
+                                            .px_1p5()
+                                            .rounded(px(4.))
+                                            .cursor_pointer()
+                                            .text_size(TEXT_CHIP)
+                                            .font_semibold()
+                                            .text_color(head)
+                                            .bg(head.opacity(0.14))
+                                            .tooltip(move |window, cx| {
+                                                gpui_kit::component::tooltip::Tooltip::new(
+                                                    "Open on the forge",
+                                                )
+                                                .build(window, cx)
+                                            })
+                                            .tooltip_show_delay(std::time::Duration::ZERO)
+                                            .on_click(move |_, _, cx| {
+                                                cx.stop_propagation();
+                                                cx.open_url(&url);
+                                            })
+                                            .child(label)
+                                    },
+                                ))
                                 .children(signature.hint().map(|hint| {
                                     let (icon, color) = match signature {
                                         Signature::Bad => (Icon::ShieldAlert, danger),

@@ -341,6 +341,14 @@ pub struct Requests {
     pub total: usize,
 }
 
+impl Requests {
+    /// The requests whose newest commit is `oid`, which is how a commit shows that it is
+    /// where a pull or merge request stands.
+    pub fn at(&self, oid: &str) -> Vec<&Request> {
+        self.newest.iter().filter(|r| r.tip == oid).collect()
+    }
+}
+
 /// Reads `git ls-remote`'s answer: an object name, a tab and a ref. Anything that isn't a
 /// request's ref is skipped. Newest (highest number) first.
 pub fn parse_listing(listing: &str) -> Vec<Listed> {
@@ -546,6 +554,22 @@ mod tests {
             site("https://codeberg.org/me/cat").new_request_url("main", "feat/x"),
             "https://codeberg.org/me/cat/compare/main...feat/x"
         );
+    }
+
+    #[test]
+    fn requests_are_found_by_their_tip() {
+        let request = |number, tip: &str| Request {
+            number,
+            tip: tip.into(),
+            subject: None,
+        };
+        let found = Requests {
+            newest: vec![request(3, "aaa"), request(2, "bbb"), request(1, "aaa")],
+            total: 3,
+        };
+        let numbers: Vec<u64> = found.at("aaa").iter().map(|r| r.number).collect();
+        assert_eq!(numbers, [3, 1]);
+        assert!(found.at("ccc").is_empty());
     }
 
     #[test]

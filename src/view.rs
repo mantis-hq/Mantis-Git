@@ -549,6 +549,8 @@ impl GraphView {
         self.select_head_if_unselected(cx);
         self.refresh_spotlight();
         self.probe_forge(cx);
+        // Asked here too, so the graph can mark commits that a request points at.
+        self.requests_opened(cx);
         self.check_paused_operation(cx);
         self.load_branch_counts(cx);
         cx.notify();

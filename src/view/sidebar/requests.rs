@@ -40,7 +40,7 @@ impl State {
 impl GraphView {
     /// The remote whose requests are shown, with where it is on the web. `None` when no
     /// remote is on a forge Mantis Git knows, and then the section isn't drawn.
-    pub(super) fn request_source(&self) -> Option<(Remote, Site)> {
+    pub(in crate::view) fn request_source(&self) -> Option<(Remote, Site)> {
         let (remote, site) = forge::pick(&self.refs.remote_configs, self.refs.forge)?;
         Some((remote.clone(), site))
     }
@@ -60,9 +60,10 @@ impl GraphView {
         self.sidebar.probed = Some(origin);
         Self::spawn_blocking(
             move || forge::probe::detect(&address, &forge::probe::Web),
-            |_, found, cx| {
+            |this, found, cx| {
                 // The section is drawn from what the probe left in memory.
                 if found.is_some() {
+                    this.requests_opened(cx);
                     cx.notify();
                 }
             },
@@ -107,8 +108,23 @@ impl GraphView {
         );
     }
 
+    /// The requests that stand at commit `oid`, as a label and the page each opens, for the
+    /// graph's chips and the inspector. Empty until the list has been read.
+    pub(in crate::view) fn requests_at(&self, oid: &str) -> Vec<(String, String)> {
+        let (Some(Load::Done(found)), Some((_, site))) =
+            (self.loaded_requests(), self.request_source())
+        else {
+            return Vec::new();
+        };
+        found
+            .at(oid)
+            .into_iter()
+            .map(|r| (site.label(r.number), site.request_url(r.number)))
+            .collect()
+    }
+
     /// Opens the section the first time, and asks then.
-    pub(super) fn requests_opened(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::view) fn requests_opened(&mut self, cx: &mut Context<Self>) {
         if self.loaded_requests().is_none() {
             self.load_requests(cx);
         }
