@@ -4,7 +4,7 @@
 //! the UI thread.
 
 use super::*;
-use mantisgit_core::auth::{self, Account, Host};
+use mantisgit_core::auth::{self, Account, Host, flow};
 use mantisgit_core::ops::Cancel;
 use mantisgit_core::repo::forge::Forge;
 
@@ -251,8 +251,9 @@ impl Settings {
                         this.feedback = Feedback::Saved(match replacing {
                             Some(_) => format!("Saved {}.", host.name()),
                             None => format!(
-                                "Added {}. Redirect address to register: http://127.0.0.1",
-                                host.name()
+                                "Added {}. The OAuth app's redirect address must be {}.",
+                                host.name(),
+                                flow::REDIRECT
                             ),
                         });
                         this.clear_form(window, cx);
@@ -485,7 +486,7 @@ impl Settings {
                     .text_color(muted)
                     .child(
                         "For a server your company runs. Make an OAuth application there, \
-                         not confidential, with the redirect address http://127.0.0.1, and \
+                         not confidential, with the redirect address http://127.0.0.1/callback, and \
                          paste its client ID.",
                     ),
             )

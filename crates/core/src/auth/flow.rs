@@ -17,6 +17,13 @@ use std::time::{Duration, Instant};
 /// How long the browser has to come back.
 const PATIENCE: Duration = Duration::from_secs(5 * 60);
 
+/// The path of the redirect. People register `REDIRECT` with the forge; servers compare the
+/// path exactly and ignore only the port, so this must be what is registered.
+pub const REDIRECT_PATH: &str = "/callback";
+
+/// What to register as the OAuth app's redirect address.
+pub const REDIRECT: &str = "http://127.0.0.1/callback";
+
 pub struct Pending {
     host: Host,
     /// What to open in the browser.
@@ -40,7 +47,7 @@ pub fn begin(host: &Host) -> Result<Pending, String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("Couldn't listen for the sign-in: {e}."))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    let redirect = format!("http://127.0.0.1:{port}/callback");
+    let redirect = format!("http://127.0.0.1:{port}{REDIRECT_PATH}");
     let pkce = Pkce::new()?;
     let state = pkce::random_text(16)?;
     let query = pkce::build_query(&[
@@ -113,7 +120,7 @@ impl Pending {
         let request = String::from_utf8_lossy(&buffer[..n]);
         let target = request.lines().next()?.split_whitespace().nth(1)?;
         let (path, query) = target.split_once('?').unwrap_or((target, ""));
-        if path != "/callback" {
+        if path != REDIRECT_PATH {
             respond(&mut stream, "404 Not Found", "Not found.");
             return None;
         }
@@ -244,6 +251,21 @@ mod tests {
         assert_eq!(get("code_challenge"), pending.pkce.challenge);
         assert!(get("redirect_uri").starts_with("http://127.0.0.1:"));
         assert!(!pending.url.contains(&pending.pkce.verifier));
+    }
+
+    #[test]
+    fn the_registered_address_is_the_one_sent_without_its_port() {
+        let pending = begin(&host()).unwrap();
+        let sent = query_of(&pending)
+            .into_iter()
+            .find(|(n, _)| n == "redirect_uri")
+            .unwrap()
+            .1;
+        // Servers drop the port of a loopback address and compare the rest exactly.
+        let without_port = sent
+            .rsplit_once(':')
+            .map(|(head, tail)| format!("{head}{}", &tail[tail.find('/').unwrap()..]));
+        assert_eq!(without_port.as_deref(), Some(REDIRECT));
     }
 
     #[test]

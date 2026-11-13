@@ -329,7 +329,9 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     one sentence saying where it stands ("Not signed in.", "Signed in as ada."), and one quiet
     button named for its result ("Sign in to github.com", "Sign out of github.com"). Signing
     in opens the browser and the row says "Waiting for the browser…" with a "Cancel" button;
-    the flow is authorization code with PKCE and a redirect to `127.0.0.1` on a free port,
+    the flow is authorization code with PKCE and a redirect to `http://127.0.0.1:<free port>/callback`, so the OAuth app is registered as a
+    public (not confidential) client with the redirect `http://127.0.0.1/callback`, since servers
+    ignore a loopback address's port and compare the path exactly (`flow::REDIRECT`),
     which carries a random `state` that must come back unchanged, and no client secret. The
     token (and its refresh token, for servers whose tokens expire) is kept in the system
     keychain under the server's address and never in a file or a log; "Sign out" removes it
