@@ -15,6 +15,7 @@ pub enum Icon {
     Question,
     Check,
     CloudOff,
+    Tag,
     Lock,
     FolderOpen,
     ShieldCheck,
@@ -42,6 +43,7 @@ impl Icon {
             Self::Question => "icons/question.svg",
             Self::Check => "icons/check.svg",
             Self::CloudOff => "icons/cloud-off.svg",
+            Self::Tag => "icons/tag.svg",
             Self::Lock => "icons/lock.svg",
             Self::FolderOpen => "icons/folder-open.svg",
             Self::ShieldCheck => "icons/shield-check.svg",
@@ -67,6 +69,7 @@ impl Icon {
             "icons/question.svg" => include_bytes!("icons/question.svg"),
             "icons/check.svg" => include_bytes!("icons/check.svg"),
             "icons/cloud-off.svg" => include_bytes!("icons/cloud-off.svg"),
+            "icons/tag.svg" => include_bytes!("icons/tag.svg"),
             "icons/lock.svg" => include_bytes!("icons/lock.svg"),
             "icons/folder-open.svg" => include_bytes!("icons/folder-open.svg"),
             "icons/shield-check.svg" => include_bytes!("icons/shield-check.svg"),
@@ -102,6 +105,7 @@ impl AssetSource for Icons {
             Icon::Question,
             Icon::Check,
             Icon::CloudOff,
+            Icon::Tag,
             Icon::Lock,
             Icon::FolderOpen,
             Icon::ShieldCheck,
@@ -141,6 +145,7 @@ mod tests {
             Icon::Question,
             Icon::Check,
             Icon::CloudOff,
+            Icon::Tag,
             Icon::Lock,
             Icon::FolderOpen,
             Icon::ShieldCheck,
@@ -160,6 +165,6 @@ mod tests {
             assert!(bytes.starts_with(b"<svg"), "{}", icon.path());
         }
         assert!(Icons.load("icons/none.svg").unwrap().is_none());
-        assert_eq!(Icons.list("icons/").unwrap().len(), 20);
+        assert_eq!(Icons.list("icons/").unwrap().len(), 21);
     }
 }

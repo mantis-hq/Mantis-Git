@@ -17,6 +17,7 @@ use mantisgit_core::history::refs::{Chip, RefKind};
 use mantisgit_core::history::spotlight::Spotlight;
 use mantisgit_core::history::{Commit, Signature, split_subject};
 use mantisgit_core::repo::branch::Dragged;
+use mantisgit_core::repo::forge::Forge;
 use mantisgit_core::text::short_oid;
 use std::ops::Range;
 use std::time::Duration;
@@ -113,7 +114,14 @@ impl GraphView {
             .take(MAX_VISIBLE_REFS)
             .enumerate()
             .map(|(slot, chip)| {
-                chip_element(("chip", index * 1000 + slot), chip, &colors, index, cx)
+                chip_element(
+                    ("chip", index * 1000 + slot),
+                    chip,
+                    self.refs.chip_forge(chip),
+                    &colors,
+                    index,
+                    cx,
+                )
             })
             .collect::<Vec<_>>();
         let popover = open.then(|| {
@@ -124,6 +132,7 @@ impl GraphView {
                     chip_element(
                         ("popover-chip", index * 1000 + slot),
                         chip,
+                        self.refs.chip_forge(chip),
                         &colors,
                         index,
                         cx,
@@ -693,13 +702,22 @@ struct ChipColors {
 fn chip_element(
     id: impl Into<ElementId>,
     chip: &Chip,
+    forge: Option<Forge>,
     colors: &ChipColors,
     row: usize,
     cx: &mut Context<GraphView>,
 ) -> Stateful<Div> {
     let label = chip.label;
     let lane = lane_color(label.color, colors.is_dark);
-    let element = ref_label(id, chip, lane, colors.head, colors.on_head, colors.tag);
+    let element = ref_label(
+        id,
+        chip,
+        forge,
+        lane,
+        colors.head,
+        colors.on_head,
+        colors.tag,
+    );
     match label.kind {
         // Not a name anything can be done to.
         RefKind::DetachedHead => element,
@@ -726,6 +744,7 @@ fn chip_element(
 fn ref_label(
     id: impl Into<ElementId>,
     chip: &Chip,
+    forge: Option<Forge>,
     lane: Hsla,
     head: Hsla,
     on_head: Hsla,
@@ -754,6 +773,9 @@ fn ref_label(
         .font_semibold()
         .text_color(text)
         .bg(fill)
+        .when(r.kind == RefKind::Tag, |label| {
+            label.child(chip_icon(Icon::Tag, text))
+        })
         .child(div().min_w_0().truncate().child(r.name.clone()))
         .when(chip.synced, |label| {
             label.child(
@@ -766,6 +788,23 @@ fn ref_label(
                 .h(px(10.)),
             )
         })
+        .when_some(forge, |label, forge| {
+            let icon = match forge {
+                Forge::GitHub => Icon::GitHub,
+                Forge::GitLab => Icon::GitLab,
+                Forge::Gitea => Icon::Gitea,
+            };
+            label.child(chip_icon(icon, text))
+        })
+}
+
+/// A small picture in a chip, in the chip's text colour.
+fn chip_icon(icon: Icon, color: Hsla) -> impl IntoElement {
+    svg()
+        .path(icon.path())
+        .size(px(11.))
+        .flex_none()
+        .text_color(color)
 }
 
 /// Says "in sync with the remote" by shape, so it doesn't rest on colour alone.
