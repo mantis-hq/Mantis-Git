@@ -18,6 +18,8 @@ pub(super) struct State {
     /// The key being added, as `origin key`, so its button can say so.
     adding_key: Option<String>,
     loaded: bool,
+    /// Whether the keychain has said who is signed in.
+    accounts_read: bool,
     /// Addresses of the servers added by hand, which can be edited and removed.
     custom: Vec<String>,
     /// The address of the server the form is changing, when it isn't adding a new one.
@@ -54,6 +56,7 @@ impl State {
             signing_in: None,
             adding_key: None,
             loaded: false,
+            accounts_read: false,
             custom: Vec::new(),
             editing: None,
             new_origin,
@@ -69,22 +72,33 @@ impl State {
 }
 
 impl Settings {
-    /// Reads the servers, who is signed in (a keychain call) and the local keys.
+    /// Reads the servers and the local keys, which draws the page at once, then who is
+    /// signed in. That is a keychain call, which can wait on a locked or missing keyring
+    /// service, so the page must not wait for it.
     pub(super) fn load_accounts(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            let (hosts, accounts, keys, custom) = cx
+            let (hosts, keys, custom) = cx
                 .background_spawn(async {
                     let hosts = auth::hosts();
-                    let accounts = auth::accounts_in(&auth::token::Keychain, &hosts);
                     let custom = auth::custom_hosts().into_iter().map(|h| h.origin).collect();
-                    (hosts, accounts, ssh::keys(), custom)
+                    (hosts, ssh::keys(), custom)
                 })
                 .await;
+            let known = hosts.clone();
             this.update(cx, |this, cx| {
                 let state = &mut this.accounts;
-                (state.hosts, state.accounts, state.keys) = (hosts, accounts, keys);
-                state.custom = custom;
+                (state.hosts, state.keys, state.custom) = (hosts, keys, custom);
                 state.loaded = true;
+                state.accounts_read = false;
+                cx.notify();
+            })
+            .ok();
+            let accounts = cx
+                .background_spawn(async move { auth::accounts_in(&auth::token::Keychain, &known) })
+                .await;
+            this.update(cx, |this, cx| {
+                this.accounts.accounts = accounts;
+                this.accounts.accounts_read = true;
                 cx.notify();
             })
             .ok();
@@ -310,6 +324,8 @@ impl Settings {
         let custom = self.accounts.custom.contains(&host.origin);
         let sentence = if waiting {
             "Waiting for the browser…".to_owned()
+        } else if !self.accounts.accounts_read {
+            "Asking the system keychain…".to_owned()
         } else {
             auth::status_sentence(host, account)
         };
@@ -327,7 +343,9 @@ impl Settings {
                 .ghost()
                 .small()
                 .label(auth::action_label(host, account))
-                .disabled(busy || (!signed_in && !host.can_sign_in()))
+                .disabled(
+                    busy || !self.accounts.accounts_read || (!signed_in && !host.can_sign_in()),
+                )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if signed_in {
                         this.sign_out(target.clone(), cx);
