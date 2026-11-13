@@ -3,6 +3,7 @@
 
 pub mod about;
 pub mod askpass;
+pub mod auth;
 pub mod cache;
 pub mod commit;
 pub mod history;

@@ -318,6 +318,28 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     window says nothing about the commit graph unless it is the reason for a wait (see
     "Commit graph card"). Both sentences for a missing or behind graph add that in a large
     repository it makes branch counts, search and loading history slow.
+  - **Accounts** is where Mantis Git signs in to a forge with the OAuth app flow
+    (`mantisgit_core::auth`), so HTTPS remotes need no password and an SSH key can be added
+    to the account. It sits before About and always shows. The "Servers" card has a row for
+    each server (github.com, gitlab.com, codeberg.org, then any added): its name and forge,
+    one sentence saying where it stands ("Not signed in.", "Signed in as ada."), and one quiet
+    button named for its result ("Sign in to github.com", "Sign out of github.com"). Signing
+    in opens the browser and the row says "Waiting for the browser…" with a "Cancel" button;
+    the flow is authorization code with PKCE and a redirect to `127.0.0.1` on a free port,
+    which carries a random `state` that must come back unchanged, and no client secret. The
+    token (and its refresh token, for servers whose tokens expire) is kept in the system
+    keychain under the server's address and never in a file or a log; "Sign out" removes it
+    from this computer and the header says how to revoke it on the server too. The public
+    servers use the client ID this build was made with (`MANTISGIT_GITHUB_CLIENT_ID`,
+    `MANTISGIT_GITLAB_CLIENT_ID`, `MANTISGIT_CODEBERG_CLIENT_ID`); with none the row says so
+    and its button is off. The "Another server" card adds a self-hosted one: a forge chip row
+    (the picked one ticked, never blue), a "Server" and a "Client ID" input and "Add server",
+    kept in `hosts` beside the `state` file. While any account is signed in an "SSH keys" card
+    lists each private key in `~/.ssh` that has a `.pub` beside it, with "Add to <server>" for
+    each account; only the public file is ever read or sent, and a private key is refused
+    before anything leaves the machine. When git asks for an HTTPS login the askpass program
+    answers from the account for that server (the name `oauth2` and the token), renewing an
+    expired token first, and only asks in a popup when nobody is signed in there.
   - **About** is the last page, always in the side panel. Its "Version" card says which
     build this is ("Mantis Git 0.1.0", with the commit in brackets for a nightly), what
     Mantis Git is licensed under and that it contains so many projects by others, with a quiet
