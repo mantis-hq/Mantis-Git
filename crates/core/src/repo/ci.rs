@@ -17,6 +17,12 @@ use crate::auth::{self, Account, Host};
 use crate::cache::keys::Caches;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex, PoisonError};
+use std::time::{Duration, Instant};
+
+/// What the server's "no log" says between the server's name and the job's, so the sentence
+/// and the memory of it can't drift apart.
+const NO_LOG_MARKER: &str = " has no log for ";
 
 /// How many of the newest pipelines the column reads, one call each page.
 const RECENT: usize = 100;
@@ -440,7 +446,7 @@ pub fn log(target: &Target, http: &dyn Transport, token: &str, job: &Job) -> Rep
     })?;
     if reply.status == 404 {
         return Err(format!(
-            "{} has no log for {}. It may not have started, or the server keeps logs elsewhere.",
+            "{}{NO_LOG_MARKER}{}. It may not have started, or the server keeps logs elsewhere.",
             target.host.name(),
             job.name
         ));
@@ -552,15 +558,47 @@ pub fn for_commit_stored(target: &Target, caches: &Caches, sha: &str) -> Reply<V
     for_commit(target, &Stored::new(caches.pages()), "", sha)
 }
 
+/// How long a server's "no log" is believed. A job that is waiting gets one when it starts,
+/// which is a change of status, and that asks again at once.
+const NO_LOG_FOR: Duration = Duration::from_secs(60);
+
 /// A job's log. One that is over never changes, so a kept copy is the answer and nobody is
-/// asked; a running one is asked each time.
+/// asked; a running one is asked each time. A job that is waiting or was skipped has no log
+/// and is not asked at all, and a server that says a job has none is not asked again about
+/// it, in the status it is in, for a minute, so opening it again is instant.
 pub fn log_live(target: &Target, caches: &Caches, job: &Job) -> Reply<Vec<String>> {
+    if matches!(job.status, Status::Queued | Status::Skipped) {
+        return Ok(Vec::new());
+    }
     if !job.status.is_active()
         && let Ok(kept) = log(target, &Stored::new(caches.pages()), "", job)
     {
         return Ok(kept);
     }
-    log(target, web(caches), &session(target)?, job)
+    static MISSING: LazyLock<Mutex<HashMap<String, (Instant, String)>>> =
+        LazyLock::new(Mutex::default);
+    let key = format!(
+        "{}/{}/{}/{:?}",
+        target.host.origin, target.path, job.id, job.status
+    );
+    let said = |map: &HashMap<String, (Instant, String)>| {
+        map.get(&key)
+            .filter(|(at, _)| at.elapsed() < NO_LOG_FOR)
+            .map(|(_, message)| message.clone())
+    };
+    if let Some(message) = said(&MISSING.lock().unwrap_or_else(PoisonError::into_inner)) {
+        return Err(message);
+    }
+    let result = log(target, web(caches), &session(target)?, job);
+    if let Err(message) = &result
+        && message.contains(NO_LOG_MARKER)
+    {
+        MISSING
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, (Instant::now(), message.clone()));
+    }
+    result
 }
 
 #[cfg(test)]
@@ -777,6 +815,24 @@ mod tests {
         let stored = Stored::new(again.pages());
         assert_eq!(for_commit(&t, &stored, "", "aaa").unwrap(), live);
         assert!(for_commit(&t, &stored, "", "bbb").is_err(), "never read");
+    }
+
+    #[test]
+    fn a_job_that_has_not_run_has_no_log_and_nobody_is_asked() {
+        // No server and no keychain here, so anything asked would be an error.
+        let caches = Caches::memory_only();
+        let t = target(Forge::GitHub, "https://github.com");
+        for status in [Status::Queued, Status::Skipped] {
+            let job = Job {
+                id: "5".into(),
+                name: "build".into(),
+                group: String::new(),
+                status,
+                seconds: None,
+                url: String::new(),
+            };
+            assert_eq!(log_live(&t, &caches, &job), Ok(Vec::new()), "{status:?}");
+        }
     }
 
     #[test]
