@@ -137,15 +137,27 @@ enum Page {
 }
 
 impl Page {
+    /// In the order of the side panel: what belongs to the open repository, then what
+    /// holds everywhere (the app's own settings first, git's after), then About.
     const ALL: [Page; 7] = [
-        Page::GitConfig,
-        Page::Identities,
+        Page::Repository,
         Page::App,
         Page::Theme,
-        Page::Repository,
+        Page::GitConfig,
+        Page::Identities,
         Page::Accounts,
         Page::About,
     ];
+
+    /// The heading the side panel puts over this page, shared with the pages that follow
+    /// it until another has one.
+    fn heading(self) -> Option<&'static str> {
+        match self {
+            Page::Repository => Some("This repository"),
+            Page::App => Some("Everywhere"),
+            _ => None,
+        }
+    }
 
     fn name(self) -> &'static str {
         match self {
@@ -893,12 +905,22 @@ impl Settings {
             .into_iter()
             .enumerate()
             .filter(|(_, page)| *page != Page::Repository || has_repo)
-            .map(|(index, page)| {
-                panel_row(("page", index), self.page == page, cx)
+            .flat_map(|(index, page)| {
+                let heading = page.heading().map(|name| {
+                    div()
+                        .px_2()
+                        .pt_3()
+                        .pb_1()
+                        .child(section_label(muted).child(name))
+                        .into_any_element()
+                });
+                let row = panel_row(("page", index), self.page == page, cx)
                     .h(px(32.))
                     .text_size(TEXT_BODY)
                     .child(page.name())
                     .on_click(cx.listener(move |this, _, _, cx| this.open_page(page, cx)))
+                    .into_any_element();
+                heading.into_iter().chain([row])
             });
         div()
             .v_flex()

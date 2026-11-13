@@ -154,6 +154,10 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 - Settings: a quiet "Settings" button at the end of the header, or `Ctrl ,`, opens a
   second window (1000×720) and brings it forward if it is already open. It has the 52 px
   header, a 220 px Mantle side panel of pages, and the page in a column up to 720 px wide.
+  The side panel groups pages by reach, each group under a section label: "This repository"
+  (Repository, drawn only while a repository is open), then "Everywhere" (App, Theme, Git
+  config, Identities), then About. The App page's cards run from daily use to system
+  chores: Startup, Graph, Avatars, Remotes, Cache, Launcher.
   The header sentence says what was saved or why not. There is no Save button: toggles and
   choices apply when clicked, text applies on Enter or when you leave the field. Settings
   sit in Mantle cards (8 px radius) grouped under section labels. A choice is a row of
@@ -320,7 +324,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     repository it makes branch counts, search and loading history slow.
   - **Accounts** is where Mantis Git signs in to a forge with the OAuth app flow
     (`mantisgit_core::auth`), so HTTPS remotes need no password and an SSH key can be added
-    to the account. It sits before About and always shows. The "Servers" card has a row for
+    to the account. It is in the "Everywhere" group, after Identities, and always shows. The "Servers" card has a row for
     each server (github.com, gitlab.com, codeberg.org, then any added): its name and forge,
     one sentence saying where it stands ("Not signed in.", "Signed in as ada."), and one quiet
     button named for its result ("Sign in to github.com", "Sign out of github.com"). Signing
@@ -442,7 +446,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   `graph_columns` in the `state` file, a comma separated list of `refs`, `graph`, `subject`,
   `hash`, `author` and `date`. A list that is damaged, repeats a column or leaves one out is mended
   when read, so every column always shows once (`ColumnOrder` in
-  `mantisgit_core::history::columns`). The headings stay over the graph, not over search
+  `mantisgit_core::history::columns`). Every column but the subject, which takes what is left, also drags wider or narrower by an 8 px
+  strip on the right edge of its heading, which tints 50% Blue and shows a resize cursor, between
+  40 and 600 px; a double-click puts it back to the width the app picks. The widths are kept for
+  every repository as `graph_column_widths` (`refs:120,author:150`), and one that is damaged or
+  unknown is skipped (`ColumnWidths`). The headings stay over the graph, not over search
   results, which are a list of their own.
 - Resizing: every panel edge drags, so a panel can be made smaller or bigger. These are
   the sidebar, inspector, dock and its log list, and the settings side panel. The pointer shows a resize cursor

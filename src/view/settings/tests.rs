@@ -610,7 +610,7 @@ fn the_repository_page_writes_a_missing_commit_graph(cx: &mut TestAppContext) {
     let (_dir, scope) = file_scope();
     let (view, mut cx) = open(Some(repo.path().to_owned()), scope, cx);
 
-    view.update(&mut cx, |settings, cx| settings.show_page(4, cx));
+    view.update(&mut cx, |settings, cx| settings.show_page(0, cx));
     settle(&mut cx);
     view.read_with(&cx, |settings, _| {
         assert_eq!(settings.page, Page::Repository);
@@ -642,7 +642,7 @@ fn the_repository_page_writes_a_missing_commit_graph(cx: &mut TestAppContext) {
     view.read_with(&cx, |settings, _| {
         assert_eq!(settings.page, Page::GitConfig)
     });
-    view.update(&mut cx, |settings, cx| settings.show_page(4, cx));
+    view.update(&mut cx, |settings, cx| settings.show_page(0, cx));
     view.read_with(&cx, |settings, _| {
         assert_eq!(settings.page, Page::GitConfig)
     });
@@ -659,7 +659,7 @@ fn the_repository_page_sets_and_clears_the_forge_the_repository_is_on(cx: &mut T
     let (_dir, scope) = file_scope();
     let (view, mut cx) = open(Some(repo.path().to_owned()), scope, cx);
 
-    view.update(&mut cx, |settings, cx| settings.show_page(4, cx));
+    view.update(&mut cx, |settings, cx| settings.show_page(0, cx));
     settle(&mut cx);
     view.read_with(&cx, |settings, _| {
         let choice = settings.forge_choice.as_ref().expect("the choice was read");

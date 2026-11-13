@@ -34,7 +34,7 @@ use gpui_kit::component::*;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use mantisgit_core::cache::keys::{self, Caches};
-use mantisgit_core::history::columns::ColumnOrder;
+use mantisgit_core::history::columns::{ColumnOrder, ColumnWidths};
 use mantisgit_core::history::refs::Refs;
 use mantisgit_core::history::selection::Selection;
 use mantisgit_core::history::{self, Entry, LoadEvent};
@@ -175,6 +175,9 @@ pub struct GraphView {
     popover_hovered: bool,
     /// The graph's columns, left to right, as the user arranged them.
     columns: ColumnOrder,
+    /// Widths the user dragged columns to.
+    column_widths: ColumnWidths,
+    column_widths_dirty: bool,
     scroll: UniformListScrollHandle,
     focus: FocusHandle,
     load_task: Option<Task<()>>,
@@ -265,6 +268,8 @@ impl GraphView {
             remote_tags: std::collections::HashMap::new(),
             popover_hovered: false,
             columns: ColumnOrder::default(),
+            column_widths: ColumnWidths::default(),
+            column_widths_dirty: false,
             scroll: UniformListScrollHandle::new(),
             focus,
             load_task: None,

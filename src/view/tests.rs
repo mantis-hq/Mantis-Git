@@ -119,6 +119,38 @@ fn the_order_of_the_graph_columns_is_saved_and_comes_back(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
+fn dragged_column_widths_are_saved_and_double_click_puts_them_back(cx: &mut TestAppContext) {
+    use mantisgit_core::history::columns::Column;
+    use mantisgit_core::settings::state::AppState;
+    let (view, mut cx) = open_view(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("state");
+    AppState::default().save(&file).unwrap();
+    view.update(&mut cx, |view, cx| {
+        view.set_state_file(Some(file.clone()));
+        view.set_column_width(Column::Author, 200.);
+        assert_eq!(view.column_width(Column::Author), 200.);
+        view.finish_column_resize(cx);
+    });
+    assert_eq!(
+        AppState::load(&file)
+            .graph_column_widths
+            .get(Column::Author),
+        Some(200.)
+    );
+    view.update(&mut cx, |view, cx| {
+        view.reset_column_width(Column::Author, cx);
+        assert_eq!(view.column_width(Column::Author), 120.);
+    });
+    assert_eq!(
+        AppState::load(&file)
+            .graph_column_widths
+            .get(Column::Author),
+        None
+    );
+}
+
+#[gpui_kit::test]
 fn wide_histories_stop_growing_the_graph_at_eight_lanes(cx: &mut TestAppContext) {
     let (view, mut cx) = open_view(cx);
     load(&view, &["a"], &mut cx);
