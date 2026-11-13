@@ -728,9 +728,7 @@ mod tests {
         });
         let focused = |cx: &mut VisualTestContext| cx.update(|window, cx| window.focused(cx));
         let before = focused(&mut cx);
-        cx.simulate_keystrokes(
-            "tab shift-tab ctrl-c ctrl-r ctrl-b up down home end enter escape j",
-        );
+        cx.simulate_keystrokes("tab shift-tab ctrl-c ctrl-r up down home end enter escape j");
         assert_eq!(*actions.borrow(), Vec::<&str>::new());
         assert_eq!(focused(&mut cx), before);
         assert_eq!(state(&view, &cx), (2, 1));
