@@ -471,8 +471,11 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
 | Merge           | Hollow dot in its branch colour, never an avatar |
 
 - Lines are 1.75 px with curved bends, and show no avatars.
-- At most 8 lanes are visible. A commit past the edge gets a small dot in its branch
-  colour at the graph's right edge, so no commit disappears.
+- The lanes shown are the ones the graph column's width holds (16 px each, with 6 px of
+  padding either side). The width the app picks fits at most 8, so a repository with many
+  branches doesn't push the text out; dragging the column wider shows more lanes, and
+  narrower fewer. A commit past the edge gets a small dot in its branch colour at the
+  graph's right edge, so no commit disappears.
 - Your branch line is blue down to where it forks. Shared history below that takes
   `main`'s colour.
 - Clicking a branch spotlights it: everything outside its history fades to about 28%,

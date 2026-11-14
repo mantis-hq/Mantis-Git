@@ -151,7 +151,7 @@ fn dragged_column_widths_are_saved_and_double_click_puts_them_back(cx: &mut Test
 }
 
 #[gpui_kit::test]
-fn wide_histories_stop_growing_the_graph_at_eight_lanes(cx: &mut TestAppContext) {
+fn wide_histories_stop_growing_the_graph_column_at_eight_lanes(cx: &mut TestAppContext) {
     let (view, mut cx) = open_view(cx);
     load(&view, &["a"], &mut cx);
     view.update(&mut cx, |view, _| {

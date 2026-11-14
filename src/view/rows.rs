@@ -27,9 +27,11 @@ const LANE_WIDTH: f32 = 16.;
 const GRAPH_PADDING: f32 = 6.;
 const LINE_WIDTH: f32 = 1.75;
 const NODE_RADIUS: f32 = 4.;
-/// Wider graphs are clipped, so that a few hundred stale branches can't push the text out
-/// of the window. Rows with a commit past the edge show a marker there instead.
-const MAX_VISIBLE_LANES: u32 = 8;
+/// The graph column picks no more than this many lanes for itself, so that a few hundred
+/// stale branches can't push the text out of the window. How many lanes show is what the
+/// column's width holds (`visible_lanes`), so dragging it wider reveals more. Rows with a
+/// commit past the edge show a marker there instead.
+const MAX_AUTO_LANES: u32 = 8;
 const CLIPPED_MARKER_RADIUS: f32 = 3.;
 const MAX_VISIBLE_REFS: usize = 1;
 /// Refs get their own column left of the graph, so subjects stay aligned. It is as wide as
@@ -76,7 +78,7 @@ impl GraphView {
     }
 
     fn auto_graph_width(&self) -> f32 {
-        let lanes = self.max_columns.clamp(1, MAX_VISIBLE_LANES);
+        let lanes = self.max_columns.clamp(1, MAX_AUTO_LANES);
         lanes as f32 * LANE_WIDTH + GRAPH_PADDING * 2.
     }
 
@@ -267,6 +269,7 @@ impl GraphView {
         let (background, hover, active) = (theme.background, theme.list_hover, selected_row(theme));
         let subtext0 = tokens(is_dark).subtext0;
         let graph_width = self.graph_width();
+        let visible_lanes = visible_lanes(graph_width);
         let refs_width = self.refs_width();
         let hash_width = self.column_width(Column::Hash);
         let author_width = self.column_width(Column::Author);
@@ -297,8 +300,8 @@ impl GraphView {
                 .map(|tree| (tree.path.clone(), tree.open_hint()));
             let requests = self.requests_at(&commit.oid);
             let (prefix, description) = split_subject(&commit.subject);
-            let covered =
-                !matches!(face, Face::None) && !(is_working || is_stash || is_clipped(&lane_row));
+            let covered = !matches!(face, Face::None)
+                && !(is_working || is_stash || is_clipped(&lane_row, visible_lanes));
             let node_column = lane_row.column;
             let node_ring = if is_head {
                 head
@@ -349,6 +352,7 @@ impl GraphView {
                                             paint_row(
                                                 bounds,
                                                 &lane_row,
+                                                visible_lanes,
                                                 spotlight.as_deref().map(|spot| (spot, index)),
                                                 NodeStyle {
                                                     is_head,
@@ -859,6 +863,7 @@ struct NodeStyle {
 fn paint_row(
     bounds: Bounds<Pixels>,
     row: &Row,
+    visible_lanes: u32,
     spotlight: Option<(&Spotlight, usize)>,
     node: NodeStyle,
     is_dark: bool,
@@ -896,7 +901,7 @@ fn paint_row(
         paint_edge(point(node_x, middle), to, color, lane.dashed, window);
     }
 
-    if is_clipped(row) {
+    if is_clipped(row, visible_lanes) {
         let edge = bounds.right() - px(CLIPPED_MARKER_RADIUS + 1.);
         paint_circle(
             edge,
@@ -944,8 +949,13 @@ fn paint_row(
 }
 
 /// Whether a row's commit lands past the visible lanes, where its dot can't be seen.
-fn is_clipped(row: &Row) -> bool {
-    row.column >= MAX_VISIBLE_LANES
+fn is_clipped(row: &Row, visible_lanes: u32) -> bool {
+    row.column >= visible_lanes
+}
+
+/// The lanes a graph column of this width holds, at least one.
+fn visible_lanes(width: f32) -> u32 {
+    (((width - GRAPH_PADDING * 2.) / LANE_WIDTH).floor() as u32).max(1)
 }
 
 /// A ring of short arcs, for work that isn't a commit yet.
@@ -1015,7 +1025,7 @@ fn paint_circle(x: Pixels, y: Pixels, radius: f32, color: Hsla, window: &mut Win
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_VISIBLE_LANES, format_when, is_clipped};
+    use super::{GRAPH_PADDING, LANE_WIDTH, format_when, is_clipped, visible_lanes};
     use chrono::{Local, TimeZone};
     use mantisgit_core::history::Commit;
     use mantisgit_core::history::lanes::GraphBuilder;
@@ -1025,11 +1035,21 @@ mod tests {
     fn only_commits_past_the_last_visible_lane_are_clipped() {
         let mut builder = GraphBuilder::new();
         let parents: [Arc<str>; 1] = ["root".into()];
-        let rows: Vec<_> = (0..MAX_VISIBLE_LANES + 1)
+        let rows: Vec<_> = (0..9)
             .map(|tip| builder.push(&tip.to_string(), &parents))
             .collect();
-        assert!(!is_clipped(&rows[MAX_VISIBLE_LANES as usize - 1]));
-        assert!(is_clipped(&rows[MAX_VISIBLE_LANES as usize]));
+        assert!(!is_clipped(&rows[7], 8));
+        assert!(is_clipped(&rows[8], 8));
+        // A wider column shows the ninth lane too.
+        assert!(!is_clipped(&rows[8], 9));
+    }
+
+    #[test]
+    fn a_column_shows_the_lanes_its_width_holds() {
+        assert_eq!(visible_lanes(8. * LANE_WIDTH + GRAPH_PADDING * 2.), 8);
+        assert_eq!(visible_lanes(8. * LANE_WIDTH + GRAPH_PADDING * 2. - 1.), 7);
+        assert_eq!(visible_lanes(600.), 36);
+        assert_eq!(visible_lanes(0.), 1);
     }
 
     fn commit_at(time: i64) -> Commit {
