@@ -221,7 +221,7 @@ pub fn remove_warning(worktree: &Worktree) -> String {
 }
 
 fn canonical(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_owned())
+    super::wsl::canonicalize(path)
 }
 
 #[cfg(test)]

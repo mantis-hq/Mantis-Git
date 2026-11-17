@@ -112,7 +112,12 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   inside WSL2 (`\\wsl.localhost\Ubuntu\home\ada\repo`, or `\\wsl$\…`) opens like any other and
   is told apart by its path alone: git, and the dock's terminals, run inside the
   distribution through `wsl.exe`, started in the folder, and the paths git prints are turned
-  back into Windows ones (`mantisgit_core::repo::wsl`). Nothing in the interface changes.
+  back into Windows ones (`mantisgit_core::repo::wsl`). Nothing in the interface changes,
+  except when WSL hangs: every git command first asks the distribution to run a command that
+  does nothing, waits 8 seconds at most, and otherwise fails with "WSL isn't responding" and
+  `wsl --shutdown` as the way out. The answer is believed for 30 seconds (10 when it failed), so
+  queued commands fail at once, and the folder checks made at launch and when opening a tab
+  give up after 3 seconds, so a hung WSL never holds the window.
   Questions from git (see "Questions from git") are asked in the same popup, with nothing
   from Windows involved: a small script starts git in the distribution with its own
   askpass program, which prints the question on stderr after a marker and reads the answer

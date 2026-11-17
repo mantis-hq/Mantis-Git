@@ -11,7 +11,9 @@ use std::collections::hash_map::RandomState;
 use std::ffi::OsString;
 use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// The program that runs a command inside a distribution.
 pub const PROGRAM: &str = "wsl.exe";
@@ -91,6 +93,128 @@ pub fn reply(answer: Option<&str>) -> String {
         Some(answer) => format!("ok:{}\n", answer.replace(['\n', '\r'], "")),
         None => "cancel\n".to_owned(),
     }
+}
+
+/// How long a distribution has to answer a trivial command before it counts as hung.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+/// How long an answer, either way, is believed, so a hung distribution costs one wait and
+/// not one for each command that is queued behind it.
+const GOOD_FOR: Duration = Duration::from_secs(30);
+const DOWN_FOR: Duration = Duration::from_secs(10);
+/// How long a file check on a `\\wsl.localhost` path may take. Windows reaches the folder
+/// through a 9P server in the distribution, and a call to it never returns while that hangs.
+const FILE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Words for a distribution that doesn't answer.
+fn unresponsive(distro: &str) -> String {
+    format!(
+        "WSL isn't responding, so {distro} can't be reached. Run `wsl --shutdown` in a \
+         terminal, then try again."
+    )
+}
+
+/// Whether `distro` answers, asked with a command that does nothing. A distribution that is
+/// stuck makes `wsl.exe` wait for ever, so every git command for it asks this first and
+/// fails with a sentence instead of holding a thread (and the window) for good.
+pub fn responsive(distro: &str) -> Result<(), String> {
+    static SEEN: Mutex<Vec<(String, bool, Instant)>> = Mutex::new(Vec::new());
+    let remembered = |seen: &Vec<(String, bool, Instant)>| {
+        seen.iter()
+            .find(|(name, ok, at)| {
+                name == distro && at.elapsed() < if *ok { GOOD_FOR } else { DOWN_FOR }
+            })
+            .map(|(_, ok, _)| *ok)
+    };
+    let lock = || SEEN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    match remembered(&lock()) {
+        Some(true) => return Ok(()),
+        Some(false) => return Err(unresponsive(distro)),
+        None => {}
+    }
+    let mut command = Command::new(PROGRAM);
+    command.args(["-d", distro, "--exec", "true"]);
+    let ok = answers_within(&mut command, PROBE_TIMEOUT);
+    let mut seen = lock();
+    seen.retain(|(name, ..)| name != distro);
+    seen.push((distro.to_owned(), ok, Instant::now()));
+    if ok {
+        Ok(())
+    } else {
+        Err(unresponsive(distro))
+    }
+}
+
+/// Whether `command` succeeds within `timeout`; a command still running then is killed.
+fn answers_within(command: &mut Command, timeout: Duration) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        command.creation_flags(0x0800_0000);
+    }
+    let Ok(mut child) = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if start.elapsed() < timeout => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
+/// The result of `check`, or `None` if it takes longer than `timeout`. It runs on a thread
+/// of its own, which a call that never returns keeps, but the caller is not held by it.
+fn within<T: Send + 'static>(
+    timeout: Duration,
+    check: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(check());
+    });
+    receiver.recv_timeout(timeout).ok()
+}
+
+/// Runs a file system `check` on `path`, which may be inside WSL: there it is asked only of
+/// a distribution that answers, and given up on after a few seconds, so a hung WSL costs
+/// a wait and not the window. `None` means it could not be found out.
+fn bounded<T: Send + 'static>(
+    path: &Path,
+    check: impl FnOnce(&Path) -> T + Send + 'static,
+) -> Option<T> {
+    let path = path.to_owned();
+    match locate(&path) {
+        None => Some(check(&path)),
+        Some(location) => {
+            responsive(&location.distro).ok()?;
+            within(FILE_TIMEOUT, move || check(&path))
+        }
+    }
+}
+
+/// `path.is_dir()`, false for a folder in a WSL that doesn't answer.
+pub fn is_dir(path: &Path) -> bool {
+    bounded(path, |path| path.is_dir()).unwrap_or(false)
+}
+
+/// `path.canonicalize()`, or the path as it was when that can't be had.
+pub fn canonicalize(path: &Path) -> PathBuf {
+    bounded(path, |path| path.canonicalize().ok())
+        .flatten()
+        .unwrap_or_else(|| path.to_owned())
 }
 
 /// A folder inside a WSL distribution.
@@ -186,6 +310,8 @@ pub fn for_git(repo: &Path, path: &Path) -> String {
 /// A command made by [`Location::git`], told apart from any other so that the log can show
 /// what the person ran rather than the script around it.
 pub struct Invocation {
+    /// The distribution it runs in.
+    pub distro: String,
     /// The repository it runs in, as a Windows path.
     pub repo: PathBuf,
     /// Git's own arguments, without the `wsl.exe` part.
@@ -211,6 +337,7 @@ impl Invocation {
             linux_path: text(3)?.to_owned(),
         };
         Some(Self {
+            distro: location.distro.clone(),
             repo: location.to_windows(&location.linux_path),
             args: all[PREFIX..].iter().map(|arg| (*arg).to_owned()).collect(),
         })
@@ -339,6 +466,55 @@ mod tests {
         let mut other = Command::new(PROGRAM);
         other.args(["-d", "Ubuntu", "--cd", "/", "--exec", "rm", "-rf", "x", "y"]);
         assert!(Invocation::of(&other).is_none(), "only our own script");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_that_never_answers_is_stopped() {
+        let started = Instant::now();
+        let mut hung = Command::new("sleep");
+        hung.arg("30");
+        assert!(!answers_within(&mut hung, Duration::from_millis(100)));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(answers_within(
+            &mut Command::new("true"),
+            Duration::from_secs(5)
+        ));
+        assert!(!answers_within(
+            &mut Command::new("false"),
+            Duration::from_secs(5)
+        ));
+        assert!(!answers_within(
+            &mut Command::new("no-such-program-here"),
+            Duration::from_secs(5)
+        ));
+    }
+
+    #[test]
+    fn a_check_that_never_returns_gives_up() {
+        assert_eq!(within(Duration::from_secs(5), || 7), Some(7));
+        let hung = within(Duration::from_millis(50), || {
+            std::thread::sleep(Duration::from_secs(3));
+        });
+        assert_eq!(hung, None);
+    }
+
+    #[test]
+    fn ordinary_paths_are_checked_directly() {
+        assert!(is_dir(Path::new(".")));
+        assert!(!is_dir(Path::new("no/such/folder")));
+        assert_eq!(canonicalize(Path::new("no/such")), PathBuf::from("no/such"));
+    }
+
+    #[test]
+    fn a_wsl_that_does_not_answer_is_said_in_a_sentence() {
+        // No `wsl.exe` here, so the probe fails like a hung one does.
+        if cfg!(windows) {
+            return;
+        }
+        let error = responsive("Nowhere").unwrap_err();
+        assert!(error.contains("WSL isn't responding") && error.contains("Nowhere"));
+        assert!(!is_dir(Path::new(r"\\wsl$\Nowhere\home")));
     }
 
     fn may_ask(args: &[&str]) -> bool {
