@@ -630,7 +630,7 @@ fn window_controls(cx: &mut Context<Workspace>) -> impl IntoElement {
 }
 
 fn canonical(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_owned())
+    mantisgit_core::repo::wsl::canonicalize(path)
 }
 
 #[cfg(test)]

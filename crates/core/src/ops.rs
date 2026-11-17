@@ -213,7 +213,12 @@ impl Process {
         // Git in WSL asks its questions in its output, which this reads and answers. Only
         // commands that can reach a remote keep stdin open for the answer; any other
         // might wait on an input that never comes.
-        let asking = wsl::Invocation::of(command)
+        let invocation = wsl::Invocation::of(command);
+        // A distribution that is hung would leave `wsl.exe` waiting for ever.
+        if let Some(invocation) = &invocation {
+            wsl::responsive(&invocation.distro)?;
+        }
+        let asking = invocation
             .filter(|invocation| !piped_stdin && !is_quiet(command) && invocation.may_ask())
             .map(|_| {
                 // One asker for the whole command, so ssh asking again means a wrong answer.

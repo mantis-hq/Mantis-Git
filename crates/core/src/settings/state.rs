@@ -280,7 +280,7 @@ impl AppState {
             let mut tabs: Vec<PathBuf> = Vec::new();
             let mut active = 0;
             for (position, tab) in self.tabs.iter().enumerate() {
-                if !tab.is_dir() || tabs.contains(tab) {
+                if !crate::repo::wsl::is_dir(tab) || tabs.contains(tab) {
                     continue;
                 }
                 // The tab in front, or the nearest one after it if it is gone.
