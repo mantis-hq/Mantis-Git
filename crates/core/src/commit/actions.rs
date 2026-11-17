@@ -10,6 +10,7 @@ use std::path::Path;
 
 /// Switches to a branch, or to the bare commit when no branch names it.
 pub fn check_out(repo: &Path, branch: Option<&str>, oid: &str) -> Result<Option<String>, String> {
+    ops::operands(branch.into_iter().chain([oid]))?;
     match branch {
         Some(branch) => ops::run(repo, &["switch", branch]).map(|_| None),
         None => ops::run(repo, &["switch", "--detach", oid]).map(|_| {

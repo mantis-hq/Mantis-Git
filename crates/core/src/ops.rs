@@ -81,6 +81,27 @@ pub(crate) fn version_for(repo: &Path) -> String {
     }
 }
 
+/// `name` when it is safe to give git as a branch, tag, remote or hash, which git reads in
+/// the same place as options. Names come from the repository, and a remote can plant a tag
+/// called `--exec=…` or a branch `--receive-pack=…` that a clone brings along (git allows
+/// them), so a name that starts with a dash is refused before any command is built from it.
+pub fn operand(name: &str) -> Result<&str, String> {
+    if name.starts_with('-') {
+        Err(format!(
+            "{name} can't be used here: git would read it as an option and not as a name."
+        ))
+    } else {
+        Ok(name)
+    }
+}
+
+/// [`operand`] for several names at once.
+pub fn operands<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<(), String> {
+    names
+        .into_iter()
+        .try_for_each(|name| operand(name).map(drop))
+}
+
 /// Runs git and returns its output, or what it said went wrong.
 pub fn run(repo: &Path, args: &[&str]) -> Result<String, String> {
     run_command(git(repo).args(args), None)

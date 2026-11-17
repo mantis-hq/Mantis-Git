@@ -15,6 +15,8 @@ pub struct Remote {
 /// Reads `git remote -v`, which lists each remote once for fetching and once for pushing.
 /// The names of the tags `remote` holds, asked over the network with `git ls-remote`.
 pub fn tags_on(repo: &Path, remote: &str) -> Result<std::collections::HashSet<String>, String> {
+    // `ls-remote --upload-pack=…` runs a program, and a config can name a remote that way.
+    ops::operand(remote)?;
     let listing = ops::run(repo, &["ls-remote", "--tags", "--refs", remote])?;
     Ok(listing
         .lines()
@@ -32,6 +34,11 @@ pub fn parse(listing: &str) -> Vec<Remote> {
         let Some((address, kind)) = rest.rsplit_once(' ') else {
             continue;
         };
+        // A config can call a remote `--upload-pack=…`, which git would run as an option
+        // in `ls-remote`, `fetch` and `push`. No such remote is listed.
+        if name.starts_with('-') {
+            continue;
+        }
         let at = match found.iter().position(|remote| remote.name == name) {
             Some(at) => at,
             None => {
@@ -151,6 +158,16 @@ mod tests {
         assert_eq!(got[0].push_url, None);
         assert_eq!(got[1].url, "https://x/up.git");
         assert_eq!(got[1].push_url.as_deref(), Some("https://x/other.git"));
+    }
+
+    #[test]
+    fn a_remote_called_like_an_option_is_not_listed_and_not_asked() {
+        let listing = "--upload-pack=x\thttps://e/x.git (fetch)\norigin\thttps://e/o.git (fetch)\n";
+        let names: Vec<_> = parse(listing).into_iter().map(|r| r.name).collect();
+        assert_eq!(names, ["origin"]);
+        let repo = Repo::new();
+        assert!(tags_on(repo.path(), "--upload-pack=touch${IFS}pwned").is_err());
+        assert!(!repo.path().join("pwned").exists());
     }
 
     #[test]

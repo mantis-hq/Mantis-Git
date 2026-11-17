@@ -113,7 +113,10 @@ pub fn locate(path: &Path) -> Option<Location> {
     if !(host.eq_ignore_ascii_case("wsl$") || host.eq_ignore_ascii_case("wsl.localhost")) {
         return None;
     }
-    let distro = parts.next().filter(|name| !name.is_empty())?;
+    // It is given to `wsl.exe -d`, which would take a name like `--exec` as an option.
+    let distro = parts
+        .next()
+        .filter(|name| !name.is_empty() && !name.starts_with('-'))?;
     let mut linux_path = String::new();
     for part in parts.filter(|part| !part.is_empty()) {
         linux_path.push('/');
@@ -279,6 +282,11 @@ mod tests {
         assert_eq!(at(r"\\fileserver\share\repo"), None);
         assert_eq!(at(r"\\wsl$"), None);
         assert_eq!(at("/home/ada/repo"), None);
+        assert_eq!(
+            at(r"\\wsl$\--exec\home"),
+            None,
+            "a distribution can't be an option"
+        );
     }
 
     #[test]

@@ -411,8 +411,8 @@ pub fn for_commit(
                 .to_owned(),
         };
         let url = match text(&run, "html_url") {
-            "" => text(&run, "web_url").to_owned(),
-            url => url.to_owned(),
+            "" => crate::text::web_url(text(&run, "web_url")).to_owned(),
+            url => crate::text::web_url(url).to_owned(),
         };
         pipelines.push(Pipeline {
             status: status_of(&run),
@@ -457,8 +457,8 @@ fn jobs_of(target: &Target, http: &dyn Transport, token: &str, run: &str) -> Rep
             status: status_of(job),
             seconds: seconds_of(job),
             url: match text(job, "html_url") {
-                "" => text(job, "web_url").to_owned(),
-                url => url.to_owned(),
+                "" => crate::text::web_url(text(job, "web_url")).to_owned(),
+                url => crate::text::web_url(url).to_owned(),
             },
         })
         .collect())
@@ -889,6 +889,32 @@ mod tests {
         assert_eq!(found.statuses["aaa"], Status::Passed);
         assert!(
             http.seen.lock().unwrap()[0].contains("/api/v4/projects/group%2Fsub%2Ftool/pipelines")
+        );
+    }
+
+    #[test]
+    fn a_page_address_from_a_server_is_only_kept_when_it_is_a_web_address() {
+        let runs = r#"{"workflow_runs":[
+            {"id":1,"name":"a","head_sha":"aaa","status":"completed","conclusion":"success","html_url":"file:///etc/passwd"},
+            {"id":2,"name":"b","head_sha":"aaa","status":"completed","conclusion":"success","html_url":"https://x/2"}]}"#;
+        let jobs = r#"{"jobs":[{"id":10,"name":"j","status":"completed","conclusion":"success","html_url":"ms-msdt://x"}]}"#;
+        let http = Fake::answering(&[(200, runs), (200, jobs), (200, jobs)]);
+        let found = for_commit(
+            &target(Forge::GitHub, "https://github.com"),
+            &http,
+            "t",
+            "aaa",
+        )
+        .unwrap();
+        let urls: Vec<_> = found.iter().map(|p| p.url.as_str()).collect();
+        assert!(
+            urls.contains(&"") && urls.contains(&"https://x/2"),
+            "{urls:?}"
+        );
+        assert!(
+            found
+                .iter()
+                .all(|p| p.jobs.iter().all(|j| j.url.is_empty()))
         );
     }
 

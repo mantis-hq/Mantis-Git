@@ -17,6 +17,12 @@ interface on top of it. If something doesn't need a window, it belongs in `crate
   can be tested without a window.
 - All git goes through `crates/core/src/ops.rs`. Git blocks, so views call core through
   `GraphView::spawn_blocking` or `GraphView::run_operation`, never on the UI thread.
+- Names and text from a repository are hostile: a remote can plant a tag called
+  `--exec=…` and a clone brings it along. Never build a command from one without
+  `ops::operand` (or a `--` / `--end-of-options` before it), never open an address a server
+  sent without `text::web_url`, and quote any name put into a "run `git …`" sentence with
+  `text::shell_word`. There is no shell in the app: git is always started with an argument
+  list.
 - Before adding a helper, look for one to reuse: `crates/core/src/text.rs` for wording
   and `src/view/parts.rs` for anything more than one region draws.
 - Tests that need a repository use `mantisgit_core::testing::Repo`, not their own fixture.

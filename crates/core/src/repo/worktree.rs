@@ -105,7 +105,7 @@ pub fn list(repo: &Path, workdir: &Path) -> Vec<Worktree> {
 /// and says so, so this never forces.
 pub fn remove(repo: &Path, path: &Path) -> Result<Option<String>, String> {
     let path = super::wsl::for_git(repo, path);
-    ops::run(repo, &["worktree", "remove", &path])?;
+    ops::run(repo, &["worktree", "remove", "--", &path])?;
     Ok(Some(format!("Removed the worktree at {path}.")))
 }
 
@@ -113,7 +113,7 @@ pub fn remove(repo: &Path, path: &Path) -> Result<Option<String>, String> {
 pub fn set_locked(repo: &Path, path: &Path, lock: bool) -> Result<Option<String>, String> {
     let path = super::wsl::for_git(repo, path);
     let verb = if lock { "lock" } else { "unlock" };
-    ops::run(repo, &["worktree", verb, &path])?;
+    ops::run(repo, &["worktree", verb, "--", &path])?;
     Ok(Some(if lock {
         format!("Locked the worktree at {path}. To undo, unlock it from its menu.")
     } else {
@@ -184,9 +184,12 @@ pub fn remove_many_warning(trees: &[&Worktree]) -> String {
                 many.len()
             );
             for tree in many {
-                let path = tree.path.display();
+                let path = crate::text::shell_word(&tree.path.display().to_string());
                 text.push_str(&match (&tree.branch, tree.head.as_str()) {
-                    (Some(branch), _) => format!(" `git worktree add {path} {branch}`"),
+                    (Some(branch), _) => format!(
+                        " `git worktree add {path} {}`",
+                        crate::text::shell_word(branch)
+                    ),
                     (None, head) if !head.is_empty() => {
                         format!(" `git worktree add --detach {path} {head}`")
                     }
@@ -205,8 +208,12 @@ pub fn remove_warning(worktree: &Worktree) -> String {
         Some(location) => location.linux_path,
         None => worktree.path.display().to_string(),
     };
+    let path = crate::text::shell_word(&path);
     let undo = match (&worktree.branch, worktree.head.as_str()) {
-        (Some(branch), _) => format!("`git worktree add {path} {branch}`"),
+        (Some(branch), _) => format!(
+            "`git worktree add {path} {}`",
+            crate::text::shell_word(branch)
+        ),
         (None, head) if !head.is_empty() => format!("`git worktree add --detach {path} {head}`"),
         _ => "`git worktree add`".to_owned(),
     };

@@ -82,7 +82,8 @@ impl Submodule {
             short_oid(&self.recorded),
             self.path,
             short_oid(head),
-            self.path,
+            // The path comes from `.gitmodules`, so it is quoted for the shell it is pasted in.
+            crate::text::shell_word(&self.path),
         ))
     }
 
