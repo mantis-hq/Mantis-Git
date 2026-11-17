@@ -1,3 +1,8 @@
+// A GUI program on Windows. Without this the linker makes a console program, and a
+// terminal window opens beside the app. Redirected handles still work, so git and ssh can
+// read the askpass helper's answer.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use gpui_kit::*;
 use mantisgit::theme;
 use mantisgit::view::{self, Workspace};
