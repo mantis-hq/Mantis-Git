@@ -5,7 +5,7 @@
 use crate::history::refs::RefKind;
 use crate::ops::{self, git};
 use crate::repo::conflict;
-use crate::text::short_oid;
+use crate::text::{shell_word as sh, short_oid};
 use std::path::Path;
 
 /// How a ref being brought in (the source) stands against the branch receiving it.
@@ -159,6 +159,7 @@ pub fn merge(
     target: &str,
     always_commit: bool,
 ) -> Result<Option<String>, String> {
+    ops::operands([source, target])?;
     let old = rev_parse(repo, &format!("refs/heads/{target}"))?;
     if current_branch(repo).as_deref() != Some(target) {
         ops::run(repo, &["switch", target])?;
@@ -189,6 +190,7 @@ pub fn merge_into_current(repo: &Path, source: &str) -> Result<Option<String>, S
 /// Switches to a local branch, or makes a local copy of a remote one, or detaches onto
 /// a tag.
 pub fn check_out_ref(repo: &Path, kind: RefKind, name: &str) -> Result<Option<String>, String> {
+    ops::operand(name)?;
     match kind {
         RefKind::Branch | RefKind::DetachedHead => ops::run(repo, &["switch", name]).map(|_| None),
         RefKind::Remote => {
@@ -226,6 +228,7 @@ fn tracked(repo: &Path, branch: &str) -> Result<(String, String), String> {
         .strip_prefix("refs/heads/")
         .unwrap_or(&merge)
         .to_owned();
+    ops::operands([remote.as_str(), name.as_str()])?;
     Ok((remote, name))
 }
 
@@ -247,7 +250,8 @@ pub fn pull_branch(repo: &Path, branch: &str) -> Result<Option<String>, String> 
         )));
     }
     Ok(Some(format!(
-        "Pulled {remote}/{name} into {branch}. To undo it, run `git branch -f {branch} {}`.",
+        "Pulled {remote}/{name} into {branch}. To undo it, run `git branch -f {} {}`.",
+        sh(branch),
         short_oid(&old)
     )))
 }
@@ -272,8 +276,9 @@ pub fn push_to(
     Ok(Some(match before {
         Some(before) => format!(
             "Pushed {branch} to {remote}/{name}. To undo it, run \
-             `git push --force-with-lease {remote} {}:refs/heads/{name}`.",
-            short_oid(&before)
+             `git push --force-with-lease {} {}`.",
+            sh(remote),
+            sh(&format!("{}:refs/heads/{name}", short_oid(&before)))
         ),
         None => format!("Pushed {branch} to {remote}/{name}."),
     }))
@@ -313,8 +318,9 @@ pub fn force_push_to(
     Ok(Some(match before {
         Some(before) => format!(
             "Force pushed {branch} to {remote}/{name}. To undo it, run \
-             `git push --force-with-lease {remote} {}:refs/heads/{name}`.",
-            short_oid(&before)
+             `git push --force-with-lease {} {}`.",
+            sh(remote),
+            sh(&format!("{}:refs/heads/{name}", short_oid(&before)))
         ),
         None => format!("Force pushed {branch} to {remote}/{name}."),
     }))
@@ -326,8 +332,9 @@ pub fn force_push_warning(repo: &Path, branch: &str, remote: &str, name: &str) -
     let undo = rev_parse(repo, &format!("refs/remotes/{remote}/{name}"))
         .map(|before| {
             format!(
-                " To undo it, run `git push --force-with-lease {remote} {}:refs/heads/{name}`.",
-                short_oid(&before)
+                " To undo it, run `git push --force-with-lease {} {}`.",
+                sh(remote),
+                sh(&format!("{}:refs/heads/{name}", short_oid(&before)))
             )
         })
         .unwrap_or_else(|_| {
@@ -350,8 +357,8 @@ pub fn push_target(repo: &Path, branch: &str) -> Result<(String, String), String
 pub fn delete_warning(kind: RefKind, name: &str, tip: Option<&str>) -> String {
     let undo = tip.map_or(String::new(), |tip| {
         let restore = match kind {
-            RefKind::Tag => format!("git tag {name} {}", short_oid(tip)),
-            _ => format!("git branch {name} {}", short_oid(tip)),
+            RefKind::Tag => format!("git tag {} {}", sh(name), short_oid(tip)),
+            _ => format!("git branch {} {}", sh(name), short_oid(tip)),
         };
         format!(" To undo it, run `{restore}`.")
     });
@@ -513,13 +520,15 @@ pub fn create_branch(
     if ops::resolves(repo, &format!("refs/heads/{name}")) {
         return Err(format!("A branch called {name} already exists."));
     }
+    // The start is a tag, a branch or a hash from the repository, and the name was checked.
+    ops::operands(start)?;
     let before = current_branch(repo);
     let mut args = vec!["switch", "-c", name];
     args.extend(start);
     ops::run(repo, &args)?;
     let undo = match before {
-        Some(before) => format!("git switch {before} && git branch -D {name}"),
-        None => format!("git switch --detach - && git branch -D {name}"),
+        Some(before) => format!("git switch {} && git branch -D {}", sh(&before), sh(name)),
+        None => format!("git switch --detach - && git branch -D {}", sh(name)),
     };
     Ok(Some(format!(
         "Created {name} and switched to it. To undo it, run `{undo}`."
@@ -535,6 +544,7 @@ pub fn set_upstream(
     name: &str,
 ) -> Result<Option<String>, String> {
     let (remote, name) = (remote.trim(), name.trim());
+    ops::operands([branch, remote, name])?;
     let upstream = format!("{remote}/{name}");
     let before = ops::run(
         repo,
@@ -572,15 +582,21 @@ pub fn set_upstream(
         }
     }
     let back = match before {
-        Some(before) => format!("git branch --set-upstream-to={before} {branch}"),
-        None => format!("git branch --unset-upstream {branch}"),
+        Some(before) => format!(
+            "git branch --set-upstream-to={} {}",
+            sh(&before),
+            sh(branch)
+        ),
+        None => format!("git branch --unset-upstream {}", sh(branch)),
     };
     Ok(Some(if exists {
         format!("{branch} now follows {upstream}. To undo it, run `{back}`.")
     } else {
         format!(
             "Pushed {branch} to {remote} as {name}, and it now follows {upstream}. To undo it, \
-             run `git push {remote} --delete {name} && {back}`."
+             run `git push {} --delete {} && {back}`.",
+            sh(remote),
+            sh(name)
         )
     }))
 }
@@ -590,8 +606,9 @@ pub fn set_upstream(
 pub fn delete_remote_warning(remote: &str, name: &str, tip: Option<&str>) -> String {
     let undo = tip.map_or(String::new(), |tip| {
         format!(
-            " To undo it, run `git push {remote} {}:refs/heads/{name}`.",
-            short_oid(tip)
+            " To undo it, run `git push {} {}`.",
+            sh(remote),
+            sh(&format!("{}:refs/heads/{name}", short_oid(tip)))
         )
     });
     format!(
@@ -620,9 +637,14 @@ pub fn delete_remote_tag_warning(
     let undo = tip.map_or(String::new(), |tip| {
         let tip = short_oid(tip);
         if also_local {
-            format!(" To undo it, run `git tag {name} {tip}` and `git push {remote} {name}`.")
+            format!(
+                " To undo it, run `git tag {} {tip}` and `git push {} {}`.",
+                sh(name),
+                sh(remote),
+                sh(name)
+            )
         } else {
-            format!(" To undo it, run `git push {remote} {name}`.")
+            format!(" To undo it, run `git push {} {}`.", sh(remote), sh(name))
         }
     });
     let here = if also_local {
@@ -639,7 +661,9 @@ pub fn push_tag(repo: &Path, remote: &str, name: &str) -> Result<Option<String>,
     ops::run(repo, &["push", remote, &refspec]).map(|_| {
         Some(format!(
             "Pushed the tag {name} to {remote}. To undo it, run \
-             `git push {remote} --delete {name}`."
+             `git push {} --delete {}`.",
+            sh(remote),
+            sh(name)
         ))
     })
 }

@@ -24,7 +24,13 @@ pub fn parse(prompt: &str) -> Option<(Question, String)> {
     } else {
         return None;
     };
-    let quoted = prompt.split('\'').nth(1)?;
+    // Git writes `Password for 'https://user@host': `, and the user part comes from the
+    // remote's address, so it can hold a quote (`https://github.com'@evil.example/x`). The
+    // address is what lies between the first quote and the last, never the first two,
+    // or a hostile remote could be answered with a token that belongs to another server.
+    let start = prompt.find('\'')? + 1;
+    let end = prompt.rfind('\'')?;
+    let quoted = prompt.get(start..end)?;
     Some((question, origin_of(quoted)?))
 }
 
@@ -79,6 +85,19 @@ mod tests {
             Some((Question::Password, "https://github.com".into()))
         );
         assert_eq!(parse("Enter passphrase for key '/home/me/.ssh/id': "), None);
+    }
+
+    #[test]
+    fn a_quote_in_a_remotes_user_name_cannot_borrow_another_servers_token() {
+        // The remote is evil.example; its user part is `github.com'`, so the first two
+        // quotes of git's prompt enclose `https://github.com`.
+        let prompt = "Password for 'https://github.com'@evil.example': ";
+        assert_eq!(
+            parse(prompt),
+            Some((Question::Password, "https://evil.example".into()))
+        );
+        let (store, http) = (signed_in(), Fake::default());
+        assert_eq!(answer(prompt, &hosts(), &store, &http), None);
     }
 
     #[test]

@@ -241,6 +241,7 @@ pub fn fetch(repo: &Path) -> Result<Option<String>, String> {
 pub fn run_next_action(repo: &Path, action: &NextAction) -> Result<Option<String>, String> {
     match action {
         NextAction::Publish { remote, branch } => {
+            ops::operands([remote.as_str(), branch.as_str()])?;
             ops::run(repo, &["push", "-u", remote, branch]).map(|_| None)
         }
         NextAction::Push { .. } => ops::run(repo, &["push"]).map(|_| None),

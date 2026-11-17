@@ -1086,6 +1086,8 @@ pub fn rebase_branch(repo: &Path, branch: &str, target: &str) -> Result<Option<S
 }
 
 fn rebase(repo: &Path, args: &[&str]) -> Result<Option<String>, String> {
+    // `git rebase --exec=…` runs a command, and a tag can be called that.
+    ops::operands(args.iter().copied())?;
     let mut command = git(repo);
     command.arg("rebase").args(args).env("GIT_EDITOR", "true");
     match ops::run_command(&mut command, None) {

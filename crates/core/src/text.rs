@@ -37,6 +37,40 @@ pub fn short_oid(oid: &str) -> &str {
     &oid[..oid.len().min(7)]
 }
 
+/// `word` as one shell word, for a command the person is told to run. Names from a
+/// repository can hold `;`, `$(…)` and backticks, which git allows in a branch or tag, so
+/// a line such as "run `git branch -f x;y`" must never be able to run more than it says.
+/// Plain words stay as they are.
+pub fn shell_word(word: &str) -> String {
+    let plain = !word.is_empty()
+        && !word.starts_with('-')
+        && word
+            .chars()
+            .all(|c| c.is_alphanumeric() || "_./=:@%+,^~-".contains(c));
+    if plain {
+        word.to_owned()
+    } else {
+        format!("'{}'", word.replace('\'', r"'\''"))
+    }
+}
+
+/// `url` when it is a web address a browser should be sent to, and nothing otherwise. An
+/// address that came from a server (a pipeline's page) is opened by the system, which acts
+/// on `file:` and the schemes other programs register, so only `http` and `https` pass.
+pub fn web_url(url: &str) -> &str {
+    let url = url.trim();
+    let scheme = url.split_once("://").map(|(scheme, _)| scheme);
+    match scheme {
+        Some(scheme)
+            if (scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http"))
+                && !url.contains(char::is_control) =>
+        {
+            url
+        }
+        _ => "",
+    }
+}
+
 /// A number with its thousands set apart by a space: "9 549 076".
 pub fn group_digits(number: usize) -> String {
     let digits = number.to_string();
@@ -73,6 +107,37 @@ pub fn split_path(path: &str) -> (&str, &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_word_in_a_command_to_run_cannot_run_anything_else() {
+        assert_eq!(shell_word("feat/x-1"), "feat/x-1");
+        assert_eq!(shell_word("a;touch pwned"), "'a;touch pwned'");
+        assert_eq!(shell_word("$(id)"), "'$(id)'");
+        assert_eq!(shell_word("`id`"), "'`id`'");
+        assert_eq!(shell_word("it's"), r"'it'\''s'");
+        assert_eq!(shell_word("-x"), "'-x'");
+        assert_eq!(shell_word(""), "''");
+    }
+
+    #[test]
+    fn only_web_addresses_are_sent_to_the_browser() {
+        assert_eq!(
+            web_url("https://github.com/o/r/actions/runs/1"),
+            "https://github.com/o/r/actions/runs/1"
+        );
+        assert_eq!(web_url("HTTP://git.lan/x"), "HTTP://git.lan/x");
+        for bad in [
+            "file:///etc/passwd",
+            "ms-msdt://x",
+            "javascript:alert(1)",
+            "//host/x",
+            "",
+            "https:/x",
+            "https://a\nb",
+        ] {
+            assert_eq!(web_url(bad), "", "{bad}");
+        }
+    }
+
     use super::*;
 
     #[test]

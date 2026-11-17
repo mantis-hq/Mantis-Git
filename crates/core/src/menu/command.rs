@@ -488,8 +488,54 @@ impl Command {
         }
     }
 
+    /// The names this command hands to git as branches, tags, remotes or hashes. They come
+    /// from the repository, so [`Command::run`] checks each with [`crate::ops::operand`].
+    fn operands(&self) -> Vec<&str> {
+        match self {
+            Self::CheckOutRef { name, .. } | Self::Delete { name, .. } => vec![name],
+            Self::CheckOutCommit { branch, oid } => {
+                branch.iter().chain([oid]).map(String::as_str).collect()
+            }
+            Self::MergeIntoCurrent { source } => vec![source],
+            Self::PullBranch { branch } | Self::PushBranch { branch } => vec![branch],
+            Self::PushTo {
+                branch,
+                remote,
+                name,
+            }
+            | Self::ForcePushTo {
+                branch,
+                remote,
+                name,
+                ..
+            } => vec![branch, remote, name],
+            Self::Drop { source, target, .. } => vec![source, target],
+            Self::Rebase { branch, onto } => vec![branch, onto],
+            Self::DeleteRemote { remote, name, .. }
+            | Self::PushTag { remote, name }
+            | Self::DeleteRemoteTag { remote, name, .. } => vec![remote, name],
+            Self::DeleteMany { refs } => refs
+                .iter()
+                .flat_map(|doomed| {
+                    let remote = doomed
+                        .on_remote
+                        .iter()
+                        .flat_map(|(remote, name)| [remote.as_str(), name.as_str()]);
+                    std::iter::once(doomed.name.as_str()).chain(remote)
+                })
+                .collect(),
+            Self::CherryPick { oids } | Self::Revert { oids, .. } => {
+                oids.iter().map(String::as_str).collect()
+            }
+            Self::Reset { oid, .. } | Self::ApplyFile { oid, .. } => vec![oid],
+            Self::RemoveRemote { name, .. } => vec![name],
+            _ => Vec::new(),
+        }
+    }
+
     /// Runs the command. This blocks, so call it off the UI thread.
     pub fn run(&self, repo: &Path) -> Result<Option<String>, String> {
+        crate::ops::operands(self.operands())?;
         match self {
             Self::CheckOutRef { kind, name } => branch::check_out_ref(repo, *kind, name),
             Self::CheckOutCommit { branch, oid } => {
@@ -578,6 +624,54 @@ impl Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_that_git_would_read_as_an_option_never_reaches_git() {
+        // A remote can plant a tag called like this, and a clone brings it along.
+        let hostile = "--exec=touch${IFS}pwned".to_owned();
+        let repo = crate::testing::Repo::new();
+        repo.commit("one");
+        let commands = [
+            Command::Rebase {
+                branch: "main".into(),
+                onto: hostile.clone(),
+            },
+            Command::MergeIntoCurrent {
+                source: hostile.clone(),
+            },
+            Command::CheckOutRef {
+                kind: RefKind::Tag,
+                name: hostile.clone(),
+            },
+            Command::Delete {
+                kind: RefKind::Tag,
+                name: hostile.clone(),
+                tip: None,
+                at_risk: false,
+            },
+            Command::DeleteRemote {
+                remote: "origin".into(),
+                name: hostile.clone(),
+                tip: None,
+            },
+            Command::PushTag {
+                remote: hostile.clone(),
+                name: "v1".into(),
+            },
+            Command::Reset {
+                oid: hostile.clone(),
+                hard: false,
+            },
+            Command::CherryPick {
+                oids: vec![hostile.clone()],
+            },
+        ];
+        for command in commands {
+            let error = command.run(repo.path()).expect_err("refused");
+            assert!(error.contains("can't be used here"), "{command:?}: {error}");
+        }
+        assert!(!repo.path().join("pwned").exists());
+    }
 
     #[test]
     fn the_hint_names_the_keys() {
