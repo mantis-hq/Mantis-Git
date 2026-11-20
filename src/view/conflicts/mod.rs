@@ -639,7 +639,7 @@ impl GraphView {
                 div()
                     .v_flex()
                     .flex_1()
-                    .min_h_0()
+                    .min_h(px(140.))
                     .gap(px(2.))
                     .mx(px(-8.))
                     .child(
@@ -660,7 +660,15 @@ impl GraphView {
             )
             // What the next commit holds, listed as it is in the working changes.
             .when_some(self.shown_details().cloned(), |panel, details| {
-                panel.child(self.render_working_list(working::Side::Staged, &details, cx))
+                // Capped, so a long staged list can't squeeze the conflicts out of view.
+                panel.child(
+                    div()
+                        .v_flex()
+                        .flex_none()
+                        .min_h_0()
+                        .max_h(relative(0.4))
+                        .child(self.render_working_list(working::Side::Staged, &details, cx)),
+                )
             })
             .child(
                 div()
