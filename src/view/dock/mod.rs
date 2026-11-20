@@ -97,6 +97,10 @@ impl Dock {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let changes = log::subscribe();
         let redraw = cx.spawn(async move |this, cx| {
+            // The log is global, so in tests a command run by one test would wake the dock of
+            // another, on a thread its scheduler doesn't own, and gpui's test scheduler panics.
+            #[cfg(test)]
+            std::future::pending::<()>().await;
             while changes.recv().await.is_ok() {
                 if this.update(cx, |_, cx| cx.notify()).is_err() {
                     return;
