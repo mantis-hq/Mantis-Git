@@ -20,9 +20,7 @@ mod signatures;
 mod updates;
 mod workspace;
 
-pub use settings::{
-    OpenSettings, Settings, open as open_settings, open_repository_page, should_quit,
-};
+pub use settings::{OpenSettings, Settings};
 pub use updates::{Updates, install_updates};
 pub use workspace::Workspace;
 
@@ -231,6 +229,14 @@ impl EventEmitter<SwitchWorktree> for GraphView {}
 pub struct OpenWorktreeInTab(pub PathBuf);
 
 impl EventEmitter<OpenWorktreeInTab> for GraphView {}
+
+/// Asks whoever holds this view to show settings in its place, on the Repository page when
+/// `repository_page` is set.
+pub struct ShowSettings {
+    pub repository_page: bool,
+}
+
+impl EventEmitter<ShowSettings> for GraphView {}
 
 impl GraphView {
     /// A view with no repository open. Call [`GraphView::open`] to show one.
@@ -1032,8 +1038,10 @@ impl Render for GraphView {
             .on_action(
                 cx.listener(|this, _: &FindCommits, window, cx| this.open_search(window, cx)),
             )
-            .on_action(cx.listener(|this, _: &settings::OpenSettings, _, cx| {
-                settings::open(this.repo.clone(), cx)
+            .on_action(cx.listener(|_, _: &settings::OpenSettings, _, cx| {
+                cx.emit(ShowSettings {
+                    repository_page: false,
+                })
             }))
             .on_action(cx.listener(|this, _: &CloseMenu, _, cx| this.press_escape(cx)))
             .on_action(cx.listener(|this, _: &ActivateMenu, _, cx| this.press_enter(cx)))

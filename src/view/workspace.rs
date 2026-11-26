@@ -6,8 +6,11 @@
 
 use super::dock::{Dock, NewTerminal, ToggleDock};
 use super::parts::TEXT_BODY;
+use super::settings::{Back, Settings};
 use super::updates::{Updates, render_band, shared_updates};
-use super::{GraphView, OpenWorktreeInTab, SwitchWorktree, dialog, parts, repository_name};
+use super::{
+    GraphView, OpenWorktreeInTab, ShowSettings, SwitchWorktree, dialog, parts, repository_name,
+};
 use gpui_kit::component::button::*;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
@@ -83,6 +86,9 @@ pub struct Workspace {
     /// Looks for newer releases, and offers them in a band over the window. There is none
     /// in tests.
     updates: Option<Entity<Updates>>,
+    /// Settings, shown in place of the front tab until its back button or Escape, or until
+    /// another tab is brought forward.
+    settings: Option<(Entity<Settings>, Subscription)>,
 }
 
 impl Workspace {
@@ -95,6 +101,7 @@ impl Workspace {
             state_file: None,
             saved: None,
             updates: shared_updates(cx),
+            settings: None,
         };
         if let Some(updates) = &this.updates {
             cx.observe(updates, |_, _, cx| cx.notify()).detach();
@@ -128,7 +135,9 @@ impl Workspace {
     ) {
         cx.spawn(async move |this, cx| {
             while let Ok(request) = questions.recv().await {
-                let shown = this.update(cx, |this, cx| {
+                let shown = this.update_in(cx, |this, window, cx| {
+                    // git is waiting on the answer, so the popup must be in view.
+                    this.close_settings(window, cx);
                     let front = this.active_view().clone();
                     front.update(cx, |front, cx| front.open_ask(request, cx));
                 });
@@ -203,8 +212,61 @@ impl Workspace {
         &self.dock
     }
 
+    /// Shows settings in place of the front tab, for its repository, on the Repository page
+    /// when `repository_page` is set. Settings already shown stays as it is.
+    pub fn show_settings(
+        &mut self,
+        repository_page: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let repo = self.active_view().read(cx).repository().map(Path::to_owned);
+        let view = match &self.settings {
+            Some((view, _)) => view.clone(),
+            None => {
+                let view = cx.new(|cx| {
+                    Settings::new(
+                        repo.clone(),
+                        mantisgit_core::settings::config::Scope::Global,
+                        window,
+                        cx,
+                    )
+                });
+                let back = cx.subscribe_in(&view, window, |this, _, _: &Back, window, cx| {
+                    this.close_settings(window, cx)
+                });
+                self.settings = Some((view.clone(), back));
+                view
+            }
+        };
+        view.update(cx, |settings, cx| {
+            settings.set_repository(repo, window, cx);
+            if repository_page {
+                settings.show_repository_page(cx);
+            }
+        });
+        window.focus(&view.focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    /// Puts the front tab back in place of settings, with the keyboard.
+    pub fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings.take().is_none() {
+            return;
+        }
+        let focus = self.active_view().read(cx).focus_handle().clone();
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    pub fn settings(&self) -> Option<&Entity<Settings>> {
+        self.settings.as_ref().map(|(view, _)| view)
+    }
+
     /// Shows or hides the dock. Hiding hands the keyboard back to the repository.
     fn toggle_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The dock is part of the repository's view, which settings covers.
+        self.close_settings(window, cx);
         self.dock.update(cx, |dock, cx| dock.toggle(window, cx));
         if !self.dock.read(cx).is_open() {
             let focus = self.tabs[self.active].read(cx).focus_handle().clone();
@@ -213,6 +275,7 @@ impl Workspace {
     }
 
     fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_settings(window, cx);
         self.sync_dock_directory(cx);
         self.dock
             .update(cx, |dock, cx| dock.new_terminal(window, cx));
@@ -250,6 +313,14 @@ impl Workspace {
             },
         )
         .detach();
+        cx.subscribe_in(
+            &view,
+            window,
+            |this, _, event: &ShowSettings, window, cx| {
+                this.show_settings(event.repository_page, window, cx)
+            },
+        )
+        .detach();
         cx.subscribe(&view, |_, view, event: &SwitchWorktree, cx| {
             let path = event.0.clone();
             view.update(cx, |view, cx| view.open(path, cx));
@@ -262,6 +333,7 @@ impl Workspace {
     /// Opens `repo` in a tab: the one already showing it, else the active tab if that is
     /// empty, else a new one.
     pub fn open(&mut self, repo: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_settings(window, cx);
         if let Some(index) = self.tab_showing(&repo, cx) {
             self.activate(index, window, cx);
             return;
@@ -338,6 +410,8 @@ impl Workspace {
         }
         let changed = index != self.active;
         self.active = index;
+        // Bringing a tab forward, even the one in front, shows it in place of settings.
+        self.settings = None;
         for (position, tab) in self.tabs.iter().enumerate() {
             tab.update(cx, |view, _| view.set_in_background(position != index));
         }
@@ -558,7 +632,8 @@ impl Render for Workspace {
                     .on_action(cx.listener(|this, _: &OpenRepositoryInTab, window, cx| {
                         this.prompt(window, cx)
                     }))
-                    .on_action(cx.listener(|this, _: &CloneRepository, _, cx| {
+                    .on_action(cx.listener(|this, _: &CloneRepository, window, cx| {
+                        this.close_settings(window, cx);
                         this.active_view()
                             .update(cx, |view, cx| view.open_clone_form(cx))
                     }))
@@ -567,7 +642,10 @@ impl Render for Workspace {
                         div()
                             .flex_1()
                             .min_h_0()
-                            .child(self.tabs[self.active].clone()),
+                            .map(|content| match &self.settings {
+                                Some((settings, _)) => content.child(settings.clone()),
+                                None => content.child(self.tabs[self.active].clone()),
+                            }),
                     ),
             )
             .child(
@@ -680,6 +758,37 @@ mod tests {
         cx.simulate_keystrokes("ctrl-t");
         assert_eq!(state(&view, &cx), (4, 3));
         view.read_with(&cx, |view, _| assert_eq!(view.tab(0), Some(&first)));
+    }
+
+    fn settings_shown(view: &Entity<Workspace>, cx: &VisualTestContext) -> bool {
+        view.read_with(cx, |view, _| view.settings().is_some())
+    }
+
+    #[gpui_kit::test]
+    fn settings_opens_in_place_of_the_tab_and_goes_back(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_workspace(cx);
+        cx.update(|_, cx| crate::theme::init(cx));
+        cx.simulate_keystrokes("ctrl-,");
+        assert!(settings_shown(&view, &cx), "Ctrl , opens settings");
+        assert_eq!(cx.windows().len(), 1, "in the same window");
+
+        cx.simulate_keystrokes("escape");
+        assert!(!settings_shown(&view, &cx), "Escape goes back");
+        let focused = view.read_with(&cx, |view, cx| {
+            view.active_view().read(cx).focus_handle().clone()
+        });
+        cx.update(|window, _| assert!(focused.is_focused(window), "the tab has the keyboard"));
+
+        cx.simulate_keystrokes("ctrl-,");
+        cx.simulate_keystrokes("ctrl-,");
+        assert!(!settings_shown(&view, &cx), "Ctrl , goes back too");
+
+        // Another tab brought forward is shown in place of settings.
+        cx.simulate_keystrokes("ctrl-t ctrl-,");
+        assert!(settings_shown(&view, &cx));
+        cx.simulate_keystrokes("ctrl-tab");
+        assert!(!settings_shown(&view, &cx));
+        assert_eq!(state(&view, &cx), (2, 0));
     }
 
     fn dock_state(view: &Entity<Workspace>, cx: &VisualTestContext) -> (bool, usize, usize) {

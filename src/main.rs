@@ -65,9 +65,9 @@ fn main() {
                 updates.update(cx, |updates, cx| updates.check(cx));
             }
 
-            // Settings is an add-on to the main window, so closing it alone keeps the app open.
+            // There is one window, so closing it quits.
             cx.on_window_closed(|cx, _| {
-                if view::should_quit(cx) {
+                if cx.windows().is_empty() {
                     cx.quit()
                 }
             })

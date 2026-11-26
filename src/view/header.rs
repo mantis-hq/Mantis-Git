@@ -75,9 +75,11 @@ impl GraphView {
                     .ghost()
                     .label("Settings")
                     .tooltip("Edit your git config (Ctrl ,)")
-                    .on_click(
-                        cx.listener(|this, _, _, cx| super::settings::open(this.repo.clone(), cx)),
-                    ),
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        cx.emit(super::ShowSettings {
+                            repository_page: false,
+                        })
+                    })),
             )
     }
 

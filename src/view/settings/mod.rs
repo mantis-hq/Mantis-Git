@@ -1,4 +1,5 @@
-//! The settings window: a side panel of pages. Git config edits the user's config without
+//! Settings, shown in the main window in place of the front tab until its back button,
+//! Escape or `Ctrl ,`: a side panel of pages. Git config edits the user's config without
 //! making them know its keys, identities give a host or folder its own name and email,
 //! and SSH hosts shows which key each remote will use.
 //!
@@ -42,7 +43,9 @@ const PAGE_WIDTH: Pixels = px(720.);
 const INPUT_WIDTH: Pixels = px(260.);
 const NAME_WIDTH: Pixels = px(140.);
 
-actions!(settings, [OpenSettings]);
+actions!(settings, [OpenSettings, GoBack]);
+
+const KEY_CONTEXT: &str = "Settings";
 
 pub(super) fn bind_keys(cx: &mut App) {
     let key = if cfg!(target_os = "macos") {
@@ -50,79 +53,24 @@ pub(super) fn bind_keys(cx: &mut App) {
     } else {
         "ctrl-,"
     };
-    // The graph view handles the action, since only it knows which repository is open.
-    cx.bind_keys([KeyBinding::new(key, OpenSettings, Some(super::KEY_CONTEXT))]);
+    // The graph view asks for settings, since only it knows which repository is open.
+    cx.bind_keys([
+        KeyBinding::new(key, OpenSettings, Some(super::KEY_CONTEXT)),
+        KeyBinding::new(key, GoBack, Some(KEY_CONTEXT)),
+        // In a text field Escape stays the field's, so what is being typed isn't lost.
+        KeyBinding::new("escape", GoBack, Some("Settings && !Input")),
+    ]);
 }
 
-struct SettingsWindow {
-    handle: AnyWindowHandle,
-    view: Entity<Settings>,
-}
+/// Settings is done with: the window shows the front tab again.
+pub struct Back;
 
-impl Global for SettingsWindow {}
+impl EventEmitter<Back> for Settings {}
 
-/// Shows the settings window for `repo`, bringing the one that is already open to the
-/// front.
-pub fn open(repo: Option<PathBuf>, cx: &mut App) {
-    open_on(repo, None, cx)
-}
-
-/// Shows the settings window on the Repository page, where a repository's own settings
-/// are, such as the forge it is on.
-pub fn open_repository_page(repo: Option<PathBuf>, cx: &mut App) {
-    open_on(repo, Some(Page::Repository), cx)
-}
-
-fn open_on(repo: Option<PathBuf>, page: Option<Page>, cx: &mut App) {
-    if let Some(SettingsWindow { handle, view }) = cx.try_global::<SettingsWindow>() {
-        let (handle, view) = (*handle, view.clone());
-        let shown = handle.update(cx, |_, window, cx| {
-            window.activate_window();
-            view.update(cx, |settings, cx| {
-                settings.set_repository(repo.clone(), window, cx);
-                if let Some(page) = page {
-                    settings.open_page(page, cx);
-                }
-            });
-        });
-        if shown.is_ok() {
-            return;
-        }
+impl Focusable for Settings {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
-    let options = WindowOptions {
-        titlebar: Some(TitlebarOptions {
-            title: Some("Settings".into()),
-            ..Default::default()
-        }),
-        window_bounds: Some(WindowBounds::centered(size(px(1000.), px(720.)), cx)),
-        window_min_size: Some(size(px(680.), px(420.))),
-        app_id: Some("mantisgit".into()),
-        ..Default::default()
-    };
-    let opened = gpui_kit::open_window(options, cx, |window, cx| {
-        crate::theme::follow_system(window, cx);
-        cx.new(|cx| {
-            let mut settings = Settings::new(repo, Scope::Global, window, cx);
-            if let Some(page) = page {
-                settings.open_page(page, cx);
-            }
-            settings
-        })
-    });
-    if let Ok((handle, view)) = opened {
-        cx.set_global(SettingsWindow { handle, view });
-    }
-}
-
-/// Whether the app should quit now that a window closed: it should unless a window
-/// other than settings is still open, since settings is only ever an add-on.
-pub fn should_quit(cx: &App) -> bool {
-    let settings = cx
-        .try_global::<SettingsWindow>()
-        .map(|settings| settings.handle.window_id());
-    cx.windows()
-        .iter()
-        .all(|window| Some(window.window_id()) == settings)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -300,6 +248,7 @@ fn identity_key(id: Option<&str>) -> String {
 }
 
 pub struct Settings {
+    focus: FocusHandle,
     /// Where "everywhere" lives: the global config, or a file in tests.
     base: Scope,
     repo: Option<PathBuf>,
@@ -478,6 +427,7 @@ impl Settings {
             .as_ref()
             .map(|updates| cx.observe(updates, |_, _, cx| cx.notify()));
         let mut this = Self {
+            focus: cx.focus_handle(),
             base,
             repo,
             page: Page::GitConfig,
@@ -549,6 +499,12 @@ impl Settings {
         }
     }
 
+    /// Shows the Repository page, where a repository's own settings are, such as the forge
+    /// it is on.
+    pub fn show_repository_page(&mut self, cx: &mut Context<Self>) {
+        self.open_page(Page::Repository, cx);
+    }
+
     /// Shows `page`, reading again what it shows that may have changed meanwhile. The
     /// Repository page only shows while a repository is open.
     fn open_page(&mut self, page: Page, cx: &mut Context<Self>) {
@@ -582,7 +538,7 @@ impl Settings {
         }
     }
 
-    /// Points the window at another repository, as when it is opened from another tab.
+    /// Points settings at another repository.
     pub fn set_repository(
         &mut self,
         repo: Option<PathBuf>,
@@ -859,7 +815,16 @@ impl Settings {
         }
     }
 
-    fn render_header(&self, cx: &App) -> impl IntoElement + use<> {
+    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let back = match self.repo.as_deref() {
+            Some(repo) => format!("← Back to {}", repository_name(repo)),
+            None => "← Back".to_owned(),
+        };
+        let back = Button::new("settings-back")
+            .ghost()
+            .label(back)
+            .tooltip("Close settings (Esc)")
+            .on_click(cx.listener(|_, _, _, cx| cx.emit(Back)));
         let theme = cx.theme();
         let (text, color) = match &self.feedback {
             Feedback::None => (
@@ -886,7 +851,7 @@ impl Settings {
             Feedback::Saved(message) => (message.clone(), theme.success),
             Feedback::Failed(message) => (message.clone(), theme.danger),
         };
-        header_bar(cx).child(
+        header_bar(cx).child(back).child(
             div()
                 .flex_1()
                 .min_w_0()
@@ -1045,6 +1010,9 @@ impl Render for Settings {
         div()
             .v_flex()
             .size_full()
+            .key_context(KEY_CONTEXT)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|_, _: &GoBack, _, cx| cx.emit(Back)))
             .bg(background)
             .text_size(TEXT_BODY)
             .text_color(text)

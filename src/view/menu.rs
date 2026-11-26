@@ -363,7 +363,11 @@ impl GraphView {
                 question.to_owned(),
                 "Open settings",
                 Weight::Popup,
-                |this, cx| super::settings::open_repository_page(this.repo.clone(), cx),
+                |_, cx| {
+                    cx.emit(super::ShowSettings {
+                        repository_page: true,
+                    })
+                },
             );
             self.ask(confirm, cx);
         } else if let Some(path) = command.reveal_path() {

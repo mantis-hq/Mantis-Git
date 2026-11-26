@@ -155,9 +155,14 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   for the graph at the default window. It has no shortcut and no button in the header.
 - There are no task screens. Committing is the foot of the inspector, and so are conflicts
   (see "Conflicts"): the graph window is the one window for everything about a repository.
-- Settings: a quiet "Settings" button at the end of the header, or `Ctrl ,`, opens a
-  second window (1000×720) and brings it forward if it is already open. It has the 52 px
-  header, a 220 px Mantle side panel of pages, and the page in a column up to 720 px wide.
+- Settings: a quiet "Settings" button at the end of the header, or `Ctrl ,`, shows
+  settings in the main window, in place of the front tab's view and under the tab strip,
+  for the front tab's repository. There is no second window. Its 52 px header starts with
+  a quiet "← Back to <repository>" ("← Back" on an empty tab), and that button, `Esc`
+  (outside a text input) or `Ctrl ,` again bring the tab back with the keyboard. Bringing
+  any tab forward, opening a repository, the dock's keys and a question from git (see
+  "Questions from git") also show the tab, since each needs the repository's view. Under
+  the header are a 220 px Mantle side panel of pages and the page in a column up to 720 px wide.
   The side panel groups pages by reach, each group under a section label: "This repository"
   (Repository, drawn only while a repository is open), then "Everywhere" (App, Theme, Git
   config, Identities), then About. The App page's cards run from daily use to system
@@ -165,8 +170,7 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
   The header sentence says what was saved or why not. There is no Save button: toggles and
   choices apply when clicked, text applies on Enter or when you leave the field. Settings
   sit in Mantle cards (8 px radius) grouped under section labels. A choice is a row of
-  chips, the picked one with a tick and the Surface 0 fill, never blue. Closing settings
-  leaves the app open; closing the main window quits it.
+  chips, the picked one with a tick and the Surface 0 fill, never blue.
   - **Git config** edits one config at a time, "Everywhere" or "Only <repository>", chosen
     with chips above the cards. A setting the repository leaves unset says where it
     inherits its value from, and its reset button says "Inherit". A setting the installed
