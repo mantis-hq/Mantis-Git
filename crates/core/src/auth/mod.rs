@@ -24,18 +24,25 @@ use std::path::PathBuf;
 use token::{Keychain, Store, now};
 use transport::{Transport, Web};
 
-/// Servers beyond the public ones, which people add with their own OAuth app's ID. Kept
-/// in `hosts` beside the `state` file, one line each: `forge origin client_id`.
+/// The apps people set up themselves: servers beyond the public ones, and their own app on
+/// a public one. Kept in `hosts` beside the `state` file, one line each:
+/// `forge origin client_id`, then `confidential` when the app wants its client secret, which
+/// is in the system keychain.
 fn registry_file() -> Option<PathBuf> {
     crate::settings::state::config_dir().map(|dir| dir.join("hosts"))
 }
+
+const CONFIDENTIAL: &str = "confidential";
 
 pub fn parse_registry(text: &str) -> Vec<Host> {
     text.lines()
         .filter_map(|line| {
             let mut words = line.split_whitespace();
             let forge = Forge::from_config(words.next()?)?;
-            Host::new(forge, words.next()?, words.next().unwrap_or_default())
+            let origin = words.next()?;
+            let client_id = words.next().unwrap_or_default();
+            let confidential = words.next() == Some(CONFIDENTIAL);
+            Some(Host::new(forge, origin, client_id)?.with_confidential(confidential))
         })
         .collect()
 }
@@ -43,21 +50,35 @@ pub fn parse_registry(text: &str) -> Vec<Host> {
 pub fn render_registry(hosts: &[Host]) -> String {
     hosts
         .iter()
-        .map(|h| format!("{} {} {}\n", h.forge.config_value(), h.origin, h.client_id))
+        .map(|h| {
+            let mark = if h.confidential { " confidential" } else { "" };
+            format!(
+                "{} {} {}{mark}\n",
+                h.forge.config_value(),
+                h.origin,
+                h.client_id
+            )
+        })
         .collect()
 }
 
 /// The public servers, then the ones added.
 pub fn hosts() -> Vec<Host> {
-    let mut all = Host::built_in();
     let added = registry_file()
         .map(|file| read_registry(&file))
         .unwrap_or_default();
+    merge(Host::built_in(), added)
+}
+
+/// A public server takes the app set up for it here, which wins over the one this build was
+/// made with; any other server is added after them.
+fn merge(mut all: Vec<Host>, added: Vec<Host>) -> Vec<Host> {
     for host in added {
         match all.iter_mut().find(|known| known.origin == host.origin) {
-            // A public server with no ID in this build can be given one.
-            Some(known) if known.client_id.is_empty() => *known = host,
-            Some(_) => {}
+            Some(known) => {
+                known.client_id = host.client_id;
+                known.confidential = host.confidential;
+            }
             None => all.push(host),
         }
     }
@@ -77,56 +98,91 @@ fn write_registry(file: &std::path::Path, hosts: &[Host]) -> Result<(), String> 
     std::fs::write(file, render_registry(hosts)).map_err(|e| e.to_string())
 }
 
-/// The servers that were added by hand, which can be edited and removed. The public ones
-/// are always there.
-pub fn custom_hosts() -> Vec<Host> {
-    let public: Vec<String> = Host::built_in().into_iter().map(|h| h.origin).collect();
+/// The addresses of every server with an app set up here: added servers, which can be
+/// removed, and public ones given an app of the user's own, which can go back to the
+/// built-in one.
+pub fn own_apps() -> Vec<String> {
     registry_file()
         .map(|file| read_registry(&file))
         .unwrap_or_default()
         .into_iter()
-        .filter(|host| !public.contains(&host.origin))
+        .map(|host| host.origin)
         .collect()
 }
 
-/// Remembers a server, or the client ID of one already there.
-pub fn add_host(host: &Host) -> Result<(), String> {
-    let file = registry_file().ok_or("There is no folder to keep settings in.")?;
-    save_host_in(&file, None, host, &Keychain)
+/// What a save does with the client secret.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Secret {
+    /// Leave it as it is: kept if there was one, none if there wasn't.
+    Keep,
+    /// A new one, which makes the app confidential.
+    Set(String),
+    /// None: the app is public.
+    Clear,
 }
 
 /// Saves `host`. With `replacing` the server of that address is changed into it: the
-/// old entry goes, and so does its token when the address changed, since a token is for
-/// one server.
-pub fn save_host(replacing: Option<&str>, host: &Host) -> Result<(), String> {
+/// old entry goes, and so do its token and secret when the address changed, since both
+/// are for one server.
+pub fn save_host(replacing: Option<&str>, host: &Host, secret: Secret) -> Result<(), String> {
     let file = registry_file().ok_or("There is no folder to keep settings in.")?;
-    save_host_in(&file, replacing, host, &Keychain)
+    save_host_in(&file, replacing, host, secret, &Keychain)
 }
 
 pub fn save_host_in(
     file: &std::path::Path,
     replacing: Option<&str>,
     host: &Host,
+    secret: Secret,
     store: &dyn Store,
 ) -> Result<(), String> {
     let mut added = read_registry(file);
-    // Moving onto another server that is already added would silently overwrite it.
-    let taken = |origin: &str| added.iter().any(|known| known.origin == origin);
-    if replacing != Some(host.origin.as_str()) && replacing.is_some() && taken(&host.origin) {
-        return Err(format!("{} is already added.", host.name()));
+    let taken = |origin: &str| {
+        added.iter().any(|known| known.origin == origin)
+            || (replacing.is_none() && host.is_public() && origin == host.origin)
+    };
+    // Adding a server that is already listed, or moving onto one, would silently
+    // overwrite it.
+    if replacing != Some(host.origin.as_str()) && taken(&host.origin) {
+        return Err(format!(
+            "{} is already listed. Use its Edit button to change its app.",
+            host.name()
+        ));
+    }
+    let before = replacing.and_then(|old| added.iter().find(|known| known.origin == old));
+    let was_confidential = before.is_some_and(|known| known.confidential);
+    let old_secret = match (&secret, replacing) {
+        (Secret::Keep, Some(old)) if was_confidential && old != host.origin => store.secret(old),
+        _ => None,
+    };
+    let confidential = match &secret {
+        Secret::Keep => was_confidential,
+        Secret::Set(_) => true,
+        Secret::Clear => false,
+    };
+    match &secret {
+        Secret::Set(value) => store.set_secret(&host.origin, value)?,
+        Secret::Clear => store.remove_secret(&host.origin)?,
+        Secret::Keep => {
+            if let Some(value) = &old_secret {
+                store.set_secret(&host.origin, value)?;
+            }
+        }
     }
     if let Some(old) = replacing {
         added.retain(|known| known.origin != old);
         if old != host.origin {
             store.remove(old)?;
+            store.remove_secret(old)?;
         }
     }
     added.retain(|known| known.origin != host.origin);
-    added.push(host.clone());
+    added.push(host.clone().with_confidential(confidential));
     write_registry(file, &added)
 }
 
-/// Forgets a server added by hand, and the token for it.
+/// Forgets the app set up for a server, its secret and the token it gave. An added server
+/// goes from the list; a public one goes back to the app this build was made with.
 pub fn remove_host(origin: &str) -> Result<(), String> {
     let file = registry_file().ok_or("There is no folder to keep settings in.")?;
     remove_host_in(&file, origin, &Keychain)
@@ -140,7 +196,22 @@ pub fn remove_host_in(
     let mut added = read_registry(file);
     added.retain(|known| known.origin != origin);
     store.remove(origin)?;
+    store.remove_secret(origin)?;
     write_registry(file, &added)
+}
+
+/// The client secret to send to `host`, if its app is confidential.
+fn client_secret(host: &Host, store: &dyn Store) -> Result<Option<String>, String> {
+    if !host.confidential {
+        return Ok(None);
+    }
+    store.secret(&host.origin).map(Some).ok_or_else(|| {
+        format!(
+            "The client secret for {} isn't in the system keychain any more. Paste it again \
+             under Edit.",
+            host.name()
+        )
+    })
 }
 
 /// An account that is signed in.
@@ -180,7 +251,8 @@ pub(crate) fn fresh_token(
     if !token.is_expired(now()) {
         return Ok(token);
     }
-    let renewed = flow::refresh(host, http, &token)?;
+    let secret = client_secret(host, store)?;
+    let renewed = flow::refresh(host, http, &token, secret.as_deref())?;
     store.set(&host.origin, &renewed)?;
     Ok(renewed)
 }
@@ -208,7 +280,8 @@ pub fn finish_sign_in_with(
     store: &dyn Store,
     http: &dyn Transport,
 ) -> Result<Account, String> {
-    let mut token = pending.wait(http, cancel)?;
+    let secret = client_secret(host, store)?;
+    let mut token = pending.wait(http, cancel, secret.as_deref())?;
     let login = api::login(host, http, &token.access)?;
     token.login = Some(login.clone());
     store.set(&host.origin, &token)?;
@@ -235,7 +308,7 @@ pub fn status_sentence(host: &Host, account: Option<&Account>) -> String {
         Some(account) => format!("Signed in as {}.", account.login),
         None if host.can_sign_in() => "Not signed in.".to_owned(),
         None => format!(
-            "This build of Mantis Git has no OAuth app on {}. Add the client ID of one you registered there.",
+            "No OAuth app yet. Register one on {} and add it under Edit.",
             host.name()
         ),
     }
@@ -324,21 +397,22 @@ mod tests {
             expires_at: None,
             login: None,
         };
-        save_host_in(&file, None, &one, &store).unwrap();
-        save_host_in(&file, None, &two, &store).unwrap();
+        save_host_in(&file, None, &one, Secret::Keep, &store).unwrap();
+        save_host_in(&file, None, &two, Secret::Keep, &store).unwrap();
         store.set(&one.origin, &token).unwrap();
         // A new client ID keeps the token, since the server is the same.
         let newer = Host::new(Forge::Gitea, "https://git.corp", "a2").unwrap();
-        save_host_in(&file, Some(&one.origin), &newer, &store).unwrap();
+        save_host_in(&file, Some(&one.origin), &newer, Secret::Keep, &store).unwrap();
         assert_eq!(read_registry(&file), vec![two.clone(), newer.clone()]);
         assert!(store.get(&one.origin).is_some());
         // A new address drops the token, and can't land on another added server.
         let moved = Host::new(Forge::Gitea, "https://git.new", "a2").unwrap();
-        save_host_in(&file, Some(&newer.origin), &moved, &store).unwrap();
+        save_host_in(&file, Some(&newer.origin), &moved, Secret::Keep, &store).unwrap();
         assert!(store.get(&one.origin).is_none());
         let clash = Host::new(Forge::Gitea, "https://lab.corp", "x").unwrap();
-        let err = save_host_in(&file, Some(&moved.origin), &clash, &store).unwrap_err();
-        assert!(err.contains("already added"));
+        let err =
+            save_host_in(&file, Some(&moved.origin), &clash, Secret::Keep, &store).unwrap_err();
+        assert!(err.contains("already listed"));
         assert_eq!(read_registry(&file), vec![two.clone(), moved.clone()]);
         remove_host_in(&file, &moved.origin, &store).unwrap();
         assert_eq!(read_registry(&file), vec![two]);
@@ -357,7 +431,7 @@ mod tests {
             "Signed in as ada."
         );
         assert_eq!(status_sentence(&with_id, None), "Not signed in.");
-        assert!(status_sentence(&bare, None).contains("client ID"));
+        assert!(status_sentence(&bare, None).contains("under Edit"));
         assert_eq!(action_label(&with_id, None), "Sign in to codeberg.org");
         assert_eq!(
             action_label(&with_id, Some(&account)),
@@ -368,9 +442,92 @@ mod tests {
 
     #[test]
     fn the_registry_round_trips_and_skips_bad_lines() {
-        let hosts = parse_registry("gitlab https://git.corp abc\nnonsense\ngitea ssh://x y\n");
-        assert_eq!(hosts.len(), 1);
+        let hosts = parse_registry(
+            "gitlab https://git.corp abc\nnonsense\ngitea ssh://x y\n\
+             gitlab https://gitlab.com def confidential\n",
+        );
+        assert_eq!(hosts.len(), 2);
+        assert!(!hosts[0].confidential && hosts[1].confidential);
         assert_eq!(parse_registry(&render_registry(&hosts)), hosts);
+    }
+
+    #[test]
+    fn gitlab_com_and_a_self_hosted_gitlab_sit_side_by_side() {
+        let own = Host::new(Forge::GitLab, "https://gitlab.com", "mine")
+            .unwrap()
+            .with_confidential(true);
+        let corp = Host::new(Forge::GitLab, "https://git.corp", "theirs").unwrap();
+        let all = merge(Host::built_in(), vec![own, corp]);
+        let names: Vec<_> = all.iter().map(|h| h.name()).collect();
+        assert_eq!(
+            names,
+            ["github.com", "gitlab.com", "codeberg.org", "git.corp"]
+        );
+        // The user's own app on gitlab.com wins over the one the build was made with.
+        assert_eq!(all[1].client_id, "mine");
+        assert!(all[1].confidential);
+    }
+
+    #[test]
+    fn a_secret_is_kept_in_the_store_and_never_in_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("hosts");
+        let store = Memory::default();
+        let gitlab = Host::new(Forge::GitLab, "https://gitlab.com", "id").unwrap();
+        // gitlab.com is always listed, so its app is set through Edit.
+        let edit = Some(gitlab.origin.as_str());
+        save_host_in(&file, edit, &gitlab, Secret::Set("s3cret".into()), &store).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(text, "gitlab https://gitlab.com id confidential\n");
+        assert_eq!(
+            store.secret("https://gitlab.com").as_deref(),
+            Some("s3cret")
+        );
+        // Adding the same server again is turned down: it has an Edit button.
+        let again = save_host_in(&file, None, &gitlab, Secret::Keep, &store).unwrap_err();
+        assert!(again.contains("already listed"));
+        // Saving with a new client ID keeps the secret.
+        let newer = Host::new(Forge::GitLab, "https://gitlab.com", "id2").unwrap();
+        save_host_in(&file, Some(&gitlab.origin), &newer, Secret::Keep, &store).unwrap();
+        assert!(read_registry(&file)[0].confidential);
+        assert_eq!(
+            client_secret(&read_registry(&file)[0], &store)
+                .unwrap()
+                .as_deref(),
+            Some("s3cret")
+        );
+        // Clearing it makes the app public again.
+        save_host_in(&file, Some(&gitlab.origin), &newer, Secret::Clear, &store).unwrap();
+        assert!(!read_registry(&file)[0].confidential);
+        assert_eq!(store.secret("https://gitlab.com"), None);
+        remove_host_in(&file, &gitlab.origin, &store).unwrap();
+        assert!(read_registry(&file).is_empty());
+    }
+
+    #[test]
+    fn moving_a_server_moves_its_secret_and_drops_the_old_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("hosts");
+        let store = Memory::default();
+        let old = Host::new(Forge::GitLab, "https://lab.old", "id").unwrap();
+        save_host_in(&file, None, &old, Secret::Set("s".into()), &store).unwrap();
+        let new = Host::new(Forge::GitLab, "https://lab.new", "id").unwrap();
+        save_host_in(&file, Some(&old.origin), &new, Secret::Keep, &store).unwrap();
+        assert_eq!(store.secret("https://lab.new").as_deref(), Some("s"));
+        assert_eq!(store.secret("https://lab.old"), None);
+        assert!(read_registry(&file)[0].confidential);
+    }
+
+    #[test]
+    fn a_confidential_app_sends_its_secret_when_signing_in() {
+        let store = Memory::default();
+        let host = host().with_confidential(true);
+        let http = Fake::default();
+        let pending = begin_sign_in(&host).unwrap();
+        // Without the secret in the store nothing is waited for or sent.
+        let err = finish_sign_in_with(&host, pending, &Cancel::new(), &store, &http).unwrap_err();
+        assert!(err.contains("client secret"));
+        assert!(http.seen.lock().unwrap().is_empty());
     }
 
     #[test]

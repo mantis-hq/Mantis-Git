@@ -328,23 +328,41 @@ Designs target 2560×1440 and must stay usable at the 1200×800 default window.
     repository it makes branch counts, search and loading history slow.
   - **Accounts** is where Mantis Git signs in to a forge with the OAuth app flow
     (`mantisgit_core::auth`), so HTTPS remotes need no password and an SSH key can be added
-    to the account. It is in the "Everywhere" group, after Identities, and always shows. The "Servers" card has a row for
-    each server (github.com, gitlab.com, codeberg.org, then any added): its name and forge,
-    one sentence saying where it stands ("Not signed in.", "Signed in as ada."), and one quiet
-    button named for its result ("Sign in to github.com", "Sign out of github.com"). Signing
-    in opens the browser and the row says "Waiting for the browser…" with a "Cancel" button;
-    the flow is authorization code with PKCE and a redirect to `http://127.0.0.1:<free port>/callback`, so the OAuth app is registered as a
-    public (not confidential) client with the redirect `http://127.0.0.1/callback`, since servers
-    ignore a loopback address's port and compare the path exactly (`flow::REDIRECT`),
-    which carries a random `state` that must come back unchanged, and no client secret. The
-    token (and its refresh token, for servers whose tokens expire) is kept in the system
-    keychain under the server's address and never in a file or a log; "Sign out" removes it
-    from this computer and the header says how to revoke it on the server too. The public
-    servers use the client ID this build was made with (`MANTISGIT_GITHUB_CLIENT_ID`,
-    `MANTISGIT_GITLAB_CLIENT_ID`, `MANTISGIT_CODEBERG_CLIENT_ID`); with none the row says so
-    and its button is off. The "Another server" card adds a self-hosted one: a forge chip row
-    (the picked one ticked, never blue), a "Server" and a "Client ID" input and "Add server",
-    kept in `hosts` beside the `state` file. A server added this way ends its row in quiet "Edit" and "Remove" buttons (the public ones have neither): "Edit" fills the same card, titled "Edit server", with its forge, address and client ID, and "Save <name>" and "Cancel" replace "Add server"; changing the address drops the token, since a token is for one server, and an address already added is refused. "Remove" forgets the server and its token at once. While any account is signed in an "SSH keys" card
+    to the account. It is in the "Everywhere" group, after Identities, and always shows. The
+    "Servers" card has a row for each server (github.com, gitlab.com, codeberg.org, then any
+    added, so gitlab.com and a company's own GitLab sit side by side): its name and forge, one
+    sentence saying where it stands ("Not signed in.", "Signed in as ada."), one quiet button
+    named for its result ("Sign in to github.com", "Sign out of github.com"), then a quiet
+    "Edit". Signing in opens the browser and the row says "Waiting for the browser…" with a
+    "Cancel" button; the flow is authorization code with PKCE and a redirect to
+    `http://127.0.0.1:<free port>/callback`, so the OAuth app is registered with the redirect
+    `http://127.0.0.1/callback`, since servers ignore a loopback address's port and compare
+    the path exactly (`flow::REDIRECT`), which carries a random `state` that must come back
+    unchanged. A public app needs no client secret. A confidential one (GitLab ticks
+    Confidential by default, and GitHub's OAuth apps always are) sends the secret pasted for
+    it; Gitea and Forgejo take any loopback port only from a public app. The token (and its
+    refresh token, for servers whose tokens expire) is kept in the system keychain under the
+    server's address, with a client secret beside it, and never in a file or a log; "Sign out"
+    removes the token from this computer and the header says how to revoke it on the server
+    too. The public servers use the client ID this build was made with
+    (`MANTISGIT_GITHUB_CLIENT_ID`, `MANTISGIT_GITLAB_CLIENT_ID`,
+    `MANTISGIT_CODEBERG_CLIENT_ID`) unless the user set up an app of their own there; with
+    neither the row says so and its sign-in button is off.
+    "Edit" opens a form under the row, in the same card: "Your OAuth app on gitlab.com", the
+    steps to register one on that forge (`Host::setup_steps`), the redirect address in a code
+    box with a quiet "Copy", a "Client ID" input and a hidden "Client secret" input, left empty
+    for a public app. A saved secret is never shown: the input says it is kept, typing replaces
+    it, and a quiet "Remove secret" makes the app public again on save. "Save gitlab.com" and
+    "Cancel" end the form. The card ends in a blue "+ Add server", which opens the same form at
+    its foot with a forge chip row (the picked one ticked, never blue) and a "Server" input
+    above the steps, and "Add server" as its result. An added server's form keeps those two;
+    changing its address drops the token and moves the secret, since a token is for one
+    server. A server already listed is refused, pointing at its Edit. The apps set up here are
+    kept in `hosts` beside the `state` file. An added server's row also ends in "Remove", and
+    a public one with the user's own app in "Forget app", which goes back to the build's app;
+    either forgets the token and secret at once. A refused sign-in says what to do in plain
+    words (the server wants the app's client secret, or didn't accept the ID and secret), with
+    the server's own words after it. While any account is signed in an "SSH keys" card
     lists each private key in `~/.ssh` that has a `.pub` beside it, with "Add to <server>" for
     each account; only the public file is ever read or sent, and a private key is refused
     before anything leaves the machine. When git asks for an HTTPS login the askpass program

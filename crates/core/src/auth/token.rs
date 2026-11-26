@@ -63,11 +63,20 @@ impl Token {
     }
 }
 
-/// Where tokens are kept, one for each server's origin.
+/// Where tokens are kept, one for each server's origin, and the client secret of a
+/// confidential app on it.
 pub trait Store: Send + Sync {
     fn get(&self, origin: &str) -> Option<Token>;
     fn set(&self, origin: &str, token: &Token) -> Result<(), String>;
     fn remove(&self, origin: &str) -> Result<(), String>;
+    fn secret(&self, origin: &str) -> Option<String>;
+    fn set_secret(&self, origin: &str, secret: &str) -> Result<(), String>;
+    fn remove_secret(&self, origin: &str) -> Result<(), String>;
+}
+
+/// The keychain account a server's client secret is kept under, beside its token's.
+fn secret_account(origin: &str) -> String {
+    format!("{origin} client secret")
 }
 
 /// The system keychain.
@@ -102,11 +111,32 @@ impl Store for Keychain {
             Err(error) => Err(describe(error)),
         }
     }
+
+    fn secret(&self, origin: &str) -> Option<String> {
+        Self::entry(&secret_account(origin))
+            .ok()?
+            .get_password()
+            .ok()
+            .filter(|secret| !secret.is_empty())
+    }
+
+    fn set_secret(&self, origin: &str, secret: &str) -> Result<(), String> {
+        Self::entry(&secret_account(origin))?
+            .set_password(secret)
+            .map_err(describe)
+    }
+
+    fn remove_secret(&self, origin: &str) -> Result<(), String> {
+        self.remove(&secret_account(origin))
+    }
 }
 
-/// Tokens kept in memory, for tests.
+/// Tokens and secrets kept in memory, for tests.
 #[derive(Default)]
-pub struct Memory(Mutex<HashMap<String, Token>>);
+pub struct Memory(
+    Mutex<HashMap<String, Token>>,
+    Mutex<HashMap<String, String>>,
+);
 
 impl Store for Memory {
     fn get(&self, origin: &str) -> Option<Token> {
@@ -123,6 +153,23 @@ impl Store for Memory {
 
     fn remove(&self, origin: &str) -> Result<(), String> {
         self.0.lock().map_err(|e| e.to_string())?.remove(origin);
+        Ok(())
+    }
+
+    fn secret(&self, origin: &str) -> Option<String> {
+        self.1.lock().ok()?.get(origin).cloned()
+    }
+
+    fn set_secret(&self, origin: &str, secret: &str) -> Result<(), String> {
+        self.1
+            .lock()
+            .map_err(|e| e.to_string())?
+            .insert(origin.to_owned(), secret.to_owned());
+        Ok(())
+    }
+
+    fn remove_secret(&self, origin: &str) -> Result<(), String> {
+        self.1.lock().map_err(|e| e.to_string())?.remove(origin);
         Ok(())
     }
 }

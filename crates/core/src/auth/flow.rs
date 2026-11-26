@@ -1,5 +1,6 @@
 //! The OAuth app flow: authorization code with PKCE, and a redirect to a port on this
-//! machine. No client secret is involved, since a desktop app can't keep one.
+//! machine. A public app needs no client secret. A confidential one (GitHub's OAuth apps
+//! always are) sends the secret its owner pasted, which is kept in the system keychain.
 //!
 //! [`begin`] makes the address to open in the browser and starts listening; [`Pending::wait`]
 //! blocks until the browser comes back, then trades the code for a token. Both block.
@@ -38,7 +39,7 @@ pub struct Pending {
 pub fn begin(host: &Host) -> Result<Pending, String> {
     if !host.can_sign_in() {
         return Err(format!(
-            "Mantis Git has no OAuth app on {} yet. Add its client ID first.",
+            "Mantis Git has no OAuth app on {} yet. Add its client ID under Edit first.",
             host.name()
         ));
     }
@@ -70,17 +71,23 @@ pub fn begin(host: &Host) -> Result<Pending, String> {
 }
 
 impl Pending {
-    /// Waits for the browser, then asks the server for the token. Gives up when `cancel`
-    /// is set or after five minutes.
-    pub fn wait(self, http: &dyn Transport, cancel: &Cancel) -> Result<Token, String> {
+    /// Waits for the browser, then asks the server for the token, with the app's client
+    /// secret when it has one. Gives up when `cancel` is set or after five minutes.
+    pub fn wait(
+        self,
+        http: &dyn Transport,
+        cancel: &Cancel,
+        secret: Option<&str>,
+    ) -> Result<Token, String> {
         let code = self.listen(cancel)?;
-        let form = [
+        let mut form = vec![
             ("client_id", self.host.client_id.as_str()),
             ("grant_type", "authorization_code"),
             ("code", code.as_str()),
             ("redirect_uri", self.redirect.as_str()),
             ("code_verifier", self.pkce.verifier.as_str()),
         ];
+        form.extend(secret.map(|secret| ("client_secret", secret)));
         token_from(&self.host, http, &form)
     }
 
@@ -170,16 +177,22 @@ fn respond(stream: &mut TcpStream, status: &str, text: &str) {
 
 /// Gets a new token with the refresh token, for servers whose tokens expire (GitLab's do
 /// after two hours). The login carries over.
-pub fn refresh(host: &Host, http: &dyn Transport, old: &Token) -> Result<Token, String> {
+pub fn refresh(
+    host: &Host,
+    http: &dyn Transport,
+    old: &Token,
+    secret: Option<&str>,
+) -> Result<Token, String> {
     let refresh = old
         .refresh
         .as_deref()
         .ok_or("The sign-in has expired and can't be renewed. Sign in again.")?;
-    let form = [
+    let mut form = vec![
         ("client_id", host.client_id.as_str()),
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh),
     ];
+    form.extend(secret.map(|secret| ("client_secret", secret)));
     let mut token = token_from(host, http, &form)?;
     token.login = old.login.clone();
     token.refresh = token.refresh.or_else(|| old.refresh.clone());
@@ -199,8 +212,10 @@ fn token_from(host: &Host, http: &dyn Transport, form: &[(&str, &str)]) -> Resul
     let value: Value = serde_json::from_str(&reply.body).unwrap_or(Value::Null);
     let text_of = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);
     // GitHub answers 200 with an `error` in the body.
-    if let Some(error) = text_of("error_description").or_else(|| text_of("error")) {
-        return Err(format!("{} refused the sign-in: {error}", host.name()));
+    if let Some(code) = text_of("error") {
+        let sent_secret = form.iter().any(|(name, _)| *name == "client_secret");
+        let said = text_of("error_description").unwrap_or_else(|| code.clone());
+        return Err(refusal(host, &code, &said, sent_secret));
     }
     let access = text_of("access_token")
         .filter(|a| !a.is_empty())
@@ -220,6 +235,28 @@ fn token_from(host: &Host, http: &dyn Transport, form: &[(&str, &str)]) -> Resul
             .map(|seconds| now() + seconds),
         login: None,
     })
+}
+
+/// What a refused token request means, in words a person can act on. The usual cause is
+/// a mismatch between the app on the server and what was pasted here: a confidential app
+/// with no secret given, or a wrong ID or secret. The server's own words come last.
+fn refusal(host: &Host, code: &str, said: &str, sent_secret: bool) -> String {
+    let name = host.name();
+    let said = said.trim_end_matches('.');
+    // GitLab and Gitea say `invalid_client`, GitHub `incorrect_client_credentials`.
+    let wrong_client = matches!(code, "invalid_client" | "incorrect_client_credentials")
+        || (code == "unauthorized_client" && !sent_secret);
+    match (wrong_client, sent_secret) {
+        (true, false) => format!(
+            "{name} wants the app's client secret, and none is saved for it here. Paste it \
+             under Edit, or make the app on {name} not confidential. ({name} said: {said}.)"
+        ),
+        (true, true) => format!(
+            "{name} didn't accept the client ID and secret. Check both under Edit against \
+             the app on {name}. ({name} said: {said}.)"
+        ),
+        _ => format!("{name} refused the sign-in: {said}."),
+    }
 }
 
 #[cfg(test)]
@@ -287,7 +324,7 @@ mod tests {
             r#"{"access_token":"tok","refresh_token":"ref","expires_in":7200}"#,
         )]);
         let token = std::thread::scope(|scope| {
-            let waiting = scope.spawn(|| pending.wait(&http, &Cancel::new()));
+            let waiting = scope.spawn(|| pending.wait(&http, &Cancel::new(), None));
             // A stray request is ignored, a forged state is refused by `check`, and
             // the real redirect finishes it.
             let mut stray = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -339,7 +376,7 @@ mod tests {
         let pending = begin(&host()).unwrap();
         let cancel = Cancel::new();
         cancel.cancel();
-        let outcome = pending.wait(&Fake::default(), &cancel);
+        let outcome = pending.wait(&Fake::default(), &cancel, None);
         assert_eq!(outcome.unwrap_err(), "Sign-in cancelled.");
     }
 
@@ -354,6 +391,37 @@ mod tests {
     }
 
     #[test]
+    fn a_confidential_app_without_its_secret_is_explained() {
+        let body = r#"{"error":"invalid_client","error_description":"Client authentication failed due to unknown client, no client authentication included, or unsupported authentication method."}"#;
+        let http = Fake::answering(&[(401, body)]);
+        let err = token_from(&host(), &http, &[("client_id", "x")]).unwrap_err();
+        assert!(err.starts_with("gitlab.com wants the app's client secret"));
+        assert!(err.contains("not confidential"));
+        let http = Fake::answering(&[(401, body)]);
+        let err = token_from(&host(), &http, &[("client_secret", "s")]).unwrap_err();
+        assert!(err.starts_with("gitlab.com didn't accept the client ID and secret"));
+    }
+
+    #[test]
+    fn the_secret_is_sent_only_when_there_is_one() {
+        let old = Token {
+            access: "old".into(),
+            refresh: Some("r1".into()),
+            expires_at: Some(1),
+            login: None,
+        };
+        let http = Fake::answering(&[
+            (200, r#"{"access_token":"a"}"#),
+            (200, r#"{"access_token":"b"}"#),
+        ]);
+        refresh(&host(), &http, &old, None).unwrap();
+        refresh(&host(), &http, &old, Some("s3cret")).unwrap();
+        let seen = http.seen.lock().unwrap();
+        assert!(!seen[0].contains("client_secret"));
+        assert!(seen[1].contains("client_secret=s3cret"));
+    }
+
+    #[test]
     fn refreshing_keeps_the_login_and_the_old_refresh_token_if_none_comes_back() {
         let old = Token {
             access: "old".into(),
@@ -362,7 +430,7 @@ mod tests {
             login: Some("ada".into()),
         };
         let http = Fake::answering(&[(200, r#"{"access_token":"new","expires_in":60}"#)]);
-        let new = refresh(&host(), &http, &old).unwrap();
+        let new = refresh(&host(), &http, &old, None).unwrap();
         assert_eq!(
             (new.access.as_str(), new.login.as_deref()),
             ("new", Some("ada"))
@@ -373,6 +441,6 @@ mod tests {
             refresh: None,
             ..old
         };
-        assert!(refresh(&host(), &http, &none).is_err());
+        assert!(refresh(&host(), &http, &none, None).is_err());
     }
 }

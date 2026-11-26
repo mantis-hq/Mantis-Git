@@ -11,6 +11,9 @@ pub struct Host {
     pub origin: String,
     /// The OAuth app's public ID. Empty when no app is registered for this server.
     pub client_id: String,
+    /// Whether the app is confidential: the server wants its client secret with every
+    /// token request. The secret itself is kept in the system keychain, never here.
+    pub confidential: bool,
 }
 
 /// The public servers. Their client IDs are set when Mantis Git is built, from the named
@@ -53,7 +56,21 @@ impl Host {
             forge,
             origin: origin_of(origin)?,
             client_id: client_id.trim().to_owned(),
+            confidential: false,
         })
+    }
+
+    /// The same server, with an app that does or doesn't need its client secret.
+    pub fn with_confidential(self, confidential: bool) -> Self {
+        Self {
+            confidential,
+            ..self
+        }
+    }
+
+    /// Whether this is one of the public servers, which are always listed.
+    pub fn is_public(&self) -> bool {
+        BUILT_IN.iter().any(|(_, origin, _)| *origin == self.origin)
     }
 
     /// The public servers, with the client IDs this build was made with.
@@ -64,6 +81,7 @@ impl Host {
                 forge: *forge,
                 origin: (*origin).to_owned(),
                 client_id: id.unwrap_or_default().to_owned(),
+                confidential: false,
             })
             .collect()
     }
@@ -116,6 +134,30 @@ impl Host {
             Forge::GitHub => "repo write:public_key read:user",
             Forge::GitLab => "api read_user",
             Forge::Gitea => "write:user write:repository",
+        }
+    }
+
+    /// How to register an OAuth app for Mantis Git on a server of this forge, named
+    /// `server`: where to go, what to fill in, and what to bring back.
+    pub fn setup_steps(forge: Forge, server: &str) -> String {
+        match forge {
+            Forge::GitHub => format!(
+                "On {server}, open Settings → Developer settings → OAuth Apps → New OAuth \
+                 App, and set its callback URL to the redirect address below. Then generate a \
+                 client secret and paste it with the client ID: GitHub asks for it even though \
+                 Mantis Git uses PKCE."
+            ),
+            Forge::GitLab => format!(
+                "On {server}, open Preferences → Applications → Add new application (or Admin \
+                 → Applications, for everyone on the server). Set its redirect URI to the \
+                 address below, tick the scopes api and read_user, and clear Confidential, so \
+                 no secret is needed. If you leave Confidential ticked, paste the secret too."
+            ),
+            Forge::Gitea => format!(
+                "On {server}, open Settings → Applications → Manage OAuth2 applications, and \
+                 add one with the redirect URI below. Clear \"Confidential client\": Gitea and \
+                 Forgejo let only a public app come back on the port Mantis Git listens on."
+            ),
         }
     }
 
